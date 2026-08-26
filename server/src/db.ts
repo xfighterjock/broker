@@ -16,7 +16,7 @@ export function createPool(databaseUrl: string): DbPool {
 }
 
 function migrationsDir(): string {
-  const here = path.dirname(fileURLToPath(import.meta.url));
+  const here = process.cwd();
   const candidates = [
     path.resolve(process.cwd(), "db/migrations"),
     path.resolve(here, "../../db/migrations"),

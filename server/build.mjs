@@ -1,4 +1,5 @@
 import * as esbuild from "esbuild";
+import { writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,9 +10,8 @@ await esbuild.build({
   entryPoints: [path.join(here, "src/index.ts")],
   bundle: true,
   platform: "node",
-  format: "esm",
+  format: "cjs",
   outfile: path.join(root, "dist/server.js"),
-  packages: "external",
   sourcemap: true,
 });
 
@@ -19,10 +19,11 @@ await esbuild.build({
   entryPoints: [path.join(here, "src/migrate.ts")],
   bundle: true,
   platform: "node",
-  format: "esm",
+  format: "cjs",
   outfile: path.join(root, "dist/migrate.js"),
-  packages: "external",
   sourcemap: true,
 });
 
+mkdirSync(path.join(root, "dist"), { recursive: true });
+writeFileSync(path.join(root, "dist/package.json"), JSON.stringify({ type: "commonjs" }) + "\n");
 console.log("server build ok -> dist/server.js dist/migrate.js");
