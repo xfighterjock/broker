@@ -18,3 +18,7 @@ No Docker. nginx + postgres + redis already on the box. Default path /opt/broker
 Bind the API to localhost (BIND=127.0.0.1). Put nginx in front. GATE_PASSWORD cookie session is stored in Redis; unset password refuses production start and warns in development. TRADING_MODE=live is refused. Tradovate stub throws on live hosts. No directional orders from this process.
 ## NinjaTrader API key
 A funded live NT account (at least one thousand USD) plus the about twenty-five USD/month API add-on is not required for mock. Do not buy it for paper. This repo is briefing plus risk-gate, not an NT order router.
+## Tests
+npm test runs vitest. No live postgres required. clock.test.ts injects Date. gate.test.ts covers cancel/flatten on MockBroker. tradovate.test.ts refuses live URLs.
+## API on 127.0.0.1:3001
+GET /api/status. GET and PUT /api/freeze. POST /api/knowledge-time. POST /api/gate/enable. POST /api/flatten. POST /api/cancel-stops. POST /api/mock/inject-stop. GET /api/orders. GET /api/events. GET /api/log. WebSocket /ws for live status plus log. Login: POST /api/auth/login with password, cookie eg.sid.

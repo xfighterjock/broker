@@ -18,7 +18,12 @@
     "build": "npm run build -w @broker/server && npm run build -w @broker/client",
     "dev": "concurrently -k -n server,client -c cyan,magenta \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "tsx watch server/src/index.ts",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "typecheck:server": "tsc -p server/tsconfig.json --noEmit",
+    "typecheck:client": "tsc -p client/tsconfig.json --noEmit",
+    "test:watch": "vitest",
+    "build:client": "vite build --config client/vite.config.ts",
+    "build:server": "node server/build.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.13.4",
