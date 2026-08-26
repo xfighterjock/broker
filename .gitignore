@@ -1,0 +1,16 @@
+node_modules/
+dist/
+client/dist/
+server/dist/
+.env
+*.log
+*.tsbuildinfo
+.DS_Store
+coverage/
+.vite/
+.idea/
+.vscode/
+tools/
+scripts-build.txt
+deploy/notes.txt
+notes.txt

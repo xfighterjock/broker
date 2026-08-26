@@ -1,0 +1,30 @@
+{
+  "name": "broker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Event Gate risk-gate dashboard. Package name broker.",
+  "type": "module",
+  "workspaces": [
+    "client",
+    "server"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "migrate": "tsx server/src/migrate.ts",
+    "dev:client": "npm run dev -w @broker/client",
+    "build": "npm run build -w @broker/server && npm run build -w @broker/client",
+    "dev": "concurrently -k -n server,client -c cyan,magenta \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "tsx watch server/src/index.ts",
+    "start": "node dist/server.js"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "concurrently": "^9.1.2",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.6"
+  }
+}

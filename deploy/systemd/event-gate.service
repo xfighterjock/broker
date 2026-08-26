@@ -1,0 +1,22 @@
+[Unit]
+Description=Event Gate (paper risk-gate + briefing dashboard)
+After=network.target postgresql.service redis-server.service
+Wants=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+# Prefer a dedicated system user (setup.sh creates `eventgate`).
+# Fallback: User=nobody Group=nogroup — only if /opt/broker is world-readable.
+User=eventgate
+Group=eventgate
+WorkingDirectory=/opt/broker
+EnvironmentFile=/opt/broker/.env
+ExecStart=/usr/bin/node dist/server.js
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+# The process must bind 127.0.0.1 (BIND in .env). nginx is the public listener.
+
+[Install]
+WantedBy=multi-user.target
