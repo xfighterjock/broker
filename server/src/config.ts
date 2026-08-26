@@ -7,6 +7,7 @@ export interface AppConfig {
   tradingMode: string;
   nodeEnv: string;
   cookieSecure: boolean;
+  authMode: string;
   tradovateBaseUrl: string | undefined;
 }
 
@@ -40,7 +41,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     gatePassword,
     tradingMode,
     nodeEnv,
-    cookieSecure: env.COOKIE_SECURE === "1",
+    cookieSecure: env.COOKIE_SECURE === "1" || nodeEnv === "production",
+    authMode: (env.AUTH_MODE || (nodeEnv === "production" ? "nginx" : "cookie")).toLowerCase(),
     tradovateBaseUrl: env.TRADOVATE_BASE_URL,
   };
 }

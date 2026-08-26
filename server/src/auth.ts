@@ -38,8 +38,18 @@ export function buildSessionMiddleware(redis: RedisClient, secret: string, cooki
   });
 }
 
+export function authMode(env: NodeJS.ProcessEnv = process.env): string {
+  return (env.AUTH_MODE || "cookie").toLowerCase();
+}
+
+function isLoopback(req: Request): boolean {
+  const raw = req.socket.remoteAddress || "";
+  return raw === "127.0.0.1" || raw === "::1" || raw === ":ffff:127.0.0.1";
+}
+
 export function isAuthed(req: Request): boolean {
   if (!authRequired()) return true;
+  if (authMode() === "nginx" && isLoopback(req)) return true;
   return req.session?.authed === true;
 }
 
