@@ -1,4 +1,4 @@
-import type { Position, WorkingOrder } from "../../shared/types";
+import type { Position, SleeveId, WorkingOrder } from "../../shared/types";
 import type { OrderType } from "../../shared/constants";
 
 export interface InjectOrderInput {
@@ -8,6 +8,7 @@ export interface InjectOrderInput {
   qty: number;
   price?: number;
   stopPrice?: number;
+  sleeveId?: SleeveId;
 }
 
 export interface InjectPositionInput {
@@ -16,6 +17,7 @@ export interface InjectPositionInput {
   side: "Long" | "Short";
   avgPrice?: number;
   unrealizedPnl?: number;
+  sleeveId?: SleeveId;
 }
 
 export interface BrokerClient {

@@ -104,6 +104,7 @@ export class MockBroker implements BrokerClient {
       stopPrice: input.stopPrice,
       state: "Working",
       gated: isGatedSymbol(input.symbol),
+      sleeveId: input.sleeveId,
     };
     this.orders.push(order);
     this.persist();
@@ -121,6 +122,7 @@ export class MockBroker implements BrokerClient {
       avgPrice: input.avgPrice ?? 0,
       unrealizedPnl: input.unrealizedPnl ?? 0,
       gated: isGatedSymbol(input.symbol),
+      sleeveId: input.sleeveId,
     };
     this.positions = this.positions.filter((p) => p.symbol !== input.symbol);
     this.positions.push(pos);
@@ -166,6 +168,22 @@ export class MockBroker implements BrokerClient {
     }
     this.persist();
     return flat;
+  }
+
+  setUnrealizedPnl(symbol: string, pnl: number): void {
+    const want = symbol.toUpperCase();
+    for (const p of this.positions) {
+      if (p.side === "Flat") continue;
+      if (p.symbol.toUpperCase() === want || (p.root !== null && p.root === want)) {
+        p.unrealizedPnl = pnl;
+      }
+    }
+    this.persist();
+  }
+
+  addRealizedPnl(delta: number): void {
+    this.dayPnl += delta;
+    this.persist();
   }
 
   reset(): void {

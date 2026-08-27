@@ -4,7 +4,7 @@ import session from "express-session";
 import { REDIS_KEYS } from "../../shared/constants";
 import { seedEvents } from "../../shared/clock";
 import type { CalendarEvent } from "../../shared/types";
-import { buildApp } from "./app";
+import { buildApp, stopAutoPaperLoop } from "./app";
 import { authRequired, buildSessionMiddleware, gatePassword } from "./auth";
 import { loadConfig } from "./config";
 import { createPool, loadEvents, recentGateLog, runMigrations } from "./db";
@@ -12,6 +12,7 @@ import { GateEngine } from "./gate";
 import { MockBroker } from "./mockBroker";
 import { connectRedis } from "./redis";
 import { createTradovateFromEnv } from "./tradovateBroker";
+import { attachScanRedis, kickScan } from "./scan";
 import { StatusHub } from "./wsHub";
 
 async function main(): Promise<void> {
@@ -199,6 +200,9 @@ async function main(): Promise<void> {
     (sessionMw as (req: unknown, res: unknown, next: () => void) => void)(req, {}, next);
   });
 
+  attachScanRedis(redis?.client ?? null);
+  kickScan();
+
   server.listen(cfg.port, cfg.bind, () => {
     console.log(`[EventGate] listening on ${cfg.bind}:${cfg.port}`);
     console.log(`[EventGate] trading mode ${cfg.tradingMode}`);
@@ -208,6 +212,7 @@ async function main(): Promise<void> {
   const shutdown = async () => {
     clearInterval(enableWatch);
     if (tickHandle) clearInterval(tickHandle);
+    stopAutoPaperLoop();
     server.close();
     if (pool) await pool.end();
     if (redis) {

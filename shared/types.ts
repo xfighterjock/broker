@@ -36,6 +36,7 @@ export type OrderState =
 
 export type Side = "Buy" | "Sell";
 export type PositionSide = "Long" | "Short" | "Flat";
+export type SleeveId = "day" | "momentum" | "options" | "ownership";
 
 export interface WorkingOrder {
   id: string;
@@ -48,6 +49,7 @@ export interface WorkingOrder {
   stopPrice?: number;
   state: OrderState;
   gated: boolean;
+  sleeveId?: SleeveId;
 }
 
 export interface Position {
@@ -59,6 +61,7 @@ export interface Position {
   avgPrice: number;
   unrealizedPnl: number;
   gated: boolean;
+  sleeveId?: SleeveId;
 }
 
 export interface FreezeCard {
@@ -138,7 +141,6 @@ export function emptyChecklist(): Checklist {
   };
 }
 
-export type SleeveId = "day" | "momentum" | "options" | "ownership";
 export type SleeveStatus = "idea" | "paper" | "promote" | "killed";
 
 export const SLEEVE_STATUSES: readonly SleeveStatus[] = [
@@ -343,6 +345,43 @@ export interface PaperFill {
   notes: string;
 }
 
+export type ScanSleeve = "momentum" | "ownership";
+
+export interface ScanRow {
+  symbol: string;
+  name: string;
+  sector: string;
+  last: number;
+  pctFrom52: number;
+  dist20: number;
+  above200: boolean;
+  ret3m: number | null;
+  ret6m: number | null;
+  ret12m: number | null;
+  rs3m: number | null;
+  volx: number;
+  score: number;
+  why: string;
+}
+
+export interface ScanResponse {
+  sleeve: ScanSleeve;
+  asOf: string | null;
+  universe: "sp500";
+  delayed: true;
+  source: "yahoo";
+  status: "ok" | "scanning";
+  rows: ScanRow[];
+}
+
+/** Derived mock book per sleeve. Not persisted — equity = 100k + realized + unrealized. */
+export interface SleeveBook {
+  equityUsd: number;
+  realizedPnlUsd: number;
+  unrealizedPnlUsd: number;
+  pnlUsd: number;
+}
+
 export interface StatusSnapshot {
   trader: string;
   tz: string;
@@ -362,4 +401,6 @@ export interface StatusSnapshot {
   sleeves: Record<SleeveId, SleeveCard>;
   activeSleeve: SleeveId;
   paperBlotter: PaperFill[];
+  autoPaper: boolean;
+  sleeveBooks: Record<SleeveId, SleeveBook>;
 }

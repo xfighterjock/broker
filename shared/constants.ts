@@ -59,7 +59,16 @@ export const REDIS_KEYS = {
   flattenFired: "gate:flatten_fired",
   sleeves: "sleeves:cards",
   blotter: "sleeves:blotter",
+  scanUniverse: "scan:universe",
+  scanFeatures: "scan:features",
+  autoPaper: "paper:auto",
 } as const;
+
+/** Independent mock starting equity per sleeve (day, momentum, options, ownership). */
+export const DEFAULT_SLEEVE_EQUITY_USD = 100_000;
+
+/** Extra autopilot pass for sells while the scan cache is warm. */
+export const AUTO_PAPER_INTERVAL_MS = 5 * 60 * 1000;
 
 export const REDIS_CHANNELS = {
   log: "eventgate:log",

@@ -16,6 +16,7 @@ export const ROOT_TO_YAHOO: Record<string, string> = {
   SR3: "SR3=F",
   ES: "ES=F",
   NQ: "NQ=F",
+  MNQ: "MNQ=F",
 };
 
 export const YAHOO_CHART_BASE = "https://query1.finance.yahoo.com/v8/finance/chart/";
@@ -74,7 +75,7 @@ function errorQuote(symbol: string, error: string): DelayedQuote {
   };
 }
 
-async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+export async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let next = 0;
   async function worker(): Promise<void> {

@@ -5,6 +5,7 @@ import {
   GATED_ROOTS,
   MAX_QTY,
   REDIS_CHANNELS,
+  AUTO_PAPER_INTERVAL_MS,
   REDIS_KEYS,
   SLEEVE_IDS,
   TRADER,
@@ -24,6 +25,14 @@ import {
   type SleeveId,
   type StatusSnapshot,
 } from "../../shared/types";
+import {
+  MOMENTUM_STOP_MUL,
+  OWNERSHIP_STOP_MUL,
+  runAutopilot,
+  sizeByStopRisk,
+  type AutoBuy,
+  type AutoSell,
+} from "./autopilot";
 import {
   authRequired,
   gatePassword,
@@ -45,8 +54,35 @@ import {
 import { GateEngine } from "./gate";
 import { MockBroker } from "./mockBroker";
 import type { RedisClient } from "./redis";
-import { fetchDelayedQuotes, symbolsForSleeve } from "./quotes";
+import { fetchDelayedQuotes, mapTicker, symbolsForSleeve } from "./quotes";
+import { attachScanReady, getScan, getScanFeaturesCache, rankMomentum, rankOwnership } from "./scan";
+import {
+  allSleeveBooks,
+  applyExitStats,
+  closeSideFor,
+  detectStopHits,
+  lastFromQuotes,
+  makeFill,
+  oppositeSide,
+  parsePaperClose,
+  parsePaperOrder,
+  positionSideFor,
+  signedPnl,
+  sleeveBook,
+  validatePaperOrder,
+  type PaperCloseBody,
+  type PaperOrderBody,
+} from "./paper";
 import type { StatusHub } from "./wsHub";
+
+let autoPaperTimer: ReturnType<typeof setInterval> | null = null;
+
+export function stopAutoPaperLoop(): void {
+  if (autoPaperTimer) {
+    clearInterval(autoPaperTimer);
+    autoPaperTimer = null;
+  }
+}
 
 export interface AppDeps {
   cfg: AppConfig;
@@ -117,6 +153,8 @@ export function buildApp(deps: AppDeps): express.Express {
     sleevesHydrated: false,
     blotter: [] as PaperFill[],
     blotterHydrated: false,
+    autoPaper: true,
+    autoPaperHydrated: false,
   };
 
   async function ensureSleeves(): Promise<void> {
@@ -208,6 +246,28 @@ export function buildApp(deps: AppDeps): express.Express {
     }
   }
 
+  async function ensureAutoPaper(): Promise<void> {
+    if (memory.autoPaperHydrated) return;
+    memory.autoPaperHydrated = true;
+    if (!deps.redis) return;
+    try {
+      const raw = await deps.redis.get(REDIS_KEYS.autoPaper);
+      if (raw === "0") memory.autoPaper = false;
+      else if (raw === "1") memory.autoPaper = true;
+    } catch {
+      /* default enabled */
+    }
+  }
+
+  async function persistAutoPaper(): Promise<void> {
+    if (!deps.redis) return;
+    try {
+      await deps.redis.set(REDIS_KEYS.autoPaper, memory.autoPaper ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }
+
   async function persistLog(line: string, ts: string): Promise<void> {
     if (deps.pool) {
       try {
@@ -244,12 +304,285 @@ export function buildApp(deps: AppDeps): express.Express {
     }
   }
 
+  function assertMockOnly(): string | null {
+    if (
+      deps.broker.mode !== "mock" ||
+      typeof deps.broker.injectOrder !== "function" ||
+      typeof deps.broker.injectPosition !== "function"
+    ) {
+      return "paper orders are MockBroker only — live/demo Tradovate refused";
+    }
+    return null;
+  }
+
+  function matchSym(a: string, b: string): boolean {
+    const am = (mapTicker(a) ?? a).toUpperCase();
+    const bm = (mapTicker(b) ?? b).toUpperCase();
+    return am === bm || a.toUpperCase() === b.toUpperCase();
+  }
+
+  async function recordPaperExit(opts: {
+    sleeveId: SleeveId;
+    symbol: string;
+    side: "Buy" | "Sell";
+    qty: number;
+    price: number;
+    notes: string;
+    realizedPnl: number;
+  }): Promise<void> {
+    await ensureSleeves();
+    await ensureBlotter();
+    const fill = makeFill({
+      sleeveId: opts.sleeveId,
+      symbol: opts.symbol,
+      side: opts.side,
+      qty: opts.qty,
+      price: opts.price,
+      notes: opts.notes,
+    });
+    memory.blotter.push(fill);
+    if (memory.blotter.length > 200) {
+      memory.blotter.splice(0, memory.blotter.length - 200);
+    }
+    const card = memory.sleeves[opts.sleeveId];
+    memory.sleeves[opts.sleeveId] = {
+      ...card,
+      paper: applyExitStats(card.paper, opts.realizedPnl),
+      updatedAt: new Date().toISOString(),
+    };
+    deps.broker.addRealizedPnl(opts.realizedPnl);
+    await persistBlotter();
+    await persistSleeves();
+    sessionNote(
+      "paper_fill",
+      `${opts.sleeveId} ${opts.side} ${opts.qty} ${opts.symbol} @ ${opts.price} (${opts.notes})`,
+    );
+    deps.engine.log(
+      `paper fill ${fill.id} ${opts.side} ${opts.qty} ${opts.symbol} @ ${opts.price} pnl ${opts.realizedPnl.toFixed(2)} (MockBroker, not Tradovate)`,
+    );
+  }
+
+  async function markPaperQuiet(): Promise<number> {
+    const positions = deps.broker
+      .getPositionsSync()
+      .filter((p) => p.side !== "Flat" && p.qty > 0);
+    const orders = deps.broker.getOrdersSync();
+    const live = new Set(["Working", "Submitted", "Accepted"]);
+    const stopSyms = orders
+      .filter((o) => live.has(o.state) && (o.type === "StopMarket" || o.type === "StopLimit"))
+      .map((o) => o.symbol);
+    const symbols = [...new Set([...positions.map((p) => p.symbol), ...stopSyms])];
+    if (symbols.length === 0) return 0;
+    const quotes = await fetchDelayedQuotes(symbols);
+    const hits = detectStopHits(positions, orders, quotes);
+    for (const hit of hits) {
+      const sleeveId = hit.position.sleeveId ?? hit.stop.sleeveId ?? "momentum";
+      await deps.broker.cancelOrders([hit.stop.id], "paper stop hit");
+      await deps.broker.flattenSymbols([hit.position.symbol], "paper stop hit");
+      await recordPaperExit({
+        sleeveId,
+        symbol: hit.position.symbol,
+        side: closeSideFor(hit.position.side),
+        qty: hit.position.qty,
+        price: hit.last,
+        notes: "stop hit",
+        realizedPnl: hit.realizedPnl,
+      });
+      deps.engine.log(
+        `paper STOP HIT ${hit.position.symbol} ${hit.position.side} qty ${hit.position.qty} last ${hit.last} stop ${hit.stop.stopPrice} (MockBroker flatten, not live)`,
+      );
+    }
+    const still = deps.broker.getPositionsSync().filter((p) => p.side !== "Flat" && p.qty > 0);
+    for (const p of still) {
+      const last = lastFromQuotes(quotes, p.symbol);
+      if (last === null) continue;
+      deps.broker.setUnrealizedPnl(p.symbol, signedPnl(p.side, p.avgPrice, last, p.qty, p.symbol));
+    }
+    return hits.length;
+  }
+
+  async function placePaperOrder(
+    parsed: PaperOrderBody,
+  ): Promise<{ ok: true; mapped: string; last: number } | { ok: false; error: string }> {
+    const mockErr = assertMockOnly();
+    if (mockErr) return { ok: false, error: mockErr };
+    const quotes = await fetchDelayedQuotes([parsed.symbol]);
+    const last = lastFromQuotes(quotes, parsed.symbol);
+    if (last === null) return { ok: false, error: "no delayed last" };
+    await ensureSleeves();
+    const clock = computeClock(new Date(), deps.getEvents());
+    const v = validatePaperOrder(parsed, {
+      last,
+      gateMode: clock.mode,
+      dailyLossUsd: deps.engine.dailyLossUsd,
+      dayPnl: deps.broker.getDayPnl(),
+      sleeveRealizedPnl: memory.sleeves[parsed.sleeveId].paper.realizedPnlUsd,
+    });
+    if (!v.ok) return { ok: false, error: v.error };
+    const open = deps.broker
+      .getPositionsSync()
+      .find((p) => p.side !== "Flat" && p.qty > 0 && matchSym(p.symbol, v.mapped));
+    if (open) return { ok: false, error: `already open ${open.symbol}` };
+    if (parsed.sleeveId === "options") {
+      deps.engine.log(
+        "options sleeve: option legs are not modeled yet; paper is underlying ETF only (SPY/QQQ/IWM)",
+      );
+    }
+    if (v.warn) {
+      deps.engine.log(`paper risk note ${v.mapped}: ${v.warn}`);
+    }
+    deps.broker.injectPosition({
+      symbol: v.mapped,
+      qty: parsed.qty,
+      side: positionSideFor(parsed.side),
+      avgPrice: last,
+      unrealizedPnl: 0,
+      sleeveId: parsed.sleeveId,
+    });
+    const stop = deps.broker.injectOrder({
+      symbol: v.mapped,
+      type: "StopMarket",
+      side: oppositeSide(parsed.side),
+      qty: parsed.qty,
+      stopPrice: parsed.stopPrice,
+      sleeveId: parsed.sleeveId,
+    });
+    await ensureBlotter();
+    const fill = makeFill({
+      sleeveId: parsed.sleeveId,
+      symbol: v.mapped,
+      side: parsed.side,
+      qty: parsed.qty,
+      price: last,
+      notes: parsed.thesis,
+    });
+    memory.blotter.push(fill);
+    if (memory.blotter.length > 200) {
+      memory.blotter.splice(0, memory.blotter.length - 200);
+    }
+    await persistBlotter();
+    sessionNote(
+      "paper_order",
+      `${parsed.sleeveId} ${parsed.side} ${parsed.qty} ${v.mapped} @ ${last} stop ${parsed.stopPrice}`,
+    );
+    deps.engine.log(
+      `paper ${parsed.side} ${parsed.qty} ${v.mapped} @ ${last} stop ${stop.stopPrice} ${stop.side} StopMarket (MockBroker, not Tradovate, not live)`,
+    );
+    return { ok: true, mapped: v.mapped, last };
+  }
+
+  async function closePaperPosition(
+    parsed: PaperCloseBody,
+  ): Promise<{ ok: true } | { ok: false; error: string; status?: number }> {
+    const mockErr = assertMockOnly();
+    if (mockErr) return { ok: false, error: mockErr };
+    const mapped = mapTicker(parsed.symbol) ?? parsed.symbol;
+    const pos = deps.broker.getPositionsSync().find(
+      (p) =>
+        p.side !== "Flat" &&
+        p.qty > 0 &&
+        matchSym(p.symbol, mapped) &&
+        (p.sleeveId === parsed.sleeveId || p.sleeveId === undefined),
+    );
+    if (!pos) return { ok: false, error: "no open paper position", status: 404 };
+    const quotes = await fetchDelayedQuotes([pos.symbol]);
+    const last = lastFromQuotes(quotes, pos.symbol);
+    if (last === null) return { ok: false, error: "no delayed last" };
+    const pnl = signedPnl(pos.side, pos.avgPrice, last, pos.qty, pos.symbol);
+    const live = new Set(["Working", "Submitted", "Accepted"]);
+    const working = deps.broker
+      .getOrdersSync()
+      .filter((o) => live.has(o.state) && matchSym(o.symbol, pos.symbol));
+    if (working.length) {
+      await deps.broker.cancelOrders(
+        working.map((o) => o.id),
+        `paper close ${parsed.reason}`,
+      );
+    }
+    await deps.broker.flattenSymbols([pos.symbol], parsed.reason);
+    await recordPaperExit({
+      sleeveId: parsed.sleeveId,
+      symbol: pos.symbol,
+      side: closeSideFor(pos.side),
+      qty: pos.qty,
+      price: last,
+      notes: parsed.reason,
+      realizedPnl: pnl,
+    });
+    return { ok: true };
+  }
+
+  let autoRunning = false;
+  async function runWiredAutopilot(): Promise<void> {
+    if (autoRunning) return;
+    autoRunning = true;
+    try {
+      await ensureAutoPaper();
+      await ensureSleeves();
+      if (!memory.autoPaper) return;
+      const mockErr = assertMockOnly();
+      if (mockErr) {
+        deps.engine.log(`auto paper idle: ${mockErr}`);
+        return;
+      }
+      const cache = getScanFeaturesCache();
+      const scanReady = cache !== null;
+      const momentumRows = cache
+        ? rankMomentum(cache.rows, cache.spyRet63, cache.spyRet252)
+        : [];
+      const ownershipRows = cache ? rankOwnership(cache.rows, cache.spyRet63) : [];
+      const featureRows = cache
+        ? cache.rows.map((r) => ({ symbol: r.symbol, above200: r.features.above200 }))
+        : [];
+      await runAutopilot({
+        enabled: memory.autoPaper,
+        getPositions: () => deps.broker.getPositionsSync(),
+        getSleeves: () => memory.sleeves,
+        momentumRows,
+        ownershipRows,
+        featureRows,
+        scanReady,
+        place: async (buy: AutoBuy) => {
+          const quotes = await fetchDelayedQuotes([buy.symbol]);
+          const last = lastFromQuotes(quotes, buy.symbol);
+          if (last === null) return { ok: false, error: "no delayed last" };
+          const mul = buy.sleeveId === "momentum" ? MOMENTUM_STOP_MUL : OWNERSHIP_STOP_MUL;
+          const stopPrice = last * mul;
+          const book = sleeveBook(
+            memory.sleeves[buy.sleeveId],
+            deps.broker.getPositionsSync(),
+            quotes,
+          );
+          const qty = sizeByStopRisk(last, stopPrice, buy.symbol, book.equityUsd);
+          return placePaperOrder({
+            sleeveId: buy.sleeveId,
+            symbol: buy.symbol,
+            side: "Buy",
+            qty,
+            stopPrice,
+            thesis: buy.thesis,
+          });
+        },
+        close: async (sell: AutoSell) => closePaperPosition(sell),
+        log: (line) => deps.engine.log(line),
+      });
+    } catch (err) {
+      deps.engine.log(
+        `auto paper error: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      autoRunning = false;
+    }
+  }
+
   async function snapshot(): Promise<StatusSnapshot> {
     const now = new Date();
     const events = deps.getEvents();
     const clock = computeClock(now, events);
+    await markPaperQuiet();
     await ensureSleeves();
     await ensureBlotter();
+    await ensureAutoPaper();
     let freeze = memory.freeze;
     let knowledgeTime = memory.knowledgeTime;
     if (deps.pool) {
@@ -306,6 +639,8 @@ export function buildApp(deps: AppDeps): express.Express {
       sleeves: memory.sleeves,
       activeSleeve: memory.activeSleeve,
       paperBlotter: memory.blotter.slice(-200),
+      autoPaper: memory.autoPaper,
+      sleeveBooks: allSleeveBooks(memory.sleeves, deps.broker.getPositionsSync()),
     };
   }
 
@@ -560,7 +895,8 @@ export function buildApp(deps: AppDeps): express.Express {
     res.json({ sleeves: memory.sleeves, activeSleeve: memory.activeSleeve });
   });
 
-  // Thesis / paper iteration only. No flatten, buy, sell, or EnterLong for non-day sleeves.
+  // Sleeve PUT is thesis/stats only. Paper BUY/SELL is MockBroker via POST /api/paper/order.
+  // Live/demo Tradovate is still refused — never EnterLong on a live broker.
   app.put("/api/sleeves/:id", async (req, res) => {
     const id = parseSleeveId(String(req.params.id));
     if (!id) {
@@ -608,7 +944,18 @@ export function buildApp(deps: AppDeps): express.Express {
     await ensureSleeves();
     const symbols = symbolsForSleeve(memory.sleeves[id], id);
     const quotes = await fetchDelayedQuotes(symbols);
+    const hits = await markPaperQuiet();
+    if (hits > 0) await publishStatus();
     res.json({ sleeve: id, delayed: true, quotes });
+  });
+
+  app.get("/api/scan", async (req, res) => {
+    const sleeve = String(req.query.sleeve ?? "");
+    if (sleeve !== "momentum" && sleeve !== "ownership") {
+      res.status(400).json({ error: "sleeve=momentum|ownership required" });
+      return;
+    }
+    res.json(await getScan(sleeve));
   });
 
   // Paper journal only. Never send to MockBroker or Tradovate.
@@ -692,6 +1039,62 @@ export function buildApp(deps: AppDeps): express.Express {
     await publishStatus();
     res.json(await snapshot());
   });
+
+  app.post("/api/paper/order", async (req, res) => {
+    const parsed = parsePaperOrder(req.body);
+    if ("error" in parsed) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+    const placed = await placePaperOrder(parsed);
+    if (!placed.ok) {
+      res.status(placed.error.includes("MockBroker only") ? 403 : 400).json({ error: placed.error });
+      return;
+    }
+    await publishStatus();
+    res.json(await snapshot());
+  });
+
+  app.post("/api/paper/close", async (req, res) => {
+    const parsed = parsePaperClose(req.body);
+    if ("error" in parsed) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+    const closed = await closePaperPosition(parsed);
+    if (!closed.ok) {
+      const status = closed.status ?? (closed.error.includes("MockBroker only") ? 403 : 400);
+      res.status(status).json({ error: closed.error });
+      return;
+    }
+    await publishStatus();
+    res.json(await snapshot());
+  });
+
+  app.post("/api/paper/auto", async (req, res) => {
+    await ensureAutoPaper();
+    const enabled = Boolean(req.body?.enabled);
+    memory.autoPaper = enabled;
+    await persistAutoPaper();
+    deps.engine.log(
+      enabled
+        ? "auto paper enabled (mock only, day sleeve not auto)"
+        : "auto paper disabled",
+    );
+    if (enabled) await runWiredAutopilot();
+    await publishStatus();
+    res.json(await snapshot());
+  });
+
+  attachScanReady(() => {
+    void runWiredAutopilot();
+  });
+  stopAutoPaperLoop();
+  if (deps.cfg.nodeEnv !== "test") {
+    autoPaperTimer = setInterval(() => {
+      void runWiredAutopilot();
+    }, AUTO_PAPER_INTERVAL_MS);
+  }
 
   return app;
 }

@@ -8,11 +8,16 @@ import {
   type DelayedQuote,
   type FreezeCard,
   type PaperFill,
+  type ScanRow,
+  type ScanSleeve,
   type SleeveCard,
+  type SleeveBook,
   type SleeveId,
   type StatusSnapshot,
 } from "../../shared/types";
 import { api } from "./api";
+import { PaperBanner, PaperTradeRow, type PaperPrefill } from "./PaperTrade";
+import { ScanPanel } from "./ScanPanel";
 
 const TAB_LABELS: { id: SleeveId; label: string }[] = [
   { id: "day", label: "Day" },
@@ -70,6 +75,22 @@ function formatAsOf(iso: string | null): string {
       hourCycle: "h23",
     }) + " ET"
   );
+}
+
+function formatPnlUsd(n: number): string {
+  const abs = Math.abs(n).toFixed(2);
+  if (n > 0) return `+$${abs}`;
+  if (n < 0) return `-$${abs}`;
+  return `$${abs}`;
+}
+
+function formatPnlPct(pnl: number, equity: number): string {
+  if (!Number.isFinite(equity) || equity === 0) return "";
+  const start = equity - pnl;
+  if (!Number.isFinite(start) || start === 0) return "";
+  const pct = (pnl / start) * 100;
+  const sign = pct > 0 ? "+" : "";
+  return `${sign}${pct.toFixed(2)}%`;
 }
 
 function formatFillTs(iso: string): string {
@@ -300,6 +321,7 @@ export default function App() {
   const [tab, setTab] = useState<SleeveId>("day");
   const [sleeveDraft, setSleeveDraft] = useState<SleeveCard | null>(null);
   const [quotes, setQuotes] = useState<DelayedQuote[]>([]);
+  const [paperPrefill, setPaperPrefill] = useState<PaperPrefill | null>(null);
 
   const apply = useCallback((s: StatusSnapshot) => {
     setState(s);
@@ -415,6 +437,7 @@ export default function App() {
 
   const sleeves = state?.sleeves ?? defaultSleeves();
   useEffect(() => {
+    setPaperPrefill(null);
     if (tab === "day") return;
     const card = sleeves[tab];
     if (card) setSleeveDraft({ ...card, paper: { ...card.paper } });
@@ -452,7 +475,9 @@ export default function App() {
       <header className="top">
         <div className="brand">EVENT GATE</div>
         <span className="sep">|</span>
-        <div className="sim">SIMULATION · {state.broker.name.toUpperCase()}</div>
+        <div className="sim">PAPER · MOCK</div>
+        <span className="sep">|</span>
+        <div className="muted">{state.broker.name}</div>
         <span className="sep">|</span>
         <div className="clock">{clock?.nowEt}</div>
         <div className="grow" />
@@ -467,20 +492,46 @@ export default function App() {
             GATE {state.gateEnabled ? "ON" : "OFF"}
           </span>
         </label>
+        <label className="toggle" title="Auto paper from S&P scan. Mock only. Stops in the book. Day sleeve not auto.">
+          <input
+            type="checkbox"
+            checked={state.autoPaper !== false}
+            onChange={() => post("/api/paper/auto", { enabled: state.autoPaper === false })}
+          />
+          <span className="switch" />
+          <span className={`badge ${state.autoPaper !== false ? "on" : "off"}`}>
+            AUTO PAPER {state.autoPaper !== false ? "ON" : "OFF"}
+          </span>
+        </label>
       </header>
 
       <nav className="tabs">
-        {TAB_LABELS.map((t) => (
-          <button
-            key={t.id}
-            className={`tab ${tab === t.id ? "active" : ""}`}
-            onClick={() => setTab(t.id)}
-            type="button"
-          >
-            {t.label}
-          </button>
-        ))}
+        {TAB_LABELS.map((t) => {
+          const book: SleeveBook | undefined = state.sleeveBooks?.[t.id];
+          const pnl = book?.pnlUsd ?? 0;
+          const equity = book?.equityUsd ?? 100_000;
+          const pnlCls = pnl > 0 ? "ok" : pnl < 0 ? "err" : "muted";
+          const pct = formatPnlPct(pnl, equity);
+          return (
+            <button
+              key={t.id}
+              className={`tab ${tab === t.id ? "active" : ""}`}
+              onClick={() => setTab(t.id)}
+              type="button"
+              title={`Mock $${equity.toFixed(0)} equity · P/L ${formatPnlUsd(pnl)}${pct ? " " + pct : ""}`}
+            >
+              <span>{t.label}</span>
+              <span className={`tab-pnl ${pnlCls}`}>
+                {formatPnlUsd(pnl)}
+                {pct ? <span className="tab-pct"> {pct}</span> : null}
+              </span>
+            </button>
+          );
+        })}
       </nav>
+      <div className="hint auto-hint">
+        Auto paper from S&amp;P scan. Mock only. Stops in the book. Day sleeve not auto. Each sleeve starts at mock $100,000.
+      </div>
 
       {tab === "day" && (
       <>
@@ -497,6 +548,18 @@ export default function App() {
       </div>
 
       <QuoteStrip quotes={quotes} />
+      <PaperBanner />
+      <div className="blotter-wrap">
+        <PaperTradeRow
+          sleeveId="day"
+          quotes={quotes}
+          positions={state.broker.positions}
+          orders={state.broker.orders}
+          apply={apply}
+          setAuthNeeded={setAuthNeeded}
+          setErr={setErr}
+        />
+      </div>
 
       <div className="grid">
         <section className="panel">
@@ -731,7 +794,7 @@ export default function App() {
                 <span key={r} className="mono">{r}</span>
               ))}
             </div>
-            <div className="hint">No buy/sell/EnterLong from this app. Paper only.</div>
+            <div className="hint">Paper buy/sell is MockBroker only. Live Tradovate stays off. Flatten sleeve + gate still bind the day book.</div>
           </div>
         </section>
       </div>
@@ -762,12 +825,40 @@ export default function App() {
 
       {tab !== "day" && sleeveDraft && (
         <div className="sleeve-grid">
+          {(tab === "momentum" || tab === "ownership") && (
+            <ScanPanel
+              sleeve={tab as ScanSleeve}
+              setAuthNeeded={setAuthNeeded}
+              setErr={setErr}
+              onPaperThis={(row: ScanRow) => {
+                const pct = tab === "momentum" ? 0.015 : 0.02;
+                setPaperPrefill({
+                  symbol: row.symbol,
+                  stopPrice: String(Number((row.last * (1 - pct)).toFixed(4))),
+                  side: "Buy",
+                  thesis: row.why,
+                  key: Date.now(),
+                });
+              }}
+            />
+          )}
           <section className="panel">
             <h2>{sleeveDraft.name}</h2>
             <div className="body">
               <QuoteStrip quotes={quotes} />
+              <PaperBanner />
+              <PaperTradeRow
+                sleeveId={tab}
+                quotes={quotes}
+                positions={state.broker.positions}
+                orders={state.broker.orders}
+                apply={apply}
+                setAuthNeeded={setAuthNeeded}
+                setErr={setErr}
+                prefill={paperPrefill}
+              />
               <div className="hint">
-                Paper only. No buy/sell from this app. Iterate from fills you record here.
+                Paper buy/sell fills at delayed last on MockBroker. Iterate from fills. Not live.
               </div>
               <div className="kv">
                 <div className="k">horizon</div>
