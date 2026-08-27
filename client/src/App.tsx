@@ -1,12 +1,23 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   CHECKLIST_LABELS,
+  defaultSleeves,
   emptyFreeze,
+  SLEEVE_STATUSES,
   type Checklist,
   type FreezeCard,
+  type SleeveCard,
+  type SleeveId,
   type StatusSnapshot,
 } from "../../shared/types";
 import { api } from "./api";
+
+const TAB_LABELS: { id: SleeveId; label: string }[] = [
+  { id: "day", label: "Day" },
+  { id: "momentum", label: "Momentum" },
+  { id: "options", label: "Options" },
+  { id: "ownership", label: "Ownership" },
+];
 
 function modeClass(mode: string): string {
   if (mode === "PRE-ARM") return "pre";
@@ -40,6 +51,8 @@ export default function App() {
     qty: "1",
     stopPrice: "5800",
   });
+  const [tab, setTab] = useState<SleeveId>("day");
+  const [sleeveDraft, setSleeveDraft] = useState<SleeveCard | null>(null);
 
   const apply = useCallback((s: StatusSnapshot) => {
     setState(s);
@@ -129,6 +142,15 @@ export default function App() {
     [freeze, state],
   );
 
+  const sleeves = state?.sleeves ?? defaultSleeves();
+  useEffect(() => {
+    if (tab === "day") return;
+    const card = sleeves[tab];
+    if (card) setSleeveDraft({ ...card, paper: { ...card.paper } });
+    // Sync draft when switching tabs, not on every 1s poll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
   if (authNeeded) {
     return (
       <div className="login">
@@ -176,6 +198,21 @@ export default function App() {
         </label>
       </header>
 
+      <nav className="tabs">
+        {TAB_LABELS.map((t) => (
+          <button
+            key={t.id}
+            className={`tab ${tab === t.id ? "active" : ""}`}
+            onClick={() => setTab(t.id)}
+            type="button"
+          >
+            {t.label}
+          </button>
+        ))}
+      </nav>
+
+      {tab === "day" && (
+      <>
       <div className={`banner ${modeClass(clock?.mode ?? "idle")}`}>
         <span className={`badge ${modeClass(clock?.mode ?? "idle")}`}>{clock?.mode}</span>
         <span>
@@ -436,6 +473,190 @@ export default function App() {
         </div>
         {err && <div className="err" style={{ padding: "4px 14px" }}>{err}</div>}
       </div>
+      </>
+      )}
+
+      {tab !== "day" && sleeveDraft && (
+        <div className="sleeve-grid">
+          <section className="panel">
+            <h2>{sleeveDraft.name}</h2>
+            <div className="body">
+              <div className="hint">
+                Paper only. No buy/sell from this app. Iterate from fills you record here.
+              </div>
+              <div className="kv">
+                <div className="k">horizon</div>
+                <div>
+                  <input
+                    value={sleeveDraft.horizon}
+                    onChange={(e) => setSleeveDraft({ ...sleeveDraft, horizon: e.target.value })}
+                  />
+                </div>
+                <div className="k">budget %</div>
+                <div>
+                  <input
+                    type="number"
+                    value={sleeveDraft.budgetPct}
+                    onChange={(e) =>
+                      setSleeveDraft({ ...sleeveDraft, budgetPct: Number(e.target.value) })
+                    }
+                  />
+                </div>
+                <div className="k">loss cap $</div>
+                <div>
+                  <input
+                    type="number"
+                    value={sleeveDraft.lossCapUsd}
+                    onChange={(e) =>
+                      setSleeveDraft({ ...sleeveDraft, lossCapUsd: Number(e.target.value) })
+                    }
+                  />
+                </div>
+                <div className="k">status</div>
+                <div>
+                  <select
+                    value={sleeveDraft.status}
+                    onChange={(e) =>
+                      setSleeveDraft({
+                        ...sleeveDraft,
+                        status: e.target.value as SleeveCard["status"],
+                      })
+                    }
+                  >
+                    {SLEEVE_STATUSES.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <label>Thesis</label>
+              <textarea
+                value={sleeveDraft.thesis}
+                onChange={(e) => setSleeveDraft({ ...sleeveDraft, thesis: e.target.value })}
+                placeholder="What has to be true"
+              />
+              <label>Macro drivers</label>
+              <textarea
+                value={sleeveDraft.macroDrivers}
+                onChange={(e) => setSleeveDraft({ ...sleeveDraft, macroDrivers: e.target.value })}
+              />
+              <label>Micro drivers</label>
+              <textarea
+                value={sleeveDraft.microDrivers}
+                onChange={(e) => setSleeveDraft({ ...sleeveDraft, microDrivers: e.target.value })}
+              />
+              <label>Instruments</label>
+              <input
+                value={sleeveDraft.instruments}
+                onChange={(e) => setSleeveDraft({ ...sleeveDraft, instruments: e.target.value })}
+              />
+              <label>Structure</label>
+              <textarea
+                value={sleeveDraft.structure}
+                onChange={(e) => setSleeveDraft({ ...sleeveDraft, structure: e.target.value })}
+              />
+              <label>Kill rules</label>
+              <textarea
+                value={sleeveDraft.killRules}
+                onChange={(e) => setSleeveDraft({ ...sleeveDraft, killRules: e.target.value })}
+              />
+              <label>Paper stats</label>
+              <div className="stats-row">
+                <div>
+                  <label>Trades</label>
+                  <input
+                    type="number"
+                    value={sleeveDraft.paper.trades}
+                    onChange={(e) =>
+                      setSleeveDraft({
+                        ...sleeveDraft,
+                        paper: { ...sleeveDraft.paper, trades: Number(e.target.value) },
+                      })
+                    }
+                  />
+                </div>
+                <div>
+                  <label>Wins</label>
+                  <input
+                    type="number"
+                    value={sleeveDraft.paper.wins}
+                    onChange={(e) =>
+                      setSleeveDraft({
+                        ...sleeveDraft,
+                        paper: { ...sleeveDraft.paper, wins: Number(e.target.value) },
+                      })
+                    }
+                  />
+                </div>
+                <div>
+                  <label>Losses</label>
+                  <input
+                    type="number"
+                    value={sleeveDraft.paper.losses}
+                    onChange={(e) =>
+                      setSleeveDraft({
+                        ...sleeveDraft,
+                        paper: { ...sleeveDraft.paper, losses: Number(e.target.value) },
+                      })
+                    }
+                  />
+                </div>
+                <div>
+                  <label>Realized P&amp;L</label>
+                  <input
+                    type="number"
+                    value={sleeveDraft.paper.realizedPnlUsd}
+                    onChange={(e) =>
+                      setSleeveDraft({
+                        ...sleeveDraft,
+                        paper: { ...sleeveDraft.paper, realizedPnlUsd: Number(e.target.value) },
+                      })
+                    }
+                  />
+                </div>
+              </div>
+              <label>Notes</label>
+              <textarea
+                value={sleeveDraft.paper.notes}
+                onChange={(e) =>
+                  setSleeveDraft({
+                    ...sleeveDraft,
+                    paper: { ...sleeveDraft.paper, notes: e.target.value },
+                  })
+                }
+                placeholder="fills you recorded by hand"
+              />
+              <div className="kv">
+                <div className="k">updated</div>
+                <div className="mono">{sleeveDraft.updatedAt ?? "—"}</div>
+              </div>
+              <div className="btns">
+                <button
+                  className="good"
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const s = (await api(`/api/sleeves/${sleeveDraft.id}`, {
+                        method: "PUT",
+                        body: JSON.stringify(sleeveDraft),
+                      })) as StatusSnapshot;
+                      apply(s);
+                      const next = s.sleeves?.[sleeveDraft.id];
+                      if (next) setSleeveDraft({ ...next, paper: { ...next.paper } });
+                      setErr(null);
+                    } catch (e: any) {
+                      if (e.status === 401) setAuthNeeded(true);
+                      else setErr(e.message);
+                    }
+                  }}
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

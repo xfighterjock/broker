@@ -48,6 +48,8 @@ export const MARKET_OR_STOP: ReadonlySet<string> = new Set([
 export const DEMO_TRADOVATE_HOST = "demo.tradovateapi.com";
 export const DEMO_TRADOVATE_BASE = "https://demo.tradovateapi.com/v1";
 
+export const SLEEVE_IDS = ["day", "momentum", "options", "ownership"] as const;
+
 export const REDIS_KEYS = {
   gateEnabled: "gate:enabled",
   dailyLoss: "gate:daily_loss",
@@ -55,6 +57,7 @@ export const REDIS_KEYS = {
   mockPositions: "mock:positions",
   mockDayPnl: "mock:day_pnl",
   flattenFired: "gate:flatten_fired",
+  sleeves: "sleeves:cards",
 } as const;
 
 export const REDIS_CHANNELS = {

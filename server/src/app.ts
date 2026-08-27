@@ -6,16 +6,21 @@ import {
   MAX_QTY,
   REDIS_CHANNELS,
   REDIS_KEYS,
+  SLEEVE_IDS,
   TRADER,
   TZ,
 } from "../../shared/constants";
 import { computeClock } from "../../shared/clock";
 import {
+  applyPaperPatch,
+  applySleevePatch,
+  defaultSleeves,
   emptyChecklist,
   emptyFreeze,
   type CalendarEvent,
   type Checklist,
   type FreezeCard,
+  type SleeveId,
   type StatusSnapshot,
 } from "../../shared/types";
 import {
@@ -105,7 +110,45 @@ export function buildApp(deps: AppDeps): express.Express {
     knowledgeTime: null as string | null,
     checklist: emptyChecklist(),
     sessionLog: [] as { ts: string; kind: string; message: string }[],
+    sleeves: defaultSleeves(),
+    activeSleeve: "day" as SleeveId,
+    sleevesHydrated: false,
   };
+
+  async function ensureSleeves(): Promise<void> {
+    if (memory.sleevesHydrated) return;
+    memory.sleevesHydrated = true;
+    if (!deps.redis) return;
+    try {
+      const raw = await deps.redis.get(REDIS_KEYS.sleeves);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const base = defaultSleeves();
+      for (const id of SLEEVE_IDS) {
+        const row = parsed[id];
+        if (row && typeof row === "object") {
+          const patched = applySleevePatch(base[id], row as Record<string, unknown>);
+          const storedAt = (row as { updatedAt?: unknown }).updatedAt;
+          patched.updatedAt = typeof storedAt === "string" ? storedAt : null;
+          patched.id = id;
+          patched.name = base[id].name;
+          base[id] = patched;
+        }
+      }
+      memory.sleeves = base;
+    } catch {
+      /* keep defaults */
+    }
+  }
+
+  async function persistSleeves(): Promise<void> {
+    if (!deps.redis) return;
+    try {
+      await deps.redis.set(REDIS_KEYS.sleeves, JSON.stringify(memory.sleeves));
+    } catch {
+      /* ignore */
+    }
+  }
 
   async function persistLog(line: string, ts: string): Promise<void> {
     if (deps.pool) {
@@ -147,6 +190,7 @@ export function buildApp(deps: AppDeps): express.Express {
     const now = new Date();
     const events = deps.getEvents();
     const clock = computeClock(now, events);
+    await ensureSleeves();
     let freeze = memory.freeze;
     let knowledgeTime = memory.knowledgeTime;
     if (deps.pool) {
@@ -200,6 +244,8 @@ export function buildApp(deps: AppDeps): express.Express {
         dayPnl: deps.broker.getDayPnl(),
         account: "SIMULATION",
       },
+      sleeves: memory.sleeves,
+      activeSleeve: memory.activeSleeve,
     };
   }
 
@@ -441,6 +487,54 @@ export function buildApp(deps: AppDeps): express.Express {
         deps.engine.log(`reload failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
+    await publishStatus();
+    res.json(await snapshot());
+  });
+
+  function parseSleeveId(raw: string): SleeveId | null {
+    return (SLEEVE_IDS as readonly string[]).includes(raw) ? (raw as SleeveId) : null;
+  }
+
+  app.get("/api/sleeves", async (_req, res) => {
+    await ensureSleeves();
+    res.json({ sleeves: memory.sleeves, activeSleeve: memory.activeSleeve });
+  });
+
+  // Thesis / paper iteration only. No flatten, buy, sell, or EnterLong for non-day sleeves.
+  app.put("/api/sleeves/:id", async (req, res) => {
+    const id = parseSleeveId(String(req.params.id));
+    if (!id) {
+      res.status(404).json({ error: "unknown sleeve" });
+      return;
+    }
+    await ensureSleeves();
+    memory.sleeves[id] = applySleevePatch(
+      memory.sleeves[id],
+      (req.body ?? {}) as Record<string, unknown>,
+    );
+    await persistSleeves();
+    sessionNote("sleeve", `${id} saved`);
+    deps.engine.log(`sleeve ${id} saved`);
+    await publishStatus();
+    res.json(await snapshot());
+  });
+
+  app.post("/api/sleeves/:id/paper", async (req, res) => {
+    const id = parseSleeveId(String(req.params.id));
+    if (!id) {
+      res.status(404).json({ error: "unknown sleeve" });
+      return;
+    }
+    await ensureSleeves();
+    const card = memory.sleeves[id];
+    memory.sleeves[id] = {
+      ...card,
+      paper: applyPaperPatch(card.paper, (req.body ?? {}) as Record<string, unknown>),
+      updatedAt: new Date().toISOString(),
+    };
+    await persistSleeves();
+    sessionNote("sleeve", `${id} paper stats`);
+    deps.engine.log(`sleeve ${id} paper stats`);
     await publishStatus();
     res.json(await snapshot());
   });

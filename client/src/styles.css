@@ -230,3 +230,47 @@ tr.active-row { background: #1a2430; }
   font-size: 11px;
   color: var(--cyan);
 }
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--line);
+  background: #0c1016;
+  flex-wrap: wrap;
+}
+.tab {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 12px;
+}
+.tab:hover { color: var(--text); border-color: var(--line); }
+.tab.active {
+  color: var(--cyan);
+  border-color: var(--cyan);
+  background: #101820;
+}
+
+.sleeve-grid {
+  padding: 8px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.sleeve-grid .panel {
+  flex: 1;
+  max-width: 920px;
+}
+.stats-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+@media (max-width: 700px) {
+  .stats-row { grid-template-columns: 1fr 1fr; }
+}
