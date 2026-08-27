@@ -21,4 +21,4 @@ A funded live NT account (at least one thousand USD) plus the about twenty-five 
 ## Tests
 npm test runs vitest. No live postgres required. clock.test.ts injects Date. gate.test.ts covers cancel/flatten on MockBroker. tradovate.test.ts refuses live URLs.
 ## API on 127.0.0.1:3001
-GET /api/status. GET and PUT /api/freeze. POST /api/knowledge-time. POST /api/gate/enable. POST /api/flatten. POST /api/cancel-stops. POST /api/mock/inject-stop. GET /api/orders. GET /api/events. GET /api/log. WebSocket /ws for live status plus log. Login: POST /api/auth/login with password, cookie eg.sid.
+GET /api/status. GET /api/quotes?sleeve=day|momentum|options|ownership (Yahoo chart v8, delayed, 45s cache). POST /api/sleeves/:id/fills paper journal (not broker). DELETE /api/sleeves/:id/fills/:fillId. GET and PUT /api/freeze. POST /api/knowledge-time. POST /api/gate/enable. POST /api/flatten. POST /api/cancel-stops. POST /api/mock/inject-stop. GET /api/orders. GET /api/events. GET /api/log. WebSocket /ws for live status plus log. Login: POST /api/auth/login with password, cookie eg.sid. No /api/order, no buy/sell/EnterLong.

@@ -5,7 +5,9 @@ import {
   emptyFreeze,
   SLEEVE_STATUSES,
   type Checklist,
+  type DelayedQuote,
   type FreezeCard,
+  type PaperFill,
   type SleeveCard,
   type SleeveId,
   type StatusSnapshot,
@@ -38,6 +40,250 @@ function formatEventEt(iso: string): string {
   });
 }
 
+
+function formatPx(n: number | null): string {
+  if (n === null || !Number.isFinite(n)) return "—";
+  const abs = Math.abs(n);
+  if (abs >= 100) return n.toFixed(2);
+  if (abs >= 1) return n.toFixed(3);
+  return n.toFixed(4);
+}
+
+function formatChange(q: DelayedQuote): string {
+  if (q.change === null) return "—";
+  const sign = q.change > 0 ? "+" : "";
+  const pct =
+    q.changePct === null
+      ? ""
+      : ` (${q.changePct > 0 ? "+" : ""}${q.changePct.toFixed(2)}%)`;
+  return `${sign}${formatPx(q.change)}${pct}`;
+}
+
+function formatAsOf(iso: string | null): string {
+  if (!iso) return "—";
+  return (
+    new Date(iso).toLocaleTimeString("en-US", {
+      timeZone: "America/New_York",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    }) + " ET"
+  );
+}
+
+function formatFillTs(iso: string): string {
+  return new Date(iso).toLocaleString("en-US", {
+    timeZone: "America/New_York",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+}
+
+function lastForSymbol(quotes: DelayedQuote[], symbol: string): number | null {
+  const u = symbol.trim().toUpperCase();
+  if (!u) return null;
+  const hit = quotes.find(
+    (q) => q.symbol.toUpperCase() === u || q.symbol.toUpperCase() === `${u}=F`,
+  );
+  return hit && hit.last !== null ? hit.last : null;
+}
+
+const DELAYED_HINT =
+  "Delayed public last (Yahoo). Not a live book. Paper fills are a journal, not broker orders.";
+
+function QuoteStrip({ quotes }: { quotes: DelayedQuote[] }) {
+  return (
+    <div className="quotes">
+      {quotes.map((q) => {
+        const dir =
+          q.change === null || q.change === 0 ? "flat" : q.change > 0 ? "up" : "down";
+        return (
+          <div key={q.symbol} className={`quote ${dir}`}>
+            <span className="sym">{q.symbol}</span>
+            <span className="last">{q.error ? "—" : formatPx(q.last)}</span>
+            <span className="chg">{q.error ? q.error : formatChange(q)}</span>
+            <span className="badge delayed">DELAYED</span>
+            <span className="asof muted">{formatAsOf(q.asOf)}</span>
+          </div>
+        );
+      })}
+      {quotes.length === 0 && <div className="muted">quotes…</div>}
+      <span className="hint">{DELAYED_HINT}</span>
+    </div>
+  );
+}
+
+function PaperBlotter({
+  sleeveId,
+  fills,
+  quotes,
+  apply,
+  setAuthNeeded,
+  setErr,
+}: {
+  sleeveId: SleeveId;
+  fills: PaperFill[];
+  quotes: DelayedQuote[];
+  apply: (s: StatusSnapshot) => void;
+  setAuthNeeded: (v: boolean) => void;
+  setErr: (v: string | null) => void;
+}) {
+  const [form, setForm] = useState({
+    symbol: "",
+    side: "Buy" as "Buy" | "Sell",
+    qty: "1",
+    price: "",
+    notes: "",
+  });
+
+  useEffect(() => {
+    const first = quotes[0]?.symbol;
+    if (!form.symbol && first) {
+      setForm((f) => (f.symbol ? f : { ...f, symbol: first }));
+    }
+  }, [quotes, form.symbol]);
+
+  const sleeveFills = fills.filter((f) => f.sleeveId === sleeveId);
+
+  function fillAtLast() {
+    const want = form.symbol.trim() || quotes[0]?.symbol || "";
+    const last = lastForSymbol(quotes, want);
+    if (last === null) {
+      setErr("no delayed last for that symbol");
+      return;
+    }
+    setForm((f) => ({ ...f, symbol: want, price: String(last) }));
+    setErr(null);
+  }
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    try {
+      const s = (await api(`/api/sleeves/${sleeveId}/fills`, {
+        method: "POST",
+        body: JSON.stringify({
+          symbol: form.symbol,
+          side: form.side,
+          qty: Number(form.qty),
+          price: Number(form.price),
+          notes: form.notes,
+        }),
+      })) as StatusSnapshot;
+      apply(s);
+      setForm((f) => ({ ...f, qty: "1", price: "", notes: "" }));
+      setErr(null);
+    } catch (err: any) {
+      if (err.status === 401) setAuthNeeded(true);
+      else setErr(err.message);
+    }
+  }
+
+  async function remove(id: string) {
+    try {
+      const s = (await api(`/api/sleeves/${sleeveId}/fills/${id}`, {
+        method: "DELETE",
+      })) as StatusSnapshot;
+      apply(s);
+      setErr(null);
+    } catch (err: any) {
+      if (err.status === 401) setAuthNeeded(true);
+      else setErr(err.message);
+    }
+  }
+
+  return (
+    <section className="panel">
+      <h2>Paper blotter</h2>
+      <div className="body">
+        <div className="hint">{DELAYED_HINT}</div>
+        <form className="fill-form" onSubmit={submit}>
+          <div>
+            <label>Symbol</label>
+            <input
+              value={form.symbol}
+              onChange={(e) => setForm({ ...form, symbol: e.target.value })}
+              placeholder="MES=F"
+            />
+          </div>
+          <div>
+            <label>Side</label>
+            <select
+              value={form.side}
+              onChange={(e) => setForm({ ...form, side: e.target.value as "Buy" | "Sell" })}
+            >
+              <option>Buy</option>
+              <option>Sell</option>
+            </select>
+          </div>
+          <div>
+            <label>Qty</label>
+            <input
+              value={form.qty}
+              onChange={(e) => setForm({ ...form, qty: e.target.value })}
+            />
+          </div>
+          <div>
+            <label>Price</label>
+            <input
+              value={form.price}
+              onChange={(e) => setForm({ ...form, price: e.target.value })}
+            />
+          </div>
+          <div>
+            <label>Notes</label>
+            <input
+              value={form.notes}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+              placeholder="journal"
+            />
+          </div>
+          <button type="button" onClick={fillAtLast}>Fill at last</button>
+          <button type="submit" className="good">Record paper fill</button>
+        </form>
+        <table>
+          <thead>
+            <tr>
+              <th>Ts</th>
+              <th>Sym</th>
+              <th>Side</th>
+              <th>Qty</th>
+              <th>Px</th>
+              <th>Notes</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {[...sleeveFills].reverse().map((f) => (
+              <tr key={f.id}>
+                <td className="mono">{formatFillTs(f.ts)}</td>
+                <td>{f.symbol}</td>
+                <td className={f.side === "Buy" ? "ok" : "err"}>{f.side}</td>
+                <td>{f.qty}</td>
+                <td>{formatPx(f.price)}</td>
+                <td>{f.notes}</td>
+                <td>
+                  <button type="button" className="tiny" onClick={() => void remove(f.id)}>
+                    ×
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {sleeveFills.length === 0 && (
+              <tr>
+                <td colSpan={7} className="muted">no paper fills</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 export default function App() {
   const [state, setState] = useState<StatusSnapshot | null>(null);
   const [authNeeded, setAuthNeeded] = useState(false);
@@ -53,6 +299,7 @@ export default function App() {
   });
   const [tab, setTab] = useState<SleeveId>("day");
   const [sleeveDraft, setSleeveDraft] = useState<SleeveCard | null>(null);
+  const [quotes, setQuotes] = useState<DelayedQuote[]>([]);
 
   const apply = useCallback((s: StatusSnapshot) => {
     setState(s);
@@ -110,6 +357,30 @@ export default function App() {
       ws?.close();
     };
   }, [apply, refresh]);
+
+  useEffect(() => {
+    if (authNeeded) return;
+    let cancel = false;
+    async function loadQuotes() {
+      try {
+        const body = await api(`/api/quotes?sleeve=${tab}`);
+        if (cancel) return;
+        setQuotes((body.quotes ?? []) as DelayedQuote[]);
+      } catch (e: any) {
+        if (cancel) return;
+        if (e.status === 401) setAuthNeeded(true);
+        else setErr(e.message);
+      }
+    }
+    void loadQuotes();
+    const t = setInterval(() => {
+      if (!cancel) void loadQuotes();
+    }, 20_000);
+    return () => {
+      cancel = true;
+      clearInterval(t);
+    };
+  }, [tab, authNeeded]);
 
   async function login(e: FormEvent) {
     e.preventDefault();
@@ -224,6 +495,8 @@ export default function App() {
           <span className="muted">next {clock.nextEvent.type}</span>
         )}
       </div>
+
+      <QuoteStrip quotes={quotes} />
 
       <div className="grid">
         <section className="panel">
@@ -463,6 +736,17 @@ export default function App() {
         </section>
       </div>
 
+      <div className="blotter-wrap">
+        <PaperBlotter
+          sleeveId="day"
+          fills={state.paperBlotter ?? []}
+          quotes={quotes}
+          apply={apply}
+          setAuthNeeded={setAuthNeeded}
+          setErr={setErr}
+        />
+      </div>
+
       <div className="log-wrap">
         <h2>[EventGate] log</h2>
         <div className="log">
@@ -481,6 +765,7 @@ export default function App() {
           <section className="panel">
             <h2>{sleeveDraft.name}</h2>
             <div className="body">
+              <QuoteStrip quotes={quotes} />
               <div className="hint">
                 Paper only. No buy/sell from this app. Iterate from fills you record here.
               </div>
@@ -655,8 +940,19 @@ export default function App() {
               </div>
             </div>
           </section>
+          <div className="blotter-wrap">
+            <PaperBlotter
+              sleeveId={tab}
+              fills={state.paperBlotter ?? []}
+              quotes={quotes}
+              apply={apply}
+              setAuthNeeded={setAuthNeeded}
+              setErr={setErr}
+            />
+          </div>
         </div>
       )}
+      {err && tab !== "day" && <div className="err" style={{ padding: "4px 14px" }}>{err}</div>}
     </div>
   );
 }

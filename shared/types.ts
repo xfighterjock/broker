@@ -319,6 +319,30 @@ export function applySleevePatch(
   return next;
 }
 
+export interface DelayedQuote {
+  symbol: string;
+  last: number | null;
+  prevClose: number | null;
+  change: number | null;
+  changePct: number | null;
+  asOf: string | null; // ISO from regularMarketTime
+  exchange: string | null;
+  delayed: true;
+  source: "yahoo";
+  error?: string;
+}
+
+export interface PaperFill {
+  id: string;
+  sleeveId: SleeveId;
+  ts: string;
+  symbol: string;
+  side: "Buy" | "Sell";
+  qty: number;
+  price: number;
+  notes: string;
+}
+
 export interface StatusSnapshot {
   trader: string;
   tz: string;
@@ -337,4 +361,5 @@ export interface StatusSnapshot {
   broker: BrokerSnapshot;
   sleeves: Record<SleeveId, SleeveCard>;
   activeSleeve: SleeveId;
+  paperBlotter: PaperFill[];
 }

@@ -58,6 +58,7 @@ export const REDIS_KEYS = {
   mockDayPnl: "mock:day_pnl",
   flattenFired: "gate:flatten_fired",
   sleeves: "sleeves:cards",
+  blotter: "sleeves:blotter",
 } as const;
 
 export const REDIS_CHANNELS = {

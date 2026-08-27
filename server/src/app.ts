@@ -20,6 +20,7 @@ import {
   type CalendarEvent,
   type Checklist,
   type FreezeCard,
+  type PaperFill,
   type SleeveId,
   type StatusSnapshot,
 } from "../../shared/types";
@@ -44,6 +45,7 @@ import {
 import { GateEngine } from "./gate";
 import { MockBroker } from "./mockBroker";
 import type { RedisClient } from "./redis";
+import { fetchDelayedQuotes, symbolsForSleeve } from "./quotes";
 import type { StatusHub } from "./wsHub";
 
 export interface AppDeps {
@@ -113,6 +115,8 @@ export function buildApp(deps: AppDeps): express.Express {
     sleeves: defaultSleeves(),
     activeSleeve: "day" as SleeveId,
     sleevesHydrated: false,
+    blotter: [] as PaperFill[],
+    blotterHydrated: false,
   };
 
   async function ensureSleeves(): Promise<void> {
@@ -145,6 +149,60 @@ export function buildApp(deps: AppDeps): express.Express {
     if (!deps.redis) return;
     try {
       await deps.redis.set(REDIS_KEYS.sleeves, JSON.stringify(memory.sleeves));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function ensureBlotter(): Promise<void> {
+    if (memory.blotterHydrated) return;
+    memory.blotterHydrated = true;
+    if (!deps.redis) return;
+    try {
+      const raw = await deps.redis.get(REDIS_KEYS.blotter);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) return;
+      const fills: PaperFill[] = [];
+      for (const row of parsed) {
+        if (!row || typeof row !== "object") continue;
+        const f = row as Partial<PaperFill>;
+        if (
+          typeof f.id !== "string" ||
+          typeof f.sleeveId !== "string" ||
+          !(SLEEVE_IDS as readonly string[]).includes(f.sleeveId) ||
+          typeof f.ts !== "string" ||
+          typeof f.symbol !== "string" ||
+          (f.side !== "Buy" && f.side !== "Sell") ||
+          typeof f.qty !== "number" ||
+          !Number.isFinite(f.qty) ||
+          typeof f.price !== "number" ||
+          !Number.isFinite(f.price) ||
+          typeof f.notes !== "string"
+        ) {
+          continue;
+        }
+        fills.push({
+          id: f.id,
+          sleeveId: f.sleeveId as SleeveId,
+          ts: f.ts,
+          symbol: f.symbol,
+          side: f.side,
+          qty: f.qty,
+          price: f.price,
+          notes: f.notes,
+        });
+      }
+      memory.blotter = fills.slice(-200);
+    } catch {
+      /* keep empty */
+    }
+  }
+
+  async function persistBlotter(): Promise<void> {
+    if (!deps.redis) return;
+    try {
+      await deps.redis.set(REDIS_KEYS.blotter, JSON.stringify(memory.blotter));
     } catch {
       /* ignore */
     }
@@ -191,6 +249,7 @@ export function buildApp(deps: AppDeps): express.Express {
     const events = deps.getEvents();
     const clock = computeClock(now, events);
     await ensureSleeves();
+    await ensureBlotter();
     let freeze = memory.freeze;
     let knowledgeTime = memory.knowledgeTime;
     if (deps.pool) {
@@ -246,6 +305,7 @@ export function buildApp(deps: AppDeps): express.Express {
       },
       sleeves: memory.sleeves,
       activeSleeve: memory.activeSleeve,
+      paperBlotter: memory.blotter.slice(-200),
     };
   }
 
@@ -535,6 +595,100 @@ export function buildApp(deps: AppDeps): express.Express {
     await persistSleeves();
     sessionNote("sleeve", `${id} paper stats`);
     deps.engine.log(`sleeve ${id} paper stats`);
+    await publishStatus();
+    res.json(await snapshot());
+  });
+
+  app.get("/api/quotes", async (req, res) => {
+    const id = parseSleeveId(String(req.query.sleeve ?? ""));
+    if (!id) {
+      res.status(400).json({ error: "sleeve=day|momentum|options|ownership required" });
+      return;
+    }
+    await ensureSleeves();
+    const symbols = symbolsForSleeve(memory.sleeves[id], id);
+    const quotes = await fetchDelayedQuotes(symbols);
+    res.json({ sleeve: id, delayed: true, quotes });
+  });
+
+  // Paper journal only. Never send to MockBroker or Tradovate.
+  app.post("/api/sleeves/:id/fills", async (req, res) => {
+    const id = parseSleeveId(String(req.params.id));
+    if (!id) {
+      res.status(404).json({ error: "unknown sleeve" });
+      return;
+    }
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const symbol = String(body.symbol ?? "").trim().toUpperCase();
+    const side = body.side === "Sell" ? "Sell" : body.side === "Buy" ? "Buy" : null;
+    const qty = typeof body.qty === "number" ? body.qty : Number(body.qty);
+    const price = typeof body.price === "number" ? body.price : Number(body.price);
+    const notes = typeof body.notes === "string" ? body.notes : "";
+    if (!symbol) {
+      res.status(400).json({ error: "symbol required" });
+      return;
+    }
+    if (!side) {
+      res.status(400).json({ error: "side must be Buy or Sell" });
+      return;
+    }
+    if (!Number.isFinite(qty) || qty <= 0) {
+      res.status(400).json({ error: "qty must be a positive number" });
+      return;
+    }
+    if (!Number.isFinite(price) || price <= 0) {
+      res.status(400).json({ error: "price must be a positive number" });
+      return;
+    }
+    await ensureSleeves();
+    await ensureBlotter();
+    const fill: PaperFill = {
+      id: `fill-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      sleeveId: id,
+      ts: new Date().toISOString(),
+      symbol,
+      side,
+      qty,
+      price,
+      notes,
+    };
+    memory.blotter.push(fill);
+    if (memory.blotter.length > 200) {
+      memory.blotter.splice(0, memory.blotter.length - 200);
+    }
+    const card = memory.sleeves[id];
+    const paper = { ...card.paper, trades: card.paper.trades + 1 };
+    const pnlRaw = body.realizedPnlUsd;
+    const pnl = typeof pnlRaw === "number" ? pnlRaw : Number(pnlRaw);
+    if (Number.isFinite(pnl)) paper.realizedPnlUsd += pnl;
+    memory.sleeves[id] = { ...card, paper, updatedAt: new Date().toISOString() };
+    await persistBlotter();
+    await persistSleeves();
+    sessionNote("paper_fill", `${id} ${side} ${qty} ${symbol} @ ${price} (journal)`);
+    deps.engine.log(
+      `paper fill ${fill.id} ${side} ${qty} ${symbol} @ ${price} (journal, not broker)`,
+    );
+    await publishStatus();
+    res.json(await snapshot());
+  });
+
+  app.delete("/api/sleeves/:id/fills/:fillId", async (req, res) => {
+    const id = parseSleeveId(String(req.params.id));
+    if (!id) {
+      res.status(404).json({ error: "unknown sleeve" });
+      return;
+    }
+    const fillId = String(req.params.fillId ?? "");
+    await ensureBlotter();
+    const idx = memory.blotter.findIndex((f) => f.id === fillId && f.sleeveId === id);
+    if (idx < 0) {
+      res.status(404).json({ error: "fill not found" });
+      return;
+    }
+    memory.blotter.splice(idx, 1);
+    await persistBlotter();
+    sessionNote("paper_fill", `${id} deleted ${fillId}`);
+    deps.engine.log(`paper fill ${fillId} deleted (journal)`);
     await publishStatus();
     res.json(await snapshot());
   });
