@@ -24,6 +24,7 @@ import {
   type PaperFill,
   type SleeveId,
   type StatusSnapshot,
+  type OverlayKind,
 } from "../../shared/types";
 import {
   MOMENTUM_STOP_MUL,
@@ -59,6 +60,7 @@ import { attachScanReady, getScan, getScanFeaturesCache, rankMomentum, rankOwner
 import {
   allSleeveBooks,
   applyExitStats,
+  applySessionPnl,
   closeSideFor,
   detectStopHits,
   lastFromQuotes,
@@ -67,12 +69,46 @@ import {
   parsePaperClose,
   parsePaperOrder,
   positionSideFor,
+  rollSessionMarks,
   signedPnl,
   sleeveBook,
   validatePaperOrder,
   type PaperCloseBody,
   type PaperOrderBody,
+  type SessionMark,
 } from "./paper";
+import {
+  fetchOptionChain,
+  fetchOptionExpiries,
+  findLeg,
+  parseYmd,
+} from "./etrade";
+import {
+  applyOverlayMarks,
+  detectOverlaySettlements,
+  isOverlayPosition,
+  isWeeklyExpiryType,
+  makeOverlayMeta,
+  matchingOwnershipLong,
+  optionsFreeCash,
+  overlayPackageSymbol,
+  overlayThesisTag,
+  overlayUnrealized,
+  parsePaperOverlay,
+  validateCoveredCall,
+  validateCsp,
+} from "./overlay";
+import {
+  applyVerticalMarks,
+  detectVerticalExits,
+  isVerticalBody,
+  isVerticalPosition,
+  makeVerticalMeta,
+  parsePaperVertical,
+  validateDebitVertical,
+  verticalPackageSymbol,
+  verticalUnrealized,
+} from "./vertical";
 import type { StatusHub } from "./wsHub";
 
 let autoPaperTimer: ReturnType<typeof setInterval> | null = null;
@@ -155,6 +191,13 @@ export function buildApp(deps: AppDeps): express.Express {
     blotterHydrated: false,
     autoPaper: true,
     autoPaperHydrated: false,
+    sessionMarks: {
+      day: null,
+      momentum: null,
+      options: null,
+      ownership: null,
+    } as Record<SleeveId, SessionMark | null>,
+    sessionMarksHydrated: false,
   };
 
   async function ensureSleeves(): Promise<void> {
@@ -263,6 +306,42 @@ export function buildApp(deps: AppDeps): express.Express {
     if (!deps.redis) return;
     try {
       await deps.redis.set(REDIS_KEYS.autoPaper, memory.autoPaper ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function ensureSessionMarks(): Promise<void> {
+    if (memory.sessionMarksHydrated) return;
+    memory.sessionMarksHydrated = true;
+    if (!deps.redis) return;
+    try {
+      const raw = await deps.redis.get(REDIS_KEYS.sessionMarks);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      for (const id of SLEEVE_IDS) {
+        const row = parsed[id];
+        if (!row || typeof row !== "object") continue;
+        const r = row as { sessionDate?: unknown; realizedPnlUsd?: unknown; unrealizedPnlUsd?: unknown };
+        if (typeof r.sessionDate !== "string") continue;
+        const realized = Number(r.realizedPnlUsd);
+        const unrealized = Number(r.unrealizedPnlUsd);
+        if (!Number.isFinite(realized) || !Number.isFinite(unrealized)) continue;
+        memory.sessionMarks[id] = {
+          sessionDate: r.sessionDate,
+          realizedPnlUsd: realized,
+          unrealizedPnlUsd: unrealized,
+        };
+      }
+    } catch {
+      /* keep defaults */
+    }
+  }
+
+  async function persistSessionMarks(): Promise<void> {
+    if (!deps.redis) return;
+    try {
+      await deps.redis.set(REDIS_KEYS.sessionMarks, JSON.stringify(memory.sessionMarks));
     } catch {
       /* ignore */
     }
@@ -394,11 +473,418 @@ export function buildApp(deps: AppDeps): express.Express {
     }
     const still = deps.broker.getPositionsSync().filter((p) => p.side !== "Flat" && p.qty > 0);
     for (const p of still) {
+      if (isVerticalPosition(p) || isOverlayPosition(p)) continue;
       const last = lastFromQuotes(quotes, p.symbol);
       if (last === null) continue;
       deps.broker.setUnrealizedPnl(p.symbol, signedPnl(p.side, p.avgPrice, last, p.qty, p.symbol));
     }
-    return hits.length;
+    const vHits = await markVerticalsQuiet();
+    const oHits = await markOverlaysQuiet();
+    return hits.length + vHits + oHits;
+  }
+
+  async function markVerticalsQuiet(): Promise<number> {
+    const open = deps.broker
+      .getPositionsSync()
+      .filter((p) => p.side !== "Flat" && p.qty > 0 && isVerticalPosition(p));
+    if (open.length === 0) return 0;
+    const groups = new Map<string, { underlying: string; expiry: string }>();
+    for (const p of open) {
+      const v = p.vertical!;
+      const key = `${v.quoteSymbol || v.underlying}|${v.expiry}`;
+      if (!groups.has(key)) groups.set(key, { underlying: v.quoteSymbol || v.underlying, expiry: v.expiry });
+    }
+    const chains = new Map<string, Awaited<ReturnType<typeof fetchOptionChain>>>();
+    for (const [key, g] of groups) {
+      try {
+        const ymd = parseYmd(g.expiry);
+        if (!ymd) continue;
+        const chain = await fetchOptionChain({
+          symbol: g.underlying,
+          expiryYear: ymd.year,
+          expiryMonth: ymd.month,
+          expiryDay: ymd.day,
+        });
+        chains.set(key, chain);
+      } catch (err) {
+        deps.engine.log(
+          `options chain mark skip ${g.underlying} ${g.expiry}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    for (const p of open) {
+      const v = p.vertical!;
+      const key = `${v.quoteSymbol || v.underlying}|${v.expiry}`;
+      const chain = chains.get(key);
+      if (!chain || !chain.ok) continue;
+      const long = findLeg(chain.data.legs, { osiKey: v.long.osiKey, strike: v.long.strike, right: v.right, expiry: v.expiry }) ?? v.long;
+      const short = findLeg(chain.data.legs, { osiKey: v.short.osiKey, strike: v.short.strike, right: v.right, expiry: v.expiry }) ?? v.short;
+      const next = applyVerticalMarks(v, long, short);
+      const u = verticalUnrealized(next, next.long, next.short);
+      deps.broker.patchPosition(p.symbol, {
+        vertical: next,
+        unrealizedPnl: u === null ? p.unrealizedPnl : u,
+      });
+    }
+    const marked = deps.broker
+      .getPositionsSync()
+      .filter((p) => p.side !== "Flat" && p.qty > 0 && isVerticalPosition(p));
+    const exits = detectVerticalExits(marked);
+    for (const hit of exits) {
+      const pos = hit.position;
+      const v = pos.vertical!;
+      await deps.broker.flattenSymbols([pos.symbol], hit.reason);
+      await recordPaperExit({
+        sleeveId: pos.sleeveId ?? "options",
+        symbol: pos.symbol,
+        side: "Sell",
+        qty: v.qty,
+        price: hit.closeValue / (v.qty * 100) + v.netDebitPerShare,
+        notes: `vertical exit ${hit.reason}`,
+        realizedPnl: hit.realizedPnl,
+      });
+      deps.engine.log(
+        `paper VERTICAL EXIT ${pos.symbol} ${hit.reason} pnl ${hit.realizedPnl.toFixed(2)} (MockBroker flatten, not live, not E*TRADE order)`,
+      );
+    }
+    return exits.length;
+  }
+
+  async function markOverlaysQuiet(): Promise<number> {
+    const open = deps.broker
+      .getPositionsSync()
+      .filter((p) => p.side !== "Flat" && p.qty > 0 && isOverlayPosition(p));
+    if (open.length === 0) return 0;
+    const groups = new Map<string, { underlying: string; expiry: string }>();
+    for (const p of open) {
+      const o = p.overlay!;
+      const key = `${o.quoteSymbol || o.underlying}|${o.expiry}`;
+      if (!groups.has(key)) groups.set(key, { underlying: o.quoteSymbol || o.underlying, expiry: o.expiry });
+    }
+    const chains = new Map<string, Awaited<ReturnType<typeof fetchOptionChain>>>();
+    for (const [key, g] of groups) {
+      try {
+        const ymd = parseYmd(g.expiry);
+        if (!ymd) continue;
+        const chain = await fetchOptionChain({
+          symbol: g.underlying,
+          expiryYear: ymd.year,
+          expiryMonth: ymd.month,
+          expiryDay: ymd.day,
+        });
+        chains.set(key, chain);
+      } catch (err) {
+        deps.engine.log(
+          `overlay chain mark skip ${g.underlying} ${g.expiry}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    for (const p of open) {
+      const o = p.overlay!;
+      const key = `${o.quoteSymbol || o.underlying}|${o.expiry}`;
+      const chain = chains.get(key);
+      if (!chain || !chain.ok) continue;
+      const leg =
+        findLeg(chain.data.legs, {
+          osiKey: o.leg.osiKey,
+          strike: o.strike,
+          right: o.right,
+          expiry: o.expiry,
+        }) ?? o.leg;
+      const next = applyOverlayMarks(o, leg);
+      const u = overlayUnrealized(next, next.leg);
+      deps.broker.patchPosition(p.symbol, {
+        overlay: next,
+        unrealizedPnl: u === null ? p.unrealizedPnl : u,
+      });
+    }
+    const marked = deps.broker
+      .getPositionsSync()
+      .filter((p) => p.side !== "Flat" && p.qty > 0 && isOverlayPosition(p));
+    const underlyers = [
+      ...new Set(
+        marked.flatMap((p) => {
+          const o = p.overlay!;
+          return [o.underlying, o.quoteSymbol, o.thesisSymbol];
+        }),
+      ),
+    ];
+    const quotes = underlyers.length ? await fetchDelayedQuotes(underlyers).catch(() => []) : [];
+    const lastBy: Record<string, number> = {};
+    for (const q of quotes) {
+      if (q.last !== null && Number.isFinite(q.last)) lastBy[q.symbol.toUpperCase()] = q.last;
+    }
+    const exits = detectOverlaySettlements(marked, lastBy);
+    for (const hit of exits) {
+      const pos = hit.position;
+      const o = pos.overlay!;
+      await deps.broker.flattenSymbols([pos.symbol], hit.reason);
+      await recordPaperExit({
+        sleeveId: "options",
+        symbol: pos.symbol,
+        side: "Buy",
+        qty: o.qty,
+        price: o.premiumPerShare,
+        notes: `${overlayThesisTag(o)} ${hit.reason}`,
+        realizedPnl: hit.optionsRealizedPnl,
+      });
+      if (hit.stockTransfer?.action === "assign") {
+        const t = hit.stockTransfer;
+        deps.broker.mergeLongStock({
+          symbol: t.symbol,
+          qty: t.qty,
+          side: "Long",
+          avgPrice: t.price,
+          unrealizedPnl: 0,
+          sleeveId: "ownership",
+        });
+        sessionNote(
+          "paper_fill",
+          `ownership assigned ${t.qty} ${t.symbol} @ ${t.price} (CSP, MockBroker)`,
+        );
+        deps.engine.log(
+          `paper CSP ASSIGN ${t.qty} ${t.symbol} @ ${t.price} (stock to ownership, MockBroker, not live, not E*TRADE order)`,
+        );
+      } else if (hit.stockTransfer?.action === "callaway") {
+        const t = hit.stockTransfer;
+        const stock = matchingOwnershipLong(deps.broker.getPositionsSync(), [t.symbol, o.underlying, o.quoteSymbol]);
+        const cost = stock?.avgPrice ?? t.price;
+        const stockPnl = (t.price - cost) * t.qty;
+        deps.broker.reduceLongStock("ownership", stock?.symbol ?? t.symbol, t.qty);
+        await recordPaperExit({
+          sleeveId: "ownership",
+          symbol: stock?.symbol ?? t.symbol,
+          side: "Sell",
+          qty: t.qty,
+          price: t.price,
+          notes: `called away ${overlayThesisTag(o)}`,
+          realizedPnl: stockPnl,
+        });
+        deps.engine.log(
+          `paper CC CALLED AWAY ${t.qty} ${t.symbol} @ ${t.price} (MockBroker, not live, not E*TRADE order)`,
+        );
+      } else {
+        deps.engine.log(
+          `paper OVERLAY EXIT ${pos.symbol} ${hit.reason} pnl ${hit.optionsRealizedPnl.toFixed(2)} (MockBroker, not live, not E*TRADE order)`,
+        );
+      }
+    }
+    return exits.length;
+  }
+
+  async function placePaperOverlay(
+    kind: OverlayKind,
+    body: unknown,
+  ): Promise<{ ok: true; symbol: string } | { ok: false; error: string; status?: number }> {
+    const mockErr = assertMockOnly();
+    if (mockErr) return { ok: false, error: mockErr, status: 403 };
+    const parsed = parsePaperOverlay(kind, body);
+    if ("error" in parsed) return { ok: false, error: parsed.error };
+    const ymd = parseYmd(parsed.expiry);
+    if (!ymd) return { ok: false, error: "expiry must be YYYY-MM-DD" };
+    if (!parsed.allowWeekly) {
+      const expiries = await fetchOptionExpiries(parsed.symbol);
+      if (expiries.ok) {
+        const row = expiries.data.expiries.find((e) => e.expiry === parsed.expiry);
+        if (row && isWeeklyExpiryType(row.expiryType)) {
+          return { ok: false, error: "weeklies skipped in defaults" };
+        }
+      }
+    }
+    const chain = await fetchOptionChain({
+      symbol: parsed.symbol,
+      expiryYear: ymd.year,
+      expiryMonth: ymd.month,
+      expiryDay: ymd.day,
+    });
+    if (!chain.ok) return { ok: false, error: chain.error, status: chain.status };
+    const right = kind === "csp" ? "P" : "C";
+    const leg = findLeg(chain.data.legs, {
+      strike: parsed.strike,
+      right,
+      expiry: chain.data.expiry || parsed.expiry,
+    });
+    if (!leg) return { ok: false, error: `${right === "P" ? "put" : "call"} strike not on chain` };
+    await ensureSleeves();
+    const quotes = await fetchDelayedQuotes([parsed.symbol, leg.underlying, parsed.thesisSymbol]).catch(() => []);
+    const book = sleeveBook(memory.sleeves.options, deps.broker.getPositionsSync(), quotes);
+    let v;
+    if (kind === "csp") {
+      const free = optionsFreeCash(book.equityUsd, deps.broker.getPositionsSync());
+      v = validateCsp(
+        {
+          leg,
+          qty: parsed.qty,
+          asOf: parsed.asOf,
+          quoteSymbol: parsed.symbol,
+          thesisSleeve: parsed.thesisSleeve,
+          thesisSymbol: parsed.thesisSymbol,
+          taLevel: parsed.taLevel,
+        },
+        free,
+      );
+    } else {
+      const stock = matchingOwnershipLong(deps.broker.getPositionsSync(), [
+        parsed.thesisSymbol,
+        parsed.symbol,
+        leg.underlying,
+      ]);
+      v = validateCoveredCall({
+        leg,
+        qty: parsed.qty,
+        asOf: parsed.asOf,
+        quoteSymbol: parsed.symbol,
+        thesisSleeve: parsed.thesisSleeve,
+        thesisSymbol: parsed.thesisSymbol,
+        taLevel: parsed.taLevel,
+        stock,
+      });
+    }
+    if (!v.ok) return { ok: false, error: v.error };
+    const pkg = overlayPackageSymbol({
+      kind: v.kind,
+      underlying: v.underlying,
+      strike: v.strike,
+      expiry: v.expiry,
+    });
+    const already = deps.broker
+      .getPositionsSync()
+      .find((p) => p.side !== "Flat" && p.qty > 0 && p.symbol.toUpperCase() === pkg.toUpperCase());
+    if (already) return { ok: false, error: `already open ${already.symbol}` };
+    const meta = makeOverlayMeta(v);
+    deps.broker.injectPosition({
+      symbol: pkg,
+      qty: v.qty,
+      side: "Short",
+      avgPrice: v.premiumPerShare,
+      unrealizedPnl: 0,
+      sleeveId: "options",
+      overlay: meta,
+    });
+    await ensureBlotter();
+    const tag = overlayThesisTag(meta);
+    const notes = parsed.thesis || tag;
+    const fill = makeFill({
+      sleeveId: "options",
+      symbol: v.leg.osiKey || v.leg.displaySymbol,
+      side: "Sell",
+      qty: v.qty,
+      price: v.premiumPerShare,
+      notes: `${tag} ${notes}`.trim(),
+    });
+    memory.blotter.push(fill);
+    if (memory.blotter.length > 200) {
+      memory.blotter.splice(0, memory.blotter.length - 200);
+    }
+    await persistBlotter();
+    sessionNote(
+      "paper_order",
+      `options ${v.kind} ${v.qty}x ${pkg} premium ${v.premiumReceived.toFixed(2)} ${tag}`,
+    );
+    deps.engine.log(
+      `paper ${v.kind.toUpperCase()} SELL ${v.qty} ${pkg} @ ${v.premiumPerShare} ${tag} (MockBroker, not E*TRADE order, not Tradovate, not live)`,
+    );
+    return { ok: true, symbol: pkg };
+  }
+
+  async function placePaperVertical
+(
+    body: unknown,
+  ): Promise<{ ok: true; symbol: string } | { ok: false; error: string; status?: number }> {
+    const mockErr = assertMockOnly();
+    if (mockErr) return { ok: false, error: mockErr, status: 403 };
+    const parsed = parsePaperVertical(body);
+    if ("error" in parsed) return { ok: false, error: parsed.error };
+    const ymd = parseYmd(parsed.expiry);
+    if (!ymd) return { ok: false, error: "expiry must be YYYY-MM-DD" };
+    const chain = await fetchOptionChain({
+      symbol: parsed.symbol,
+      expiryYear: ymd.year,
+      expiryMonth: ymd.month,
+      expiryDay: ymd.day,
+    });
+    if (!chain.ok) return { ok: false, error: chain.error, status: chain.status };
+    const long =
+      findLeg(chain.data.legs, {
+        osiKey: parsed.longOsiKey,
+        strike: parsed.longStrike,
+        right: parsed.right,
+        expiry: chain.data.expiry || parsed.expiry,
+      }) ??
+      findLeg(chain.data.legs, { strike: parsed.longStrike, right: parsed.right });
+    const short =
+      findLeg(chain.data.legs, {
+        osiKey: parsed.shortOsiKey,
+        strike: parsed.shortStrike,
+        right: parsed.right,
+        expiry: chain.data.expiry || parsed.expiry,
+      }) ??
+      findLeg(chain.data.legs, { strike: parsed.shortStrike, right: parsed.right });
+    if (!long || !short) return { ok: false, error: "long/short strikes not on chain" };
+    await ensureSleeves();
+    const quotes = await fetchDelayedQuotes([parsed.symbol]).catch(() => []);
+    const book = sleeveBook(
+      memory.sleeves.options,
+      deps.broker.getPositionsSync(),
+      quotes,
+    );
+    const v = validateDebitVertical(
+      { long, short, qty: parsed.qty, asOf: parsed.asOf, quoteSymbol: parsed.symbol },
+      book.equityUsd,
+    );
+    if (!v.ok) return { ok: false, error: v.error };
+    const pkg = verticalPackageSymbol({
+      underlying: v.long.underlying,
+      expiry: v.expiry,
+      right: v.right,
+      longStrike: v.long.strike,
+      shortStrike: v.short.strike,
+    });
+    const already = deps.broker
+      .getPositionsSync()
+      .find((p) => p.side !== "Flat" && p.qty > 0 && p.symbol.toUpperCase() === pkg.toUpperCase());
+    if (already) return { ok: false, error: `already open ${already.symbol}` };
+    const meta = makeVerticalMeta(v);
+    deps.broker.injectPosition({
+      symbol: pkg,
+      qty: v.qty,
+      side: "Long",
+      avgPrice: v.netDebitPerShare,
+      unrealizedPnl: 0,
+      sleeveId: "options",
+      vertical: meta,
+    });
+    await ensureBlotter();
+    const notes = parsed.thesis || `debit ${v.right} ${v.long.strike}/${v.short.strike} ${v.expiry}`;
+    const longFill = makeFill({
+      sleeveId: "options",
+      symbol: v.long.osiKey || v.long.displaySymbol,
+      side: "Buy",
+      qty: v.qty,
+      price: v.longFill,
+      notes: `vertical long ${notes}`,
+    });
+    const shortFill = makeFill({
+      sleeveId: "options",
+      symbol: v.short.osiKey || v.short.displaySymbol,
+      side: "Sell",
+      qty: v.qty,
+      price: v.shortFill,
+      notes: `vertical short ${notes}`,
+    });
+    memory.blotter.push(longFill, shortFill);
+    if (memory.blotter.length > 200) {
+      memory.blotter.splice(0, memory.blotter.length - 200);
+    }
+    await persistBlotter();
+    sessionNote(
+      "paper_order",
+      `options debit vertical ${v.qty}x ${pkg} debit ${v.netDebitPaid.toFixed(2)} maxLoss ${v.maxLoss.toFixed(2)} maxProfit ${v.maxProfit.toFixed(2)}`,
+    );
+    deps.engine.log(
+      `paper VERTICAL BUY ${v.qty} ${pkg} long @ ${v.longFill} short @ ${v.shortFill} debit ${v.netDebitPaid.toFixed(2)} (MockBroker, not E*TRADE order, not Tradovate, not live)`,
+    );
+    return { ok: true, symbol: pkg };
   }
 
   async function placePaperOrder(
@@ -423,11 +909,6 @@ export function buildApp(deps: AppDeps): express.Express {
       .getPositionsSync()
       .find((p) => p.side !== "Flat" && p.qty > 0 && matchSym(p.symbol, v.mapped));
     if (open) return { ok: false, error: `already open ${open.symbol}` };
-    if (parsed.sleeveId === "options") {
-      deps.engine.log(
-        "options sleeve: option legs are not modeled yet; paper is underlying ETF only (SPY/QQQ/IWM)",
-      );
-    }
     if (v.warn) {
       deps.engine.log(`paper risk note ${v.mapped}: ${v.warn}`);
     }
@@ -485,10 +966,27 @@ export function buildApp(deps: AppDeps): express.Express {
         (p.sleeveId === parsed.sleeveId || p.sleeveId === undefined),
     );
     if (!pos) return { ok: false, error: "no open paper position", status: 404 };
-    const quotes = await fetchDelayedQuotes([pos.symbol]);
-    const last = lastFromQuotes(quotes, pos.symbol);
-    if (last === null) return { ok: false, error: "no delayed last" };
-    const pnl = signedPnl(pos.side, pos.avgPrice, last, pos.qty, pos.symbol);
+    let last: number;
+    let pnl: number;
+    let notesPrice: number;
+    if (isVerticalPosition(pos) && pos.vertical) {
+      const u = verticalUnrealized(pos.vertical, pos.vertical.long, pos.vertical.short);
+      pnl = u === null ? pos.unrealizedPnl : u;
+      last = pos.vertical.netDebitPerShare;
+      notesPrice = pos.vertical.netDebitPerShare;
+    } else if (isOverlayPosition(pos) && pos.overlay) {
+      const u = overlayUnrealized(pos.overlay, pos.overlay.leg);
+      pnl = u === null ? pos.unrealizedPnl : u;
+      last = pos.overlay.premiumPerShare;
+      notesPrice = pos.overlay.premiumPerShare;
+    } else {
+      const quotes = await fetchDelayedQuotes([pos.symbol]);
+      const qlast = lastFromQuotes(quotes, pos.symbol);
+      if (qlast === null) return { ok: false, error: "no delayed last" };
+      last = qlast;
+      notesPrice = last;
+      pnl = signedPnl(pos.side, pos.avgPrice, last, pos.qty, pos.symbol);
+    }
     const live = new Set(["Working", "Submitted", "Accepted"]);
     const working = deps.broker
       .getOrdersSync()
@@ -505,7 +1003,7 @@ export function buildApp(deps: AppDeps): express.Express {
       symbol: pos.symbol,
       side: closeSideFor(pos.side),
       qty: pos.qty,
-      price: last,
+      price: notesPrice,
       notes: parsed.reason,
       realizedPnl: pnl,
     });
@@ -575,6 +1073,18 @@ export function buildApp(deps: AppDeps): express.Express {
     }
   }
 
+  async function sleeveBooksWithSession() {
+    await ensureSessionMarks();
+    const raw = allSleeveBooks(memory.sleeves, deps.broker.getPositionsSync());
+    memory.sessionMarks = rollSessionMarks(raw, memory.sessionMarks);
+    await persistSessionMarks();
+    const out = {} as typeof raw;
+    for (const id of SLEEVE_IDS) {
+      out[id] = applySessionPnl(raw[id], memory.sessionMarks[id]);
+    }
+    return out;
+  }
+
   async function snapshot(): Promise<StatusSnapshot> {
     const now = new Date();
     const events = deps.getEvents();
@@ -640,7 +1150,7 @@ export function buildApp(deps: AppDeps): express.Express {
       activeSleeve: memory.activeSleeve,
       paperBlotter: memory.blotter.slice(-200),
       autoPaper: memory.autoPaper,
-      sleeveBooks: allSleeveBooks(memory.sleeves, deps.broker.getPositionsSync()),
+      sleeveBooks: await sleeveBooksWithSession(),
     };
   }
 
@@ -1040,7 +1550,81 @@ export function buildApp(deps: AppDeps): express.Express {
     res.json(await snapshot());
   });
 
+  app.get("/api/options/expiries", async (req, res) => {
+    const symbol = String(req.query.symbol ?? "");
+    const got = await fetchOptionExpiries(symbol);
+    if (!got.ok) {
+      res.status(got.status).json({ error: got.error });
+      return;
+    }
+    res.json(got.data);
+  });
+
+  app.get("/api/options/chain", async (req, res) => {
+    const symbol = String(req.query.symbol ?? "");
+    const expiry = typeof req.query.expiry === "string" ? req.query.expiry : undefined;
+    const expiryYear = req.query.expiryYear !== undefined ? Number(req.query.expiryYear) : undefined;
+    const expiryMonth = req.query.expiryMonth !== undefined ? Number(req.query.expiryMonth) : undefined;
+    const expiryDay = req.query.expiryDay !== undefined ? Number(req.query.expiryDay) : undefined;
+    const noOfStrikes = req.query.noOfStrikes !== undefined ? Number(req.query.noOfStrikes) : undefined;
+    const got = await fetchOptionChain({
+      symbol,
+      expiry,
+      expiryYear: Number.isFinite(expiryYear) ? expiryYear : undefined,
+      expiryMonth: Number.isFinite(expiryMonth) ? expiryMonth : undefined,
+      expiryDay: Number.isFinite(expiryDay) ? expiryDay : undefined,
+      noOfStrikes: Number.isFinite(noOfStrikes) ? noOfStrikes : undefined,
+    });
+    if (!got.ok) {
+      res.status(got.status).json({ error: got.error });
+      return;
+    }
+    res.json(got.data);
+  });
+
+  app.post("/api/paper/vertical", async (req, res) => {
+    const placed = await placePaperVertical(req.body);
+    if (!placed.ok) {
+      res.status(placed.status ?? 400).json({ error: placed.error });
+      return;
+    }
+    await publishStatus();
+    res.json(await snapshot());
+  });
+
+  app.post("/api/paper/csp", async (req, res) => {
+    const placed = await placePaperOverlay("csp", req.body);
+    if (!placed.ok) {
+      res.status(placed.status ?? 400).json({ error: placed.error });
+      return;
+    }
+    await publishStatus();
+    res.json(await snapshot());
+  });
+
+  app.post("/api/paper/covered-call", async (req, res) => {
+    const placed = await placePaperOverlay("covered-call", req.body);
+    if (!placed.ok) {
+      res.status(placed.status ?? 400).json({ error: placed.error });
+      return;
+    }
+    await publishStatus();
+    res.json(await snapshot());
+  });
+
   app.post("/api/paper/order", async (req, res) => {
+    if (isVerticalBody(req.body) || String((req.body as { sleeveId?: unknown } | undefined)?.sleeveId ?? "") === "options") {
+      if (isVerticalBody(req.body)) {
+        const placedV = await placePaperVertical({ ...(req.body as object), sleeveId: "options" });
+        if (!placedV.ok) {
+          res.status(placedV.status ?? 400).json({ error: placedV.error });
+          return;
+        }
+        await publishStatus();
+        res.json(await snapshot());
+        return;
+      }
+    }
     const parsed = parsePaperOrder(req.body);
     if ("error" in parsed) {
       res.status(400).json({ error: parsed.error });

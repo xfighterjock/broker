@@ -123,11 +123,22 @@ export function decideSells(
   const feat = new Map<string, { above200: boolean }>();
   for (const f of featureRows) feat.set(symKey(f.symbol), f);
 
+  const covered = new Set(
+    positions
+      .filter((x) => isOpen(x) && x.overlay?.kind === "covered-call")
+      .flatMap((x) => {
+        const o = x.overlay!;
+        return [o.underlying, o.quoteSymbol, o.thesisSymbol, x.symbol].map((s) => s.toUpperCase());
+      }),
+  );
+
   const out: AutoSell[] = [];
   for (const p of positions) {
     if (!isOpen(p) || p.side !== "Long") continue;
+    if (p.overlay || p.vertical) continue;
     const sleeveId = p.sleeveId;
     if (sleeveId !== "momentum" && sleeveId !== "ownership") continue;
+    if (sleeveId === "ownership" && covered.has(symKey(p.symbol))) continue;
     const sleeve = sleeves[sleeveId];
     if (!sleeve) continue;
 

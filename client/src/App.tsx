@@ -17,6 +17,7 @@ import {
 } from "../../shared/types";
 import { api } from "./api";
 import { PaperBanner, PaperTradeRow, type PaperPrefill } from "./PaperTrade";
+import { OptionsPanel } from "./OptionsPanel";
 import { ScanPanel } from "./ScanPanel";
 
 const TAB_LABELS: { id: SleeveId; label: string }[] = [
@@ -305,6 +306,37 @@ function PaperBlotter({
   );
 }
 
+function OwnershipOverlayNote({ positions }: { positions: StatusSnapshot["broker"]["positions"] }) {
+  const rows = positions.filter(
+    (p) =>
+      p.side !== "Flat" &&
+      p.qty > 0 &&
+      p.overlay &&
+      (p.overlay.thesisSleeve === "ownership" || p.overlay.thesisSleeve === "spcx"),
+  );
+  return (
+    <div className="hint overlay-note">
+      <span className="badge delayed">DELAYED · MOCK</span>{" "}
+      Ownership overlay is paper CSP/CC on the options sleeve (never autopilot, never live).
+      {rows.length === 0 ? (
+        <div className="muted">no tagged overlay</div>
+      ) : (
+        <ul className="overlay-list">
+          {rows.map((p) => {
+            const o = p.overlay!;
+            return (
+              <li key={p.id}>
+                {o.kind} {p.symbol} · thesis {o.thesisSleeve}
+                {o.taLevel ? ` · TA ${o.taLevel}` : ""} · {o.thesisSymbol}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [state, setState] = useState<StatusSnapshot | null>(null);
   const [authNeeded, setAuthNeeded] = useState(false);
@@ -508,21 +540,26 @@ export default function App() {
       <nav className="tabs">
         {TAB_LABELS.map((t) => {
           const book: SleeveBook | undefined = state.sleeveBooks?.[t.id];
-          const pnl = book?.pnlUsd ?? 0;
+          const total = book?.totalPnlUsd ?? book?.pnlUsd ?? 0;
+          const daily = book?.dailyPnlUsd ?? 0;
           const equity = book?.equityUsd ?? 100_000;
-          const pnlCls = pnl > 0 ? "ok" : pnl < 0 ? "err" : "muted";
-          const pct = formatPnlPct(pnl, equity);
+          const totalCls = total > 0 ? "ok" : total < 0 ? "err" : "muted";
+          const dailyCls = daily > 0 ? "ok" : daily < 0 ? "err" : "muted";
+          const pct = formatPnlPct(total, equity);
           return (
             <button
               key={t.id}
               className={`tab ${tab === t.id ? "active" : ""}`}
               onClick={() => setTab(t.id)}
               type="button"
-              title={`Mock $${equity.toFixed(0)} equity · P/L ${formatPnlUsd(pnl)}${pct ? " " + pct : ""}`}
+              title={`Mock $${equity.toFixed(0)} equity · day ${formatPnlUsd(daily)} · total ${formatPnlUsd(total)}${pct ? " " + pct : ""}`}
             >
               <span>{t.label}</span>
-              <span className={`tab-pnl ${pnlCls}`}>
-                {formatPnlUsd(pnl)}
+              <span className={`tab-pnl ${dailyCls}`}>
+                d {formatPnlUsd(daily)}
+              </span>
+              <span className={`tab-pnl ${totalCls}`}>
+                tot {formatPnlUsd(total)}
                 {pct ? <span className="tab-pct"> {pct}</span> : null}
               </span>
             </button>
@@ -847,18 +884,35 @@ export default function App() {
             <div className="body">
               <QuoteStrip quotes={quotes} />
               <PaperBanner />
-              <PaperTradeRow
-                sleeveId={tab}
-                quotes={quotes}
-                positions={state.broker.positions}
-                orders={state.broker.orders}
-                apply={apply}
-                setAuthNeeded={setAuthNeeded}
-                setErr={setErr}
-                prefill={paperPrefill}
-              />
+              {tab === "options" ? (
+                <OptionsPanel
+                  positions={state.broker.positions}
+                  equityUsd={state.sleeveBooks?.options?.equityUsd ?? 100_000}
+                  apply={apply}
+                  setAuthNeeded={setAuthNeeded}
+                  setErr={setErr}
+                />
+              ) : (
+                <>
+                  <PaperTradeRow
+                    sleeveId={tab}
+                    quotes={quotes}
+                    positions={state.broker.positions}
+                    orders={state.broker.orders}
+                    apply={apply}
+                    setAuthNeeded={setAuthNeeded}
+                    setErr={setErr}
+                    prefill={paperPrefill}
+                  />
+                  {tab === "ownership" ? (
+                    <OwnershipOverlayNote positions={state.broker.positions} />
+                  ) : null}
+                </>
+              )}
               <div className="hint">
-                Paper buy/sell fills at delayed last on MockBroker. Iterate from fills. Not live.
+                {tab === "options"
+                  ? "Paper debit verticals on MockBroker. E*TRADE is chain-only. Not live."
+                  : "Paper buy/sell fills at delayed last on MockBroker. Iterate from fills. Not live."}
               </div>
               <div className="kv">
                 <div className="k">horizon</div>

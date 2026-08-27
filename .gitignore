@@ -14,3 +14,6 @@ tools/
 scripts-build.txt
 deploy/notes.txt
 notes.txt
+.env.etrade
+.env.etrade.*
+.env.*

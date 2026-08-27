@@ -23,7 +23,6 @@
   "include": [
     "tests",
     "shared",
-    "server/src",
     "vitest.config.ts"
   ]
 }

@@ -1,7 +1,7 @@
 import { extractRoot, isGatedSymbol } from "../../shared/clock";
 import type { OrderType } from "../../shared/constants";
 import { REDIS_KEYS } from "../../shared/constants";
-import type { Position, WorkingOrder } from "../../shared/types";
+import type { Position, SleeveId, WorkingOrder } from "../../shared/types";
 import type {
   BrokerClient,
   InjectOrderInput,
@@ -123,6 +123,8 @@ export class MockBroker implements BrokerClient {
       unrealizedPnl: input.unrealizedPnl ?? 0,
       gated: isGatedSymbol(input.symbol),
       sleeveId: input.sleeveId,
+      vertical: input.vertical,
+      overlay: input.overlay,
     };
     this.positions = this.positions.filter((p) => p.symbol !== input.symbol);
     this.positions.push(pos);
@@ -181,9 +183,65 @@ export class MockBroker implements BrokerClient {
     this.persist();
   }
 
+  patchPosition(symbol: string, patch: Partial<Position>): void {
+    const want = symbol.toUpperCase();
+    for (const p of this.positions) {
+      if (p.side === "Flat") continue;
+      if (p.symbol.toUpperCase() === want) {
+        if (patch.unrealizedPnl !== undefined) p.unrealizedPnl = patch.unrealizedPnl;
+        if (patch.vertical) p.vertical = patch.vertical;
+        if (patch.overlay) p.overlay = patch.overlay;
+        if (patch.avgPrice !== undefined) p.avgPrice = patch.avgPrice;
+        if (patch.qty !== undefined) p.qty = patch.qty;
+        if (patch.side !== undefined) p.side = patch.side;
+      }
+    }
+    this.persist();
+  }
+
   addRealizedPnl(delta: number): void {
     this.dayPnl += delta;
     this.persist();
+  }
+
+  mergeLongStock(input: InjectPositionInput): Position {
+    const want = input.symbol.toUpperCase();
+    const existing = this.positions.find(
+      (p) =>
+        p.side === "Long" &&
+        p.qty > 0 &&
+        p.symbol.toUpperCase() === want &&
+        (input.sleeveId === undefined || p.sleeveId === input.sleeveId) &&
+        !p.vertical &&
+        !p.overlay,
+    );
+    if (!existing) return this.injectPosition(input);
+    const addQty = input.qty;
+    const addPx = input.avgPrice ?? 0;
+    const newQty = existing.qty + addQty;
+    existing.avgPrice = newQty === 0 ? existing.avgPrice : (existing.avgPrice * existing.qty + addPx * addQty) / newQty;
+    existing.qty = newQty;
+    this.persist();
+    return { ...existing };
+  }
+
+  reduceLongStock(sleeveId: SleeveId, symbol: string, qty: number): Position | null {
+    const want = symbol.toUpperCase();
+    for (const p of this.positions) {
+      if (p.side !== "Long" || p.qty <= 0) continue;
+      if (p.symbol.toUpperCase() !== want) continue;
+      if (p.sleeveId !== sleeveId) continue;
+      if (p.vertical || p.overlay) continue;
+      p.qty -= qty;
+      if (p.qty <= 0) {
+        p.qty = 0;
+        p.side = "Flat";
+        p.unrealizedPnl = 0;
+      }
+      this.persist();
+      return { ...p };
+    }
+    return null;
   }
 
   reset(): void {

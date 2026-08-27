@@ -62,6 +62,7 @@ export const REDIS_KEYS = {
   scanUniverse: "scan:universe",
   scanFeatures: "scan:features",
   autoPaper: "paper:auto",
+  sessionMarks: "sleeves:session_marks",
 } as const;
 
 /** Independent mock starting equity per sleeve (day, momentum, options, ownership). */
@@ -74,3 +75,20 @@ export const REDIS_CHANNELS = {
   log: "eventgate:log",
   status: "eventgate:status",
 } as const;
+
+/** Options sleeve v1 underlyers. E*TRADE Market API chain-only. */
+export const OPTIONS_V1_SYMBOLS = ["SPY", "QQQ", "IWM"] as const;
+export type OptionsV1Symbol = (typeof OPTIONS_V1_SYMBOLS)[number];
+
+export const OPTIONS_MULTIPLIER = 100;
+/** Prefer size so net debit is near this fraction of sleeve equity. */
+export const OPTIONS_DEBIT_TARGET_FRAC = 0.01;
+/** Hard cap: refuse if net debit would exceed this fraction of sleeve equity. */
+export const OPTIONS_DEBIT_CAP_FRAC = 0.02;
+/** Close the vertical when calendar DTE is at or below this. */
+export const OPTIONS_DTE_EXIT = 21;
+export const OPTIONS_PROFIT_TAKE_FRAC = 0.5;
+export const OPTIONS_DEBIT_STOP_FRAC = 0.5;
+
+export const ETRADE_SANDBOX_BASE = "https://apisb.etrade.com";
+export const ETRADE_PROD_BASE = "https://api.etrade.com";

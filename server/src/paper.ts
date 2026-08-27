@@ -12,8 +12,10 @@ import type {
   SleeveId,
   WorkingOrder,
 } from "../../shared/types";
-import { DEFAULT_SLEEVE_EQUITY_USD, SLEEVE_IDS } from "../../shared/constants";
+import { DEFAULT_SLEEVE_EQUITY_USD, SLEEVE_IDS, TZ } from "../../shared/constants";
 import { mapTicker } from "./quotes";
+import { isOverlayPosition } from "./overlay";
+import { isVerticalPosition } from "./vertical";
 
 /** USD per full index/price point. ETFs and unknowns use 1.0 (points if unlabeled). */
 export const POINT_VALUE: Record<string, number> = {
@@ -98,10 +100,6 @@ export function lastFromQuotes(quotes: DelayedQuote[], symbol: string): number |
   return null;
 }
 
-function optionsUnderlyingOk(mapped: string): boolean {
-  const u = mapped.toUpperCase().replace(/=F$/, "");
-  return OPTIONS_ETFS.has(u);
-}
 
 export function validatePaperOrder(
   input: PaperOrderBody,
@@ -161,12 +159,10 @@ export function validatePaperOrder(
   }
 
   if (input.sleeveId === "options") {
-    if (!optionsUnderlyingOk(mapped)) {
-      return {
-        ok: false,
-        error: "options sleeve: SPY/QQQ/IWM underlying ETF paper only; option legs not modeled",
-      };
-    }
+    return {
+      ok: false,
+      error: "options sleeve: paper debit verticals only (POST /api/paper/vertical); no stock legs",
+    };
   }
 
   return {
@@ -244,6 +240,7 @@ export function detectStopHits(
   const hits: StopHit[] = [];
   for (const p of positions) {
     if (p.side === "Flat" || p.qty <= 0) continue;
+    if (isVerticalPosition(p) || isOverlayPosition(p)) continue;
     const last = lastFromQuotes(quotes, p.symbol);
     if (last === null) continue;
     const stop = orders.find(
@@ -311,6 +308,10 @@ export function sleeveBook(
   for (const p of positions) {
     if (p.side === "Flat" || p.qty <= 0) continue;
     if (!positionBelongsToSleeve(sleeve.id, p.sleeveId)) continue;
+    if (isVerticalPosition(p) || isOverlayPosition(p)) {
+      unrealizedPnlUsd += p.unrealizedPnl;
+      continue;
+    }
     const last = quotes.length ? lastFromQuotes(quotes, p.symbol) : null;
     if (last !== null) {
       unrealizedPnlUsd += signedPnl(p.side, p.avgPrice, last, p.qty, p.symbol);
@@ -319,22 +320,132 @@ export function sleeveBook(
     }
   }
   const pnlUsd = realizedPnlUsd + unrealizedPnlUsd;
+  const equityUsd = startingEquity + pnlUsd;
+  const { totalPnlUsd, dailyPnlUsd } = computeSleevePnl({
+    equityUsd,
+    realizedPnlUsd,
+    unrealizedPnlUsd,
+    startingEquity,
+    sessionMark: null,
+    todayRealizedPnlUsd: 0,
+  });
   return {
-    equityUsd: startingEquity + pnlUsd,
+    equityUsd,
     realizedPnlUsd,
     unrealizedPnlUsd,
     pnlUsd,
+    totalPnlUsd,
+    dailyPnlUsd,
   };
+}
+
+export type SessionMark = {
+  sessionDate: string;
+  realizedPnlUsd: number;
+  unrealizedPnlUsd: number;
+};
+
+/** America/New_York calendar date YYYY-MM-DD. */
+export function nySessionDate(now = new Date()): string {
+  return now.toLocaleDateString("en-CA", { timeZone: TZ });
+}
+
+/**
+ * totalPnl = equity - starting (100k).
+ * With a session mark: daily = Δrealized + Δunrealized vs that mark.
+ * With no mark: daily = today's realized (default 0) + uPnL change from 0 at session start.
+ */
+export function computeSleevePnl(input: {
+  equityUsd: number;
+  realizedPnlUsd: number;
+  unrealizedPnlUsd: number;
+  startingEquity?: number;
+  sessionMark: SessionMark | null;
+  todayRealizedPnlUsd?: number;
+}): { totalPnlUsd: number; dailyPnlUsd: number } {
+  const starting = input.startingEquity ?? DEFAULT_SLEEVE_EQUITY_USD;
+  const totalPnlUsd = input.equityUsd - starting;
+  if (input.sessionMark) {
+    return {
+      totalPnlUsd,
+      dailyPnlUsd:
+        input.realizedPnlUsd -
+        input.sessionMark.realizedPnlUsd +
+        (input.unrealizedPnlUsd - input.sessionMark.unrealizedPnlUsd),
+    };
+  }
+  const todayRealized = input.todayRealizedPnlUsd ?? 0;
+  return { totalPnlUsd, dailyPnlUsd: todayRealized + input.unrealizedPnlUsd };
+}
+
+/**
+ * No prior snapshot: mark realized at current (so only new fills count) and uPnL from 0.
+ * New NY session with a prior mark: snapshot the start-of-day book.
+ */
+export function openSessionMark(
+  sessionDate: string,
+  realizedPnlUsd: number,
+  unrealizedPnlUsd: number,
+  prior: SessionMark | null,
+): SessionMark {
+  if (prior && prior.sessionDate === sessionDate) return prior;
+  if (!prior) {
+    return { sessionDate, realizedPnlUsd, unrealizedPnlUsd: 0 };
+  }
+  return { sessionDate, realizedPnlUsd, unrealizedPnlUsd };
+}
+
+export function applySessionPnl(
+  book: SleeveBook,
+  mark: SessionMark | null,
+  startingEquity = DEFAULT_SLEEVE_EQUITY_USD,
+): SleeveBook {
+  const { totalPnlUsd, dailyPnlUsd } = computeSleevePnl({
+    equityUsd: book.equityUsd,
+    realizedPnlUsd: book.realizedPnlUsd,
+    unrealizedPnlUsd: book.unrealizedPnlUsd,
+    startingEquity,
+    sessionMark: mark,
+    todayRealizedPnlUsd: mark ? undefined : 0,
+  });
+  return { ...book, totalPnlUsd, dailyPnlUsd, pnlUsd: totalPnlUsd };
 }
 
 export function allSleeveBooks(
   sleeves: Record<SleeveId, SleeveCard>,
   positions: Position[],
   quotes: DelayedQuote[] = [],
+  sessionMarks?: Record<SleeveId, SessionMark | null>,
+  now?: Date,
 ): Record<SleeveId, SleeveBook> {
   const out = {} as Record<SleeveId, SleeveBook>;
+  const sessionDate = nySessionDate(now);
   for (const id of SLEEVE_IDS) {
-    out[id] = sleeveBook(sleeves[id], positions, quotes);
+    const raw = sleeveBook(sleeves[id], positions, quotes);
+    const prior = sessionMarks ? sessionMarks[id] ?? null : null;
+    const mark = sessionMarks
+      ? openSessionMark(sessionDate, raw.realizedPnlUsd, raw.unrealizedPnlUsd, prior)
+      : null;
+    out[id] = applySessionPnl(raw, mark);
+  }
+  return out;
+}
+
+export function rollSessionMarks(
+  books: Record<SleeveId, SleeveBook>,
+  prior: Record<SleeveId, SessionMark | null> | null | undefined,
+  now?: Date,
+): Record<SleeveId, SessionMark> {
+  const sessionDate = nySessionDate(now);
+  const out = {} as Record<SleeveId, SessionMark>;
+  for (const id of SLEEVE_IDS) {
+    const book = books[id];
+    out[id] = openSessionMark(
+      sessionDate,
+      book.realizedPnlUsd,
+      book.unrealizedPnlUsd,
+      prior?.[id] ?? null,
+    );
   }
   return out;
 }

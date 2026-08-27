@@ -1,4 +1,4 @@
-import type { Position, SleeveId, WorkingOrder } from "../../shared/types";
+import type { OverlayMeta, Position, SleeveId, VerticalMeta, WorkingOrder } from "../../shared/types";
 import type { OrderType } from "../../shared/constants";
 
 export interface InjectOrderInput {
@@ -18,6 +18,8 @@ export interface InjectPositionInput {
   avgPrice?: number;
   unrealizedPnl?: number;
   sleeveId?: SleeveId;
+  vertical?: VerticalMeta;
+  overlay?: OverlayMeta;
 }
 
 export interface BrokerClient {

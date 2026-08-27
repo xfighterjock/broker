@@ -62,6 +62,10 @@ export interface Position {
   unrealizedPnl: number;
   gated: boolean;
   sleeveId?: SleeveId;
+  /** Two-leg debit vertical on the options sleeve. Absent for stock/futures paper. */
+  vertical?: VerticalMeta;
+  /** Cash-secured put or covered call on the options sleeve (ownership overlay). */
+  overlay?: OverlayMeta;
 }
 
 export interface FreezeCard {
@@ -231,7 +235,7 @@ export function defaultSleeves(): Record<SleeveId, SleeveCard> {
       macroDrivers: "",
       microDrivers: "",
       instruments: "",
-      structure: "debit spreads / calendars / collars — no naked short vol",
+      structure: "debit verticals; CSP/CC overlay tagged to ownership — no naked short vol",
       killRules: "thesis broken / max debit lost / sleeve loss cap",
       status: "idea",
       paper: emptyPaperStats(),
@@ -380,6 +384,10 @@ export interface SleeveBook {
   realizedPnlUsd: number;
   unrealizedPnlUsd: number;
   pnlUsd: number;
+  /** equityUsd - DEFAULT_SLEEVE_EQUITY_USD (same as realized + unrealized). */
+  totalPnlUsd: number;
+  /** Session realized + change in unrealized vs session mark (or vs 0 uPnL if no mark). */
+  dailyPnlUsd: number;
 }
 
 export interface StatusSnapshot {
@@ -403,4 +411,98 @@ export interface StatusSnapshot {
   paperBlotter: PaperFill[];
   autoPaper: boolean;
   sleeveBooks: Record<SleeveId, SleeveBook>;
+}
+
+export type OptionRight = "C" | "P";
+
+export interface OptionLeg {
+  underlying: string;
+  osiKey: string;
+  displaySymbol: string;
+  right: OptionRight;
+  strike: number;
+  expiry: string;
+  bid: number | null;
+  ask: number | null;
+  last: number | null;
+  bidSize: number | null;
+  askSize: number | null;
+  openInterest: number | null;
+  delta: number | null;
+  gamma: number | null;
+  theta: number | null;
+  vega: number | null;
+  iv: number | null;
+}
+
+export interface OptionExpiry {
+  year: number;
+  month: number;
+  day: number;
+  expiry: string;
+  expiryType: string | null;
+}
+
+export interface OptionExpiriesResponse {
+  symbol: string;
+  delayed: true;
+  source: "etrade-sandbox" | "etrade";
+  expiries: OptionExpiry[];
+}
+
+export interface OptionChainSnapshot {
+  symbol: string;
+  underlying: string;
+  expiry: string;
+  delayed: true;
+  source: "etrade-sandbox" | "etrade";
+  chainType: "CALLPUT";
+  legs: OptionLeg[];
+}
+
+export interface VerticalMeta {
+  kind: "debit-vertical";
+  right: OptionRight;
+  expiry: string;
+  underlying: string;
+  /** v1 chain fetch symbol (SPY/QQQ/IWM). Sandbox may return a different underlyer. */
+  quoteSymbol: string;
+  qty: number;
+  long: OptionLeg;
+  short: OptionLeg;
+  longFill: number;
+  shortFill: number;
+  netDebitPerShare: number;
+  netDebitPaid: number;
+  maxLoss: number;
+  maxProfit: number;
+  width: number;
+  openedAt: string;
+  /** Valuation clock for DTE/MTM. Sandbox 2013 expiries pin this so wall clock does not false-close. */
+  asOf: string;
+  lastExitReason?: string;
+}
+
+export type OverlayKind = "csp" | "covered-call";
+export type OverlayThesisSleeve = "ownership" | "spcx";
+
+/** Short option on the options sleeve, tagged to an ownership (or SPCX) thesis. */
+export interface OverlayMeta {
+  kind: OverlayKind;
+  right: OptionRight;
+  expiry: string;
+  underlying: string;
+  quoteSymbol: string;
+  qty: number;
+  strike: number;
+  premiumPerShare: number;
+  premiumReceived: number;
+  /** CSP only: strike * 100 * qty. Never naked. */
+  cashReserved: number;
+  thesisSleeve: OverlayThesisSleeve;
+  thesisSymbol: string;
+  taLevel: string;
+  openedAt: string;
+  asOf: string;
+  leg: OptionLeg;
 }
