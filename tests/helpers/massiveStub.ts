@@ -7,6 +7,9 @@ import type { OptionChainSnapshot, OptionLeg } from "../../shared/types";
 const chainFixture = JSON.parse(
   readFileSync(resolve("tests/fixtures/etrade-optionchain.json"), "utf8"),
 ) as unknown;
+const expiryFixture = JSON.parse(
+  readFileSync(resolve("tests/fixtures/etrade-expiries.json"), "utf8"),
+) as unknown;
 
 export const MASSIVE_TEST_KEY = "test-massive-key-not-real";
 
@@ -98,7 +101,7 @@ export type StubMarketOpts = {
   chain?: { calls: unknown; puts: unknown; expiries: unknown };
 };
 
-/** Mock Massive + Yahoo futures. Never hits the network except localhost. */
+/** Mock Massive equities, E*TRADE option chains, Yahoo futures. Never hits the network except localhost. */
 export function stubMarketFetch(opts: StubMarketOpts = {}) {
   const lastBy = opts.lastBySymbol ?? 100;
   const chain = opts.chain ?? massiveChainBodiesFromEtrade();
@@ -111,6 +114,27 @@ export function stubMarketFetch(opts: StubMarketOpts = {}) {
       expect(url).not.toMatch(/apiKey=/i);
       if (url.includes("127.0.0.1") || url.includes("localhost")) {
         return realFetch(input as RequestInfo, init);
+      }
+      if (/https:\/\/api(sb)?\.etrade\.com/i.test(url)) {
+        expect(url).not.toMatch(/\/oauth\/request_token/i);
+        expect(url).not.toMatch(/\/v1\/accounts/i);
+        if (url.includes("optionexpiredate")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => expiryFixture,
+            text: async () => JSON.stringify(expiryFixture),
+          };
+        }
+        if (url.includes("optionchains")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => chainFixture,
+            text: async () => JSON.stringify(chainFixture),
+          };
+        }
+        throw new Error(`unexpected E*TRADE URL in tests: ${url.split("?")[0]}`);
       }
       if (url.includes("/v8/finance/chart/")) {
         const after = url.slice(url.indexOf("/chart/") + "/chart/".length);

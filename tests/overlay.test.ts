@@ -241,7 +241,7 @@ describe("CSP / covered-call validation", () => {
   });
 });
 
-describe("HTTP overlay (mocked Massive, MockBroker only)", () => {
+describe("HTTP overlay (mocked E*TRADE chain, MockBroker only)", () => {
   let savedPassword: string | undefined;
 
   beforeEach(() => {

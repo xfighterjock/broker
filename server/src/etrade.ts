@@ -161,6 +161,11 @@ export function isOptionsV1Symbol(raw: string): boolean {
   return (OPTIONS_V1_SYMBOLS as readonly string[]).includes(raw.trim().toUpperCase());
 }
 
+/** Any ordinary US option root. Live E*TRADE is not limited to SPY/QQQ/IWM. */
+export function isOptionUnderlying(raw: string): boolean {
+  return /^[A-Z][A-Z0-9.]{0,9}$/.test(raw.trim().toUpperCase());
+}
+
 export function parseExpiryYmd(year: number, month: number, day: number): string | null {
   if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null;
   if (year < 1990 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) return null;
@@ -341,7 +346,7 @@ export function parseOptionExpireDates(body: unknown, requested: string): Option
   const env = etradeEnvName();
   return {
     symbol: requested.toUpperCase(),
-    delayed: true,
+    delayed: env !== "production",
     source: env === "production" ? "etrade" : "etrade-sandbox",
     expiries,
   };
@@ -384,7 +389,7 @@ export function parseOptionChain(body: unknown, requested: string): OptionChainS
     symbol: requested.toUpperCase(),
     underlying: (underlying || requested).toUpperCase(),
     expiry,
-    delayed: true,
+    delayed: env !== "production",
     source: env === "production" ? "etrade" : "etrade-sandbox",
     chainType: "CALLPUT",
     legs,
@@ -398,8 +403,8 @@ export async function fetchOptionExpiries(
   | { ok: false; status: number; error: string }
 > {
   const sym = symbol.trim().toUpperCase();
-  if (!isOptionsV1Symbol(sym)) {
-    return { ok: false, status: 400, error: "symbol must be SPY, QQQ, or IWM" };
+  if (!isOptionUnderlying(sym)) {
+    return { ok: false, status: 400, error: "symbol must be a ticker" };
   }
   const now = Date.now();
   const hit = expiryCache.get(sym);
@@ -451,8 +456,8 @@ export async function fetchOptionChain(
   | { ok: false; status: number; error: string }
 > {
   const sym = q.symbol.trim().toUpperCase();
-  if (!isOptionsV1Symbol(sym)) {
-    return { ok: false, status: 400, error: "symbol must be SPY, QQQ, or IWM" };
+  if (!isOptionUnderlying(sym)) {
+    return { ok: false, status: 400, error: "symbol must be a ticker" };
   }
   let year = q.expiryYear;
   let month = q.expiryMonth;

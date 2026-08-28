@@ -79,13 +79,11 @@ import {
   type SessionMark,
 } from "./paper";
 import {
+  fetchOptionChain,
+  fetchOptionExpiries,
   findLeg,
   parseYmd,
 } from "./etrade";
-import {
-  fetchOptionChain,
-  fetchOptionExpiries,
-} from "./massive";
 import { ensureRisk, kickRisk } from "./risk";
 import {
   applyOverlayMarks,

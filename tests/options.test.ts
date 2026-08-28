@@ -9,7 +9,7 @@ import type { AppConfig } from "../server/src/config";
 import { GateEngine } from "../server/src/gate";
 import { MockBroker } from "../server/src/mockBroker";
 import { resetQuoteCache } from "../server/src/quotes";
-import { MASSIVE_KEY_MISSING, resetMassiveCache } from "../server/src/massive";
+import { resetMassiveCache } from "../server/src/massive";
 import { resetRiskCache } from "../server/src/risk";
 import {
   clearMassiveTestKey,
@@ -105,10 +105,15 @@ function dummyEtradeEnv() {
 }
 
 function clearEtradeEnv() {
+  delete process.env.ETRADE_ENV;
   delete process.env.ETRADE_SANDBOX_KEY;
   delete process.env.ETRADE_SANDBOX_SECRET;
   delete process.env.ETRADE_SANDBOX_ACCESS_TOKEN;
   delete process.env.ETRADE_SANDBOX_ACCESS_SECRET;
+  delete process.env.ETRADE_PROD_KEY;
+  delete process.env.ETRADE_PROD_SECRET;
+  delete process.env.ETRADE_PROD_ACCESS_TOKEN;
+  delete process.env.ETRADE_PROD_ACCESS_SECRET;
   delete process.env.ETRADE_KEY;
   delete process.env.ETRADE_SECRET;
   delete process.env.ETRADE_ACCESS_TOKEN;
@@ -323,7 +328,7 @@ describe("vertical exits with injected clock", () => {
   });
 });
 
-describe("HTTP options chain + paper vertical (mocked Massive)", () => {
+describe("HTTP options chain + paper vertical (mocked E*TRADE)", () => {
   let savedPassword: string | undefined;
 
   beforeEach(() => {
@@ -373,17 +378,18 @@ describe("HTTP options chain + paper vertical (mocked Massive)", () => {
     }
   });
 
-  it("GET /api/options/expiries returns 503 when MASSIVE_API_KEY is missing (no secrets)", async () => {
-    clearMassiveTestKey();
+  it("GET /api/options/expiries returns 503 when E*TRADE creds are missing (no secrets)", async () => {
+    clearEtradeEnv();
     const { app } = makeTestApp();
     const srv = await listen(app);
     try {
       const res = await fetch(`${srv.url}/api/options/expiries?symbol=SPY`);
       expect(res.status).toBe(503);
       const body = (await res.json()) as { error: string };
-      expect(body.error).toBe(MASSIVE_KEY_MISSING);
-      expect(JSON.stringify(body)).not.toMatch(/test-massive/);
-      expect(JSON.stringify(body)).not.toMatch(/MASSIVE_API_KEY=/);
+      expect(body.error).toMatch(/E\*TRADE/);
+      expect(JSON.stringify(body)).not.toMatch(/test-consumer/);
+      expect(JSON.stringify(body)).not.toMatch(/test-access/);
+      expect(JSON.stringify(body)).not.toMatch(/ETRADE_PROD_/);
     } finally {
       await srv.close();
     }
@@ -516,6 +522,31 @@ describe("options source never places broker orders", () => {
     expect(app).toMatch(/\/api\/paper\/csp/);
     expect(app).toMatch(/\/api\/options\/chain/);
     expect(app).not.toMatch(/createTradovateFromEnv/);
+  });
+
+  it("app.ts uses etrade chain fetch, not Massive", () => {
+    const app = readFileSync(resolve("server/src/app.ts"), "utf8");
+    const etradeBlock = [...app.matchAll(/import \{([^}]+)\} from ["']\.\/etrade["']/g)]
+      .map((m) => m[1])
+      .join("\n");
+    expect(etradeBlock).toMatch(/fetchOptionChain/);
+    expect(etradeBlock).toMatch(/fetchOptionExpiries/);
+    const massiveBlock = [...app.matchAll(/import \{([^}]+)\} from ["']\.\/massive["']/g)]
+      .map((m) => m[1])
+      .join("\n");
+    expect(massiveBlock).not.toMatch(/fetchOptionChain/);
+    expect(massiveBlock).not.toMatch(/fetchOptionExpiries/);
+  });
+
+  it("OAuth PIN flow lives in scripts/etrade-oauth.mjs, not etrade.ts", () => {
+    const script = readFileSync(resolve("scripts/etrade-oauth.mjs"), "utf8");
+    expect(script).toMatch(/request_token/);
+    expect(script).toMatch(/us\.etrade\.com\/e\/t\/etws\/authorize/);
+    expect(script).toMatch(/chmodSync\([^,]+, 0o600\)/);
+    expect(script).not.toMatch(/\/v1\/order/);
+    expect(script).not.toMatch(/placeOrder/i);
+    const src = readFileSync(resolve("server/src/etrade.ts"), "utf8");
+    expect(src).not.toMatch(/request_token/i);
   });
 });
 

@@ -282,12 +282,29 @@ describe("runAutopilot risk-off puts vs risk-on calls", () => {
   });
 });
 
-describe("HTTP riskoff put vertical (mocked Massive)", () => {
+function dummyEtradeEnv() {
+  process.env.ETRADE_ENV = "sandbox";
+  process.env.ETRADE_SANDBOX_KEY = "test-consumer-key";
+  process.env.ETRADE_SANDBOX_SECRET = "test-consumer-secret";
+  process.env.ETRADE_SANDBOX_ACCESS_TOKEN = "test-access-token";
+  process.env.ETRADE_SANDBOX_ACCESS_SECRET = "test-access-secret";
+}
+
+function clearEtradeEnv() {
+  delete process.env.ETRADE_ENV;
+  delete process.env.ETRADE_SANDBOX_KEY;
+  delete process.env.ETRADE_SANDBOX_SECRET;
+  delete process.env.ETRADE_SANDBOX_ACCESS_TOKEN;
+  delete process.env.ETRADE_SANDBOX_ACCESS_SECRET;
+}
+
+describe("HTTP riskoff put vertical (mocked E*TRADE chain)", () => {
   let savedPassword: string | undefined;
 
   beforeEach(() => {
     savedPassword = process.env.GATE_PASSWORD;
     delete process.env.GATE_PASSWORD;
+    dummyEtradeEnv();
     setMassiveTestKey();
     resetQuoteCache();
     resetEtradeCache();
@@ -299,6 +316,7 @@ describe("HTTP riskoff put vertical (mocked Massive)", () => {
   afterEach(() => {
     if (savedPassword === undefined) delete process.env.GATE_PASSWORD;
     else process.env.GATE_PASSWORD = savedPassword;
+    clearEtradeEnv();
     clearMassiveTestKey();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();

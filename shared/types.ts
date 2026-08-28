@@ -471,7 +471,7 @@ export interface OptionExpiry {
 
 export interface OptionExpiriesResponse {
   symbol: string;
-  delayed: true;
+  delayed: boolean;
   source: "etrade-sandbox" | "etrade" | "massive";
   expiries: OptionExpiry[];
 }
@@ -480,7 +480,7 @@ export interface OptionChainSnapshot {
   symbol: string;
   underlying: string;
   expiry: string;
-  delayed: true;
+  delayed: boolean;
   source: "etrade-sandbox" | "etrade" | "massive";
   chainType: "CALLPUT";
   legs: OptionLeg[];
