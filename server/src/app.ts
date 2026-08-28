@@ -33,6 +33,7 @@ import {
   sizeByStopRisk,
   type AutoBuy,
   type AutoSell,
+  type AutoVertical,
 } from "./autopilot";
 import {
   authRequired,
@@ -78,11 +79,14 @@ import {
   type SessionMark,
 } from "./paper";
 import {
-  fetchOptionChain,
-  fetchOptionExpiries,
   findLeg,
   parseYmd,
 } from "./etrade";
+import {
+  fetchOptionChain,
+  fetchOptionExpiries,
+} from "./massive";
+import { ensureRisk, kickRisk } from "./risk";
 import {
   applyOverlayMarks,
   detectOverlaySettlements,
@@ -1032,6 +1036,7 @@ export function buildApp(deps: AppDeps): express.Express {
       const featureRows = cache
         ? cache.rows.map((r) => ({ symbol: r.symbol, above200: r.features.above200 }))
         : [];
+      const risk = await ensureRisk();
       await runAutopilot({
         enabled: memory.autoPaper,
         getPositions: () => deps.broker.getPositionsSync(),
@@ -1040,6 +1045,33 @@ export function buildApp(deps: AppDeps): express.Express {
         ownershipRows,
         featureRows,
         scanReady,
+        riskOn: risk.riskOn,
+        placeVertical: async (v: AutoVertical) => {
+          return placePaperVertical({
+            sleeveId: "options",
+            symbol: v.symbol,
+            right: "C",
+            expiry: v.expiry,
+            longStrike: v.longStrike,
+            shortStrike: v.shortStrike,
+            thesis: v.thesis,
+          });
+        },
+        fetchExpiries: async (symbol: string) => {
+          const got = await fetchOptionExpiries(symbol);
+          return got.ok ? got.data.expiries : [];
+        },
+        fetchChain: async (symbol: string, expiry: string) => {
+          const ymd = parseYmd(expiry);
+          if (!ymd) return [];
+          const got = await fetchOptionChain({
+            symbol,
+            expiryYear: ymd.year,
+            expiryMonth: ymd.month,
+            expiryDay: ymd.day,
+          });
+          return got.ok ? got.data.legs : [];
+        },
         place: async (buy: AutoBuy) => {
           const quotes = await fetchDelayedQuotes([buy.symbol]);
           const last = lastFromQuotes(quotes, buy.symbol);
@@ -1093,6 +1125,7 @@ export function buildApp(deps: AppDeps): express.Express {
     await ensureSleeves();
     await ensureBlotter();
     await ensureAutoPaper();
+    const risk = await ensureRisk();
     let freeze = memory.freeze;
     let knowledgeTime = memory.knowledgeTime;
     if (deps.pool) {
@@ -1151,6 +1184,8 @@ export function buildApp(deps: AppDeps): express.Express {
       paperBlotter: memory.blotter.slice(-200),
       autoPaper: memory.autoPaper,
       sleeveBooks: await sleeveBooksWithSession(),
+      riskOn: risk.riskOn,
+      riskChecks: risk.checks,
     };
   }
 
@@ -1671,8 +1706,10 @@ export function buildApp(deps: AppDeps): express.Express {
   });
 
   attachScanReady(() => {
+    kickRisk();
     void runWiredAutopilot();
   });
+  kickRisk();
   stopAutoPaperLoop();
   if (deps.cfg.nodeEnv !== "test") {
     autoPaperTimer = setInterval(() => {

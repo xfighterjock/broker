@@ -140,8 +140,8 @@ describe("fetchDelayedQuotes", () => {
   });
 
   it("caches for 45s and does not re-hit Yahoo", async () => {
-    await fetchDelayedQuotes(["SPY"]);
-    await fetchDelayedQuotes(["SPY"]);
+    await fetchDelayedQuotes(["MES"]);
+    await fetchDelayedQuotes(["MES"]);
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
@@ -154,9 +154,9 @@ describe("fetchDelayedQuotes", () => {
         json: async () => ({ chart: { result: null, error: { description: "Unauthorized" } } }),
       })),
     );
-    const quotes = await fetchDelayedQuotes(["NOPE"]);
+    const quotes = await fetchDelayedQuotes(["NOPE=F"]);
     expect(quotes[0]).toMatchObject({
-      symbol: "NOPE",
+      symbol: "NOPE=F",
       last: null,
       prevClose: null,
       change: null,
@@ -177,7 +177,7 @@ describe("fetchDelayedQuotes", () => {
         json: async () => ({ chart: { result: [], error: null } }),
       })),
     );
-    const quotes = await fetchDelayedQuotes(["ZZZ"]);
+    const quotes = await fetchDelayedQuotes(["ZZZ=F"]);
     expect(quotes[0].last).toBeNull();
     expect(quotes[0].error).toBe("no chart result");
   });

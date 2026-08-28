@@ -3,9 +3,9 @@ import type { ScanResponse, ScanRow, ScanSleeve } from "../../shared/types";
 import {
   mapPool,
   QUOTE_FETCH_CONCURRENCY,
-  YAHOO_CHART_BASE,
   YAHOO_UA,
 } from "./quotes";
+import { fetchMassiveDailyBars } from "./massive";
 import type { RedisClient } from "./redis";
 
 export const SP500_CSV_URL =
@@ -490,11 +490,9 @@ async function loadUniverse(now: number): Promise<UniverseName[]> {
   return [];
 }
 
-async function fetchDailyBars(yahoo: string): Promise<DailyBar[] | null> {
-  const url = `${YAHOO_CHART_BASE}${encodeURIComponent(yahoo)}?interval=1d&range=1y`;
-  const body = await fetchJson(url);
-  if (body === null) return null;
-  return parseYahooDailyBars(body);
+async function fetchDailyBars(ticker: string): Promise<DailyBar[] | null> {
+  const bars = await fetchMassiveDailyBars(ticker);
+  return bars;
 }
 
 async function runScan(): Promise<void> {
@@ -514,7 +512,7 @@ async function runScan(): Promise<void> {
   let skip = 0;
   const rows: FeatureRow[] = [];
   await mapPool(names, QUOTE_FETCH_CONCURRENCY, async (n) => {
-    const bars = await fetchDailyBars(n.yahoo);
+    const bars = await fetchDailyBars(n.symbol);
     const feat = bars ? featuresFromBars(bars) : null;
     if (!feat) {
       skip++;
@@ -566,7 +564,7 @@ function scanningBody(sleeve: ScanSleeve): ScanResponse {
     asOf: null,
     universe: "sp500",
     delayed: true,
-    source: "yahoo",
+    source: "massive",
     status: "scanning",
     rows: [],
   };
@@ -589,7 +587,7 @@ export async function getScan(sleeve: ScanSleeve): Promise<ScanResponse> {
     asOf: featuresMem.asOf,
     universe: "sp500",
     delayed: true,
-    source: "yahoo",
+    source: "massive",
     status: "ok",
     rows,
   };

@@ -76,9 +76,16 @@ export const REDIS_CHANNELS = {
   status: "eventgate:status",
 } as const;
 
-/** Options sleeve v1 underlyers. E*TRADE Market API chain-only. */
+/** Default quote-strip names. Live chains accept any US equity/ETF (not a gate). */
 export const OPTIONS_V1_SYMBOLS = ["SPY", "QQQ", "IWM"] as const;
 export type OptionsV1Symbol = (typeof OPTIONS_V1_SYMBOLS)[number];
+
+export const MASSIVE_BASE = "https://api.massive.com";
+/** Options-sleeve auto debit-call cap (3–5). */
+export const MAX_AUTO_VERTICALS = 5;
+/** Prefer 30–45 DTE, always above OPTIONS_DTE_EXIT. */
+export const OPTIONS_DTE_TARGET_MIN = 30;
+export const OPTIONS_DTE_TARGET_MAX = 45;
 
 export const OPTIONS_MULTIPLIER = 100;
 /** Prefer size so net debit is near this fraction of sleeve equity. */

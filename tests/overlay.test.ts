@@ -9,6 +9,13 @@ import type { AppConfig } from "../server/src/config";
 import { GateEngine } from "../server/src/gate";
 import { MockBroker } from "../server/src/mockBroker";
 import { resetQuoteCache } from "../server/src/quotes";
+import { resetMassiveCache } from "../server/src/massive";
+import { resetRiskCache } from "../server/src/risk";
+import {
+  clearMassiveTestKey,
+  setMassiveTestKey,
+  stubMarketFetch,
+} from "./helpers/massiveStub";
 import { StatusHub } from "../server/src/wsHub";
 import { parseOptionChain, resetEtradeCache } from "../server/src/etrade";
 import {
@@ -102,61 +109,7 @@ function clearEtradeEnv() {
 const realFetch = globalThis.fetch;
 
 function stubMarket(lastBySymbol: Record<string, number> = { SPY: 500, AAPL: 60, QQQ: 400, IWM: 200 }) {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      expect(url).not.toMatch(/tradovate/i);
-      expect(url).not.toMatch(/\/v1\/order/i);
-      expect(url).not.toMatch(/\/v1\/accounts/i);
-      if (url.includes("127.0.0.1") || url.includes("localhost")) {
-        return realFetch(input as RequestInfo, init);
-      }
-      if (url.includes("/v8/finance/chart/")) {
-        const after = url.slice(url.indexOf("/chart/") + "/chart/".length);
-        const symbol = decodeURIComponent(after.split("?")[0]).toUpperCase();
-        const last = lastBySymbol[symbol] ?? 100;
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({
-            chart: {
-              result: [
-                {
-                  meta: {
-                    symbol,
-                    regularMarketPrice: last,
-                    previousClose: last - 1,
-                    regularMarketTime: 1_360_000_000,
-                    exchangeName: "NYSE",
-                  },
-                },
-              ],
-              error: null,
-            },
-          }),
-          text: async () => "{}",
-        };
-      }
-      if (url.includes("/v1/market/optionexpiredate")) {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => expiryFixture,
-          text: async () => JSON.stringify(expiryFixture),
-        };
-      }
-      if (url.includes("/v1/market/optionchains")) {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => chainFixture,
-          text: async () => JSON.stringify(chainFixture),
-        };
-      }
-      return realFetch(input as RequestInfo, init);
-    }),
-  );
+  stubMarketFetch({ lastBySymbol });
 }
 
 const chain = parseOptionChain(chainFixture, "SPY");
@@ -288,15 +241,18 @@ describe("CSP / covered-call validation", () => {
   });
 });
 
-describe("HTTP overlay (mocked E*TRADE, MockBroker only)", () => {
+describe("HTTP overlay (mocked Massive, MockBroker only)", () => {
   let savedPassword: string | undefined;
 
   beforeEach(() => {
     savedPassword = process.env.GATE_PASSWORD;
     delete process.env.GATE_PASSWORD;
     dummyEtradeEnv();
+    setMassiveTestKey();
     resetQuoteCache();
     resetEtradeCache();
+    resetMassiveCache();
+    resetRiskCache();
     setPaperNow(null);
   });
 
@@ -304,10 +260,13 @@ describe("HTTP overlay (mocked E*TRADE, MockBroker only)", () => {
     if (savedPassword === undefined) delete process.env.GATE_PASSWORD;
     else process.env.GATE_PASSWORD = savedPassword;
     clearEtradeEnv();
+    clearMassiveTestKey();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     resetQuoteCache();
     resetEtradeCache();
+    resetMassiveCache();
+    resetRiskCache();
     setPaperNow(null);
   });
 
@@ -479,6 +438,13 @@ describe("HTTP overlay (mocked E*TRADE, MockBroker only)", () => {
         );
         expect(typeof snap.sleeveBooks[id].dailyPnlUsd).toBe("number");
       }
+      expect(typeof snap.riskOn).toBe("boolean");
+      expect(snap.riskChecks).toMatchObject({
+        spyAbove200: expect.any(Boolean),
+        acwiAbove200: expect.any(Boolean),
+        hygAbove200: expect.any(Boolean),
+        dollarVeto: expect.any(Boolean),
+      });
     } finally {
       await srv.close();
     }

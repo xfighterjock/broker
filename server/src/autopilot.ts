@@ -1,11 +1,20 @@
-import { DEFAULT_SLEEVE_EQUITY_USD } from "../../shared/constants";
+import {
+  DEFAULT_SLEEVE_EQUITY_USD,
+  MAX_AUTO_VERTICALS,
+  OPTIONS_DTE_EXIT,
+  OPTIONS_DTE_TARGET_MAX,
+  OPTIONS_DTE_TARGET_MIN,
+} from "../../shared/constants";
 import type {
+  OptionExpiry,
+  OptionLeg,
   Position,
   ScanRow,
   SleeveCard,
   SleeveId,
 } from "../../shared/types";
 import { pointValueFor } from "./paper";
+import { daysToExpiry, isVerticalPosition } from "./vertical";
 
 export const MAX_AUTO_MOMENTUM = 5;
 export const MAX_AUTO_OWNERSHIP = 5;
@@ -70,7 +79,9 @@ export function decideBuys(
   rows: ScanRow[],
   openPositions: Position[],
   sleeve: SleeveCard,
+  riskOn = true,
 ): AutoBuy[] {
+  if (!riskOn) return [];
   if (sleeve.id !== "momentum" && sleeve.id !== "ownership") return [];
   if (sleeve.paper.realizedPnlUsd <= -sleeve.lossCapUsd) return [];
 
@@ -159,6 +170,107 @@ export function decideSells(
   return out;
 }
 
+
+export type AutoVerticalIntent = {
+  sleeveId: "options";
+  symbol: string;
+  last: number;
+  thesis: string;
+};
+
+export type AutoVertical = {
+  sleeveId: "options";
+  symbol: string;
+  right: "C";
+  expiry: string;
+  longStrike: number;
+  shortStrike: number;
+  thesis: string;
+};
+
+function openVerticalUnderlyers(positions: Position[]): Set<string> {
+  const s = new Set<string>();
+  for (const p of positions) {
+    if (!isOpen(p) || !isVerticalPosition(p) || !p.vertical) continue;
+    s.add(p.vertical.underlying.toUpperCase());
+    s.add(p.vertical.quoteSymbol.toUpperCase());
+  }
+  return s;
+}
+
+/** Momentum TA names for debit-call autos. Never puts, CSP, or covered calls. */
+export function decideCallVerticalIntents(
+  rows: ScanRow[],
+  openPositions: Position[],
+  sleeve: SleeveCard,
+  riskOn = true,
+): AutoVerticalIntent[] {
+  if (!riskOn) return [];
+  if (sleeve.id !== "options") return [];
+  if (sleeve.paper.realizedPnlUsd <= -sleeve.lossCapUsd) return [];
+  const openV = openPositions.filter((p) => isOpen(p) && p.sleeveId === "options" && isVerticalPosition(p));
+  let slots = MAX_AUTO_VERTICALS - openV.length;
+  if (slots <= 0) return [];
+  const taken = openVerticalUnderlyers(openPositions);
+  const out: AutoVerticalIntent[] = [];
+  for (const row of rows) {
+    if (slots <= 0) break;
+    const symbol = row.symbol.trim().toUpperCase();
+    if (!symbol || symbol.includes("=")) continue;
+    if (taken.has(symbol)) continue;
+    if (!(row.last > 0) || !Number.isFinite(row.last)) continue;
+    const score = Number.isFinite(row.score) ? row.score.toFixed(3) : String(row.score);
+    out.push({
+      sleeveId: "options",
+      symbol,
+      last: row.last,
+      thesis: `auto call debit score ${score} ${row.sector} ${row.why}`,
+    });
+    taken.add(symbol);
+    slots -= 1;
+  }
+  return out;
+}
+
+/** Long closer ATM, short the next further OTM call. Skip if <2 call strikes. */
+export function pickAtmCallDebit(
+  legs: OptionLeg[],
+  last: number,
+): { long: OptionLeg; short: OptionLeg } | null {
+  if (!(last > 0)) return null;
+  const calls = legs.filter((l) => l.right === "C").sort((a, b) => a.strike - b.strike);
+  if (calls.length < 2) return null;
+  let atmIdx = 0;
+  let best = Infinity;
+  for (let i = 0; i < calls.length; i++) {
+    const d = Math.abs(calls[i].strike - last);
+    if (d < best) {
+      best = d;
+      atmIdx = i;
+    }
+  }
+  if (atmIdx >= calls.length - 1) atmIdx = calls.length - 2;
+  const long = calls[atmIdx];
+  const short = calls[atmIdx + 1];
+  if (!(short.strike > long.strike)) return null;
+  return { long, short };
+}
+
+export function pickTargetExpiry(expiries: OptionExpiry[], now = new Date()): OptionExpiry | null {
+  const scored: Array<{ e: OptionExpiry; dte: number }> = [];
+  for (const e of expiries) {
+    const dte = daysToExpiry(e.expiry, now);
+    if (!Number.isFinite(dte)) continue;
+    if (dte <= OPTIONS_DTE_EXIT) continue;
+    if (dte < OPTIONS_DTE_TARGET_MIN || dte > OPTIONS_DTE_TARGET_MAX) continue;
+    scored.push({ e, dte });
+  }
+  if (!scored.length) return null;
+  const mid = (OPTIONS_DTE_TARGET_MIN + OPTIONS_DTE_TARGET_MAX) / 2;
+  scored.sort((a, b) => Math.abs(a.dte - mid) - Math.abs(b.dte - mid));
+  return scored[0].e;
+}
+
 export type PlaceResult = { ok: true } | { ok: false; error: string };
 export type CloseResult = { ok: true } | { ok: false; error: string };
 
@@ -170,18 +282,25 @@ export type AutopilotCtx = {
   ownershipRows: ScanRow[];
   featureRows: Array<{ symbol: string; above200: boolean }>;
   scanReady: boolean;
+  riskOn: boolean;
   place: (buy: AutoBuy) => Promise<PlaceResult>;
   close: (sell: AutoSell) => Promise<CloseResult>;
+  /** Paper debit call verticals only. Must never place puts/CSP/CC. */
+  placeVertical?: (v: AutoVertical) => Promise<PlaceResult>;
+  fetchExpiries?: (symbol: string) => Promise<OptionExpiry[]>;
+  fetchChain?: (symbol: string, expiry: string) => Promise<OptionLeg[]>;
   log: (line: string) => void;
 };
 
 export async function runAutopilot(ctx: AutopilotCtx): Promise<{
   bought: AutoBuy[];
   sold: AutoSell[];
+  verticals: AutoVertical[];
 }> {
   const bought: AutoBuy[] = [];
   const sold: AutoSell[] = [];
-  if (!ctx.enabled) return { bought, sold };
+  const verticals: AutoVertical[] = [];
+  if (!ctx.enabled) return { bought, sold, verticals };
 
   const sells = decideSells(
     ctx.getPositions(),
@@ -202,11 +321,13 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
     }
   }
 
-  if (!ctx.scanReady) return { bought, sold };
+  if (!ctx.scanReady) return { bought, sold, verticals };
+
+  const riskOn = ctx.riskOn === true;
 
   for (const sleeveId of ["momentum", "ownership"] as const) {
     const rows = sleeveId === "momentum" ? ctx.momentumRows : ctx.ownershipRows;
-    const buys = decideBuys(rows, ctx.getPositions(), ctx.getSleeves()[sleeveId]);
+    const buys = decideBuys(rows, ctx.getPositions(), ctx.getSleeves()[sleeveId], riskOn);
     for (const b of buys) {
       const r = await ctx.place(b);
       if (r.ok) {
@@ -221,5 +342,63 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
       }
     }
   }
-  return { bought, sold };
+  if (
+    riskOn &&
+    ctx.placeVertical &&
+    ctx.fetchExpiries &&
+    ctx.fetchChain
+  ) {
+    const intents = decideCallVerticalIntents(
+      ctx.momentumRows,
+      ctx.getPositions(),
+      ctx.getSleeves().options,
+      riskOn,
+    );
+    for (const intent of intents) {
+      try {
+        const expiries = await ctx.fetchExpiries(intent.symbol);
+        const picked = pickTargetExpiry(expiries);
+        if (!picked) {
+          ctx.log(`auto paper vertical skip ${intent.symbol}: no 30–45 DTE expiry`);
+          continue;
+        }
+        const legs = await ctx.fetchChain(intent.symbol, picked.expiry);
+        const pair = pickAtmCallDebit(legs, intent.last);
+        if (!pair) {
+          ctx.log(`auto paper vertical skip ${intent.symbol}: no ATM call debit`);
+          continue;
+        }
+        if (pair.long.right !== "C" || pair.short.right !== "C") {
+          ctx.log(`auto paper vertical skip ${intent.symbol}: refuses puts`);
+          continue;
+        }
+        const v: AutoVertical = {
+          sleeveId: "options",
+          symbol: intent.symbol,
+          right: "C",
+          expiry: picked.expiry,
+          longStrike: pair.long.strike,
+          shortStrike: pair.short.strike,
+          thesis: intent.thesis,
+        };
+        const r = await ctx.placeVertical(v);
+        if (r.ok) {
+          ctx.log(
+            `auto paper call debit ${v.symbol} ${v.longStrike}/${v.shortStrike} C ${v.expiry} ${v.thesis} (MockBroker, not live, not E*TRADE order)`,
+          );
+          verticals.push(v);
+        } else if (/bid\/ask/i.test(r.error)) {
+          ctx.log(`auto paper vertical skip ${intent.symbol} missing bid/ask`);
+        } else {
+          ctx.log(`auto paper vertical skip ${intent.symbol}: ${r.error}`);
+        }
+      } catch (err) {
+        ctx.log(
+          `auto paper vertical skip ${intent.symbol}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+  }
+
+  return { bought, sold, verticals };
 }

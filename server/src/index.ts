@@ -7,6 +7,7 @@ import type { CalendarEvent } from "../../shared/types";
 import { buildApp, stopAutoPaperLoop } from "./app";
 import { authRequired, buildSessionMiddleware, gatePassword } from "./auth";
 import { loadConfig } from "./config";
+import { maybeLoadAppDotenv } from "./massive";
 import { createPool, loadEvents, recentGateLog, runMigrations } from "./db";
 import { GateEngine } from "./gate";
 import { MockBroker } from "./mockBroker";
@@ -16,6 +17,7 @@ import { attachScanRedis, kickScan } from "./scan";
 import { StatusHub } from "./wsHub";
 
 async function main(): Promise<void> {
+  maybeLoadAppDotenv();
   const cfg = loadConfig();
 
   let pool = null as ReturnType<typeof createPool> | null;

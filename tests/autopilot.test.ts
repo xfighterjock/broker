@@ -195,6 +195,7 @@ describe("runAutopilot toggle", () => {
       ownershipRows: [row({ symbol: "JPM" })],
       featureRows: [{ symbol: "DELL", above200: true }],
       scanReady: true,
+      riskOn: true,
       place,
       close,
       log,
@@ -219,6 +220,7 @@ describe("runAutopilot toggle", () => {
       ownershipRows: [],
       featureRows: [],
       scanReady: true,
+      riskOn: true,
       place: async (b) => {
         if (b.symbol === "DELL") return { ok: false, error: "no delayed last" };
         placed.push(b.symbol);

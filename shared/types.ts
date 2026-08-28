@@ -334,7 +334,7 @@ export interface DelayedQuote {
   asOf: string | null; // ISO from regularMarketTime
   exchange: string | null;
   delayed: true;
-  source: "yahoo";
+  source: "yahoo" | "massive";
   error?: string;
 }
 
@@ -373,7 +373,7 @@ export interface ScanResponse {
   asOf: string | null;
   universe: "sp500";
   delayed: true;
-  source: "yahoo";
+  source: "yahoo" | "massive";
   status: "ok" | "scanning";
   rows: ScanRow[];
 }
@@ -411,6 +411,15 @@ export interface StatusSnapshot {
   paperBlotter: PaperFill[];
   autoPaper: boolean;
   sleeveBooks: Record<SleeveId, SleeveBook>;
+  /** Global risk-on/off. Not a toggle. Does not bind day sleeve / clock / flatten / GATE. */
+  riskOn: boolean;
+  riskChecks: {
+    spyAbove200: boolean;
+    acwiAbove200: boolean;
+    hygAbove200: boolean;
+    uup20dPct: number | null;
+    dollarVeto: boolean;
+  };
 }
 
 export type OptionRight = "C" | "P";
@@ -446,7 +455,7 @@ export interface OptionExpiry {
 export interface OptionExpiriesResponse {
   symbol: string;
   delayed: true;
-  source: "etrade-sandbox" | "etrade";
+  source: "etrade-sandbox" | "etrade" | "massive";
   expiries: OptionExpiry[];
 }
 
@@ -455,7 +464,7 @@ export interface OptionChainSnapshot {
   underlying: string;
   expiry: string;
   delayed: true;
-  source: "etrade-sandbox" | "etrade";
+  source: "etrade-sandbox" | "etrade" | "massive";
   chainType: "CALLPUT";
   legs: OptionLeg[];
 }

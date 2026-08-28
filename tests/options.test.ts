@@ -9,6 +9,13 @@ import type { AppConfig } from "../server/src/config";
 import { GateEngine } from "../server/src/gate";
 import { MockBroker } from "../server/src/mockBroker";
 import { resetQuoteCache } from "../server/src/quotes";
+import { MASSIVE_KEY_MISSING, resetMassiveCache } from "../server/src/massive";
+import { resetRiskCache } from "../server/src/risk";
+import {
+  clearMassiveTestKey,
+  setMassiveTestKey,
+  stubMarketFetch,
+} from "./helpers/massiveStub";
 import { StatusHub } from "../server/src/wsHub";
 import {
   applySandboxVerticalFallback,
@@ -110,61 +117,8 @@ function clearEtradeEnv() {
 
 const realFetch = globalThis.fetch;
 
-function stubMarket(opts?: { chain?: unknown; expiries?: unknown }) {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      expect(url).not.toMatch(/tradovate/i);
-      expect(url).not.toMatch(/\/v1\/order/i);
-      expect(url).not.toMatch(/\/v1\/accounts/i);
-      if (url.includes("127.0.0.1") || url.includes("localhost")) {
-        return realFetch(input as RequestInfo, init);
-      }
-      if (url.includes("/v8/finance/chart/")) {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({
-            chart: {
-              result: [
-                {
-                  meta: {
-                    symbol: "SPY",
-                    regularMarketPrice: 500,
-                    previousClose: 499,
-                    regularMarketTime: 1_360_000_000,
-                    exchangeName: "NYSE",
-                  },
-                },
-              ],
-              error: null,
-            },
-          }),
-          text: async () => "{}",
-        };
-      }
-      if (url.includes("/v1/market/optionexpiredate")) {
-        const body = opts?.expiries ?? expiryFixture;
-        return {
-          ok: true,
-          status: 200,
-          json: async () => body,
-          text: async () => JSON.stringify(body),
-        };
-      }
-      if (url.includes("/v1/market/optionchains")) {
-        const body = opts?.chain ?? chainFixture;
-        return {
-          ok: true,
-          status: 200,
-          json: async () => body,
-          text: async () => JSON.stringify(body),
-        };
-      }
-      return realFetch(input as RequestInfo, init);
-    }),
-  );
+function stubMarket(_opts?: { chain?: unknown; expiries?: unknown }) {
+  stubMarketFetch({ lastBySymbol: { SPY: 500, AAPL: 67 } });
 }
 
 function legAt(chain: OptionChainSnapshot, strike: number, right: "C" | "P"): OptionLeg {
@@ -369,15 +323,18 @@ describe("vertical exits with injected clock", () => {
   });
 });
 
-describe("HTTP options chain + paper vertical (mocked E*TRADE)", () => {
+describe("HTTP options chain + paper vertical (mocked Massive)", () => {
   let savedPassword: string | undefined;
 
   beforeEach(() => {
     savedPassword = process.env.GATE_PASSWORD;
     delete process.env.GATE_PASSWORD;
     dummyEtradeEnv();
+    setMassiveTestKey();
     resetQuoteCache();
     resetEtradeCache();
+    resetMassiveCache();
+    resetRiskCache();
     setPaperNow(null);
   });
 
@@ -385,10 +342,13 @@ describe("HTTP options chain + paper vertical (mocked E*TRADE)", () => {
     if (savedPassword === undefined) delete process.env.GATE_PASSWORD;
     else process.env.GATE_PASSWORD = savedPassword;
     clearEtradeEnv();
+    clearMassiveTestKey();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     resetQuoteCache();
     resetEtradeCache();
+    resetMassiveCache();
+    resetRiskCache();
     setPaperNow(null);
   });
 
@@ -413,18 +373,34 @@ describe("HTTP options chain + paper vertical (mocked E*TRADE)", () => {
     }
   });
 
-  it("GET /api/options/expiries returns 503 when access tokens are missing (no secrets)", async () => {
-    delete process.env.ETRADE_SANDBOX_ACCESS_TOKEN;
-    delete process.env.ETRADE_SANDBOX_ACCESS_SECRET;
+  it("GET /api/options/expiries returns 503 when MASSIVE_API_KEY is missing (no secrets)", async () => {
+    clearMassiveTestKey();
     const { app } = makeTestApp();
     const srv = await listen(app);
     try {
       const res = await fetch(`${srv.url}/api/options/expiries?symbol=SPY`);
       expect(res.status).toBe(503);
       const body = (await res.json()) as { error: string };
-      expect(body.error).toMatch(/access tokens missing/i);
-      expect(JSON.stringify(body)).not.toMatch(/test-consumer/);
-      expect(JSON.stringify(body)).not.toMatch(/SANDBOX_SECRET/);
+      expect(body.error).toBe(MASSIVE_KEY_MISSING);
+      expect(JSON.stringify(body)).not.toMatch(/test-massive/);
+      expect(JSON.stringify(body)).not.toMatch(/MASSIVE_API_KEY=/);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it("GET /api/options/expiries rejects MES=F and accepts AAPL", async () => {
+    const { app } = makeTestApp();
+    stubMarket();
+    const srv = await listen(app);
+    try {
+      const bad = await fetch(`${srv.url}/api/options/expiries?symbol=MES=F`);
+      expect(bad.status).toBe(400);
+      const ok = await fetch(`${srv.url}/api/options/expiries?symbol=AAPL`);
+      expect(ok.status).toBe(200);
+      const body = (await ok.json()) as { symbol: string; expiries: { expiry: string }[] };
+      expect(body.symbol).toBe("AAPL");
+      expect(body.expiries.some((e) => e.expiry === "2013-03-16")).toBe(true);
     } finally {
       await srv.close();
     }

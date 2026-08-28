@@ -1,4 +1,5 @@
 import type { DelayedQuote, SleeveCard, SleeveId } from "../../shared/types";
+import { fetchMassiveQuote } from "./massive";
 
 export const DEFAULT_SYMBOLS: Record<SleeveId, string[]> = {
   day: ["MES=F", "ZN=F", "M6E=F", "SR3=F"],
@@ -60,7 +61,11 @@ export function symbolsForSleeve(sleeve: SleeveCard | undefined, id: SleeveId): 
   return [...DEFAULT_SYMBOLS[id]];
 }
 
-function errorQuote(symbol: string, error: string): DelayedQuote {
+function errorQuote(
+  symbol: string,
+  error: string,
+  source: DelayedQuote["source"] = "yahoo",
+): DelayedQuote {
   return {
     symbol,
     last: null,
@@ -70,10 +75,19 @@ function errorQuote(symbol: string, error: string): DelayedQuote {
     asOf: null,
     exchange: null,
     delayed: true,
-    source: "yahoo",
+    source,
     error,
   };
 }
+
+/** Yahoo only for futures =F / MES,ZN,6E,M6E,SR3,ES,NQ,MNQ. Equities go to Massive. */
+export function isYahooFuturesSymbol(symbol: string): boolean {
+  const t = symbol.trim().toUpperCase();
+  if (!t) return false;
+  if (t.includes("=")) return true;
+  return t in ROOT_TO_YAHOO;
+}
+
 
 export async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const results: R[] = new Array(items.length);
@@ -145,10 +159,7 @@ function parseYahooChart(symbol: string, body: unknown): DelayedQuote {
   };
 }
 
-async function fetchOne(symbol: string, now: number): Promise<DelayedQuote> {
-  const hit = cache.get(symbol);
-  if (hit && now - hit.at < QUOTE_CACHE_MS) return hit.quote;
-
+async function fetchYahooOne(symbol: string, now: number): Promise<DelayedQuote> {
   const url = `${YAHOO_CHART_BASE}${encodeURIComponent(symbol)}?interval=5m&range=1d`;
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS);
@@ -158,22 +169,30 @@ async function fetchOne(symbol: string, now: number): Promise<DelayedQuote> {
       signal: ac.signal,
     });
     if (!res.ok) {
-      const q = errorQuote(symbol, `http ${res.status}`);
-      cache.set(symbol, { quote: q, at: now });
-      return q;
+      return errorQuote(symbol, `http ${res.status}`, "yahoo");
     }
     const body: unknown = await res.json();
-    const q = parseYahooChart(symbol, body);
-    cache.set(symbol, { quote: q, at: now });
-    return q;
+    return parseYahooChart(symbol, body);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    const q = errorQuote(symbol, msg);
-    cache.set(symbol, { quote: q, at: now });
-    return q;
+    return errorQuote(symbol, msg, "yahoo");
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function fetchOne(symbol: string, now: number): Promise<DelayedQuote> {
+  const hit = cache.get(symbol);
+  if (hit && now - hit.at < QUOTE_CACHE_MS) return hit.quote;
+
+  let q: DelayedQuote;
+  if (isYahooFuturesSymbol(symbol)) {
+    q = await fetchYahooOne(symbol, now);
+  } else {
+    q = await fetchMassiveQuote(symbol);
+  }
+  cache.set(symbol, { quote: q, at: now });
+  return q;
 }
 
 export async function fetchDelayedQuotes(symbols: string[]): Promise<DelayedQuote[]> {

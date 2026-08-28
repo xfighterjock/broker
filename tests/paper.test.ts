@@ -9,6 +9,13 @@ import type { AppConfig } from "../server/src/config";
 import { GateEngine } from "../server/src/gate";
 import { MockBroker } from "../server/src/mockBroker";
 import { resetQuoteCache } from "../server/src/quotes";
+import { resetMassiveCache } from "../server/src/massive";
+import { resetRiskCache } from "../server/src/risk";
+import {
+  clearMassiveTestKey,
+  setMassiveTestKey,
+  stubMarketFetch,
+} from "./helpers/massiveStub";
 import { StatusHub } from "../server/src/wsHub";
 import * as tradovate from "../server/src/tradovateBroker";
 import {
@@ -98,27 +105,9 @@ function yahooBody(symbol: string, last: number, prev = last - 1) {
 const realFetch = globalThis.fetch;
 
 function stubQuotes(lastBySymbol: Record<string, number> | number) {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      expect(url).not.toMatch(/tradovate/i);
-      if (!url.includes("/v8/finance/chart/")) {
-        return realFetch(input as RequestInfo, init);
-      }
-      const after = url.slice(url.indexOf("/chart/") + "/chart/".length);
-      const symbol = decodeURIComponent(after.split("?")[0]);
-      const last =
-        typeof lastBySymbol === "number"
-          ? lastBySymbol
-          : lastBySymbol[symbol] ?? lastBySymbol[symbol.replace("=F", "")] ?? 100;
-      return {
-        ok: true,
-        status: 200,
-        json: async () => yahooBody(symbol, last),
-      };
-    }),
-  );
+  setMassiveTestKey();
+  const map = typeof lastBySymbol === "number" ? lastBySymbol : lastBySymbol;
+  stubMarketFetch({ lastBySymbol: map });
 }
 
 describe("paper stop side validation", () => {
@@ -205,14 +194,19 @@ describe("POST /api/paper/order fill-at-last", () => {
     savedPassword = process.env.GATE_PASSWORD;
     delete process.env.GATE_PASSWORD;
     resetQuoteCache();
+    resetMassiveCache();
+    resetRiskCache();
   });
 
   afterEach(() => {
     if (savedPassword === undefined) delete process.env.GATE_PASSWORD;
     else process.env.GATE_PASSWORD = savedPassword;
+    clearMassiveTestKey();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     resetQuoteCache();
+    resetMassiveCache();
+    resetRiskCache();
   });
 
   it("fills the entry at the mocked delayed last and places a working stop", async () => {
@@ -264,9 +258,8 @@ describe("POST /api/paper/order fill-at-last", () => {
       expect(tv).not.toHaveBeenCalled();
       const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
       const urls = fetchMock.mock.calls.map((c) => String(c[0]));
-      const yahoo = urls.filter((u) => u.includes("/v8/finance/chart/"));
-      expect(yahoo.length).toBeGreaterThan(0);
-      expect(yahoo.some((u) => u.includes("SPY"))).toBe(true);
+      const massive = urls.filter((u) => u.includes("/v2/snapshot/locale/us/markets/stocks/tickers/SPY"));
+      expect(massive.length).toBeGreaterThan(0);
       for (const u of urls) {
         expect(u).not.toMatch(/tradovate/i);
       }
@@ -307,11 +300,16 @@ describe("flatten on stop cross", () => {
   beforeEach(() => {
     delete process.env.GATE_PASSWORD;
     resetQuoteCache();
+    resetMassiveCache();
+    resetRiskCache();
   });
   afterEach(() => {
+    clearMassiveTestKey();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     resetQuoteCache();
+    resetMassiveCache();
+    resetRiskCache();
   });
 
   it("detectStopHits fires when delayed last crosses the working stop", () => {

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { OPTIONS_MULTIPLIER, OPTIONS_V1_SYMBOLS } from "../../shared/constants";
+import { OPTIONS_MULTIPLIER } from "../../shared/constants";
 import type {
   OptionChainSnapshot,
   OptionExpiry,
@@ -48,7 +48,7 @@ function rowsFromChain(chain: OptionChainSnapshot | null): StrikeRow[] {
 }
 
 const HINT =
-  "E*TRADE sandbox chain (DELAYED / canned). Paper debit verticals on MockBroker. Never a live send.";
+  "Massive Starter chain (DELAYED 15m). Paper debit verticals on MockBroker. Never a live send.";
 
 export function OptionsPanel({
   positions,
@@ -63,7 +63,8 @@ export function OptionsPanel({
   setAuthNeeded: (v: boolean) => void;
   setErr: (v: string | null) => void;
 }) {
-  const [symbol, setSymbol] = useState<(typeof OPTIONS_V1_SYMBOLS)[number]>("SPY");
+  const [symbol, setSymbol] = useState("SPY");
+  const [symbolDraft, setSymbolDraft] = useState("SPY");
   const [expiries, setExpiries] = useState<OptionExpiry[]>([]);
   const [expiry, setExpiry] = useState("");
   const [chain, setChain] = useState<OptionChainSnapshot | null>(null);
@@ -256,11 +257,24 @@ export function OptionsPanel({
         <div className="paper-form options-form">
           <div>
             <label>Underlyer</label>
-            <select value={symbol} onChange={(e) => setSymbol(e.target.value as typeof symbol)}>
-              {OPTIONS_V1_SYMBOLS.map((s) => (
-                <option key={s}>{s}</option>
-              ))}
-            </select>
+            <input
+              value={symbolDraft}
+              onChange={(e) => setSymbolDraft(e.target.value.toUpperCase())}
+              onBlur={() => {
+                const t = symbolDraft.trim().toUpperCase() || "SPY";
+                setSymbolDraft(t);
+                setSymbol(t);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  const t = symbolDraft.trim().toUpperCase() || "SPY";
+                  setSymbolDraft(t);
+                  setSymbol(t);
+                }
+              }}
+              placeholder="SPY"
+              spellCheck={false}
+            />
           </div>
           <div>
             <label>Expiry</label>

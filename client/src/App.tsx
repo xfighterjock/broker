@@ -115,7 +115,32 @@ function lastForSymbol(quotes: DelayedQuote[], symbol: string): number | null {
 }
 
 const DELAYED_HINT =
-  "Delayed public last (Yahoo). Not a live book. Paper fills are a journal, not broker orders.";
+  "Delayed last: Massive Starter (equities/ETFs, 15m) or Yahoo (futures =F). Not a live book. Paper fills are a journal, not broker orders.";
+
+function riskBadgeTitle(s: StatusSnapshot): string {
+  const c = s.riskChecks;
+  const note = "Does not bind the day book.";
+  if (!c) return `Risk gate (SPY/ACWI/HYG 200dma, UUP 20d veto). ${note}`;
+  if (s.riskOn) {
+    const uup =
+      c.uup20dPct === null || !Number.isFinite(c.uup20dPct)
+        ? "UUP 20d n/a"
+        : `UUP 20d ${(c.uup20dPct * 100).toFixed(1)}%`;
+    return `SPY/ACWI/HYG above 200dma · ${uup}. ${note}`;
+  }
+  const failed: string[] = [];
+  if (!c.spyAbove200) failed.push("SPY below 200dma");
+  if (!c.acwiAbove200) failed.push("ACWI below 200dma");
+  if (!c.hygAbove200) failed.push("HYG below 200dma");
+  if (c.dollarVeto) {
+    failed.push(
+      c.uup20dPct === null || !Number.isFinite(c.uup20dPct)
+        ? "UUP 20d missing (dollar veto)"
+        : `UUP 20d ${(c.uup20dPct * 100).toFixed(1)}% (dollar veto)`,
+    );
+  }
+  return `${failed.join(" · ") || "risk-off"}. ${note}`;
+}
 
 function QuoteStrip({ quotes }: { quotes: DelayedQuote[] }) {
   return (
@@ -535,6 +560,12 @@ export default function App() {
             AUTO PAPER {state.autoPaper !== false ? "ON" : "OFF"}
           </span>
         </label>
+        <span
+          className={`badge ${state.riskOn ? "on" : "off"}`}
+          title={riskBadgeTitle(state)}
+        >
+          {state.riskOn ? "RISK ON" : "RISK OFF"}
+        </span>
       </header>
 
       <nav className="tabs">
@@ -567,7 +598,7 @@ export default function App() {
         })}
       </nav>
       <div className="hint auto-hint">
-        Auto paper from S&amp;P scan. Mock only. Stops in the book. Day sleeve not auto. Each sleeve starts at mock $100,000.
+        Auto paper from S&amp;P scan. Mock only. Stops in the book. Day sleeve not auto. RISK ON/OFF is automated (SPY/ACWI/HYG 200dma, UUP 20d) and does not bind the day book. Each sleeve starts at mock $100,000.
       </div>
 
       {tab === "day" && (
@@ -911,7 +942,7 @@ export default function App() {
               )}
               <div className="hint">
                 {tab === "options"
-                  ? "Paper debit verticals on MockBroker. E*TRADE is chain-only. Not live."
+                  ? "Paper debit verticals on MockBroker. Massive Starter chain (15m delayed). Not live."
                   : "Paper buy/sell fills at delayed last on MockBroker. Iterate from fills. Not live."}
               </div>
               <div className="kv">
