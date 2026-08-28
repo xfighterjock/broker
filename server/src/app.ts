@@ -200,6 +200,7 @@ export function buildApp(deps: AppDeps): express.Express {
       momentum: null,
       options: null,
       ownership: null,
+      riskoff: null,
     } as Record<SleeveId, SessionMark | null>,
     sessionMarksHydrated: false,
   };
@@ -828,7 +829,7 @@ export function buildApp(deps: AppDeps): express.Express {
     await ensureSleeves();
     const quotes = await fetchDelayedQuotes([parsed.symbol]).catch(() => []);
     const book = sleeveBook(
-      memory.sleeves.options,
+      memory.sleeves[parsed.sleeveId],
       deps.broker.getPositionsSync(),
       quotes,
     );
@@ -855,13 +856,13 @@ export function buildApp(deps: AppDeps): express.Express {
       side: "Long",
       avgPrice: v.netDebitPerShare,
       unrealizedPnl: 0,
-      sleeveId: "options",
+      sleeveId: parsed.sleeveId,
       vertical: meta,
     });
     await ensureBlotter();
     const notes = parsed.thesis || `debit ${v.right} ${v.long.strike}/${v.short.strike} ${v.expiry}`;
     const longFill = makeFill({
-      sleeveId: "options",
+      sleeveId: parsed.sleeveId,
       symbol: v.long.osiKey || v.long.displaySymbol,
       side: "Buy",
       qty: v.qty,
@@ -869,7 +870,7 @@ export function buildApp(deps: AppDeps): express.Express {
       notes: `vertical long ${notes}`,
     });
     const shortFill = makeFill({
-      sleeveId: "options",
+      sleeveId: parsed.sleeveId,
       symbol: v.short.osiKey || v.short.displaySymbol,
       side: "Sell",
       qty: v.qty,
@@ -883,7 +884,7 @@ export function buildApp(deps: AppDeps): express.Express {
     await persistBlotter();
     sessionNote(
       "paper_order",
-      `options debit vertical ${v.qty}x ${pkg} debit ${v.netDebitPaid.toFixed(2)} maxLoss ${v.maxLoss.toFixed(2)} maxProfit ${v.maxProfit.toFixed(2)}`,
+      `${parsed.sleeveId} debit vertical ${v.qty}x ${pkg} debit ${v.netDebitPaid.toFixed(2)} maxLoss ${v.maxLoss.toFixed(2)} maxProfit ${v.maxProfit.toFixed(2)}`,
     );
     deps.engine.log(
       `paper VERTICAL BUY ${v.qty} ${pkg} long @ ${v.longFill} short @ ${v.shortFill} debit ${v.netDebitPaid.toFixed(2)} (MockBroker, not E*TRADE order, not Tradovate, not live)`,
@@ -1037,6 +1038,13 @@ export function buildApp(deps: AppDeps): express.Express {
         ? cache.rows.map((r) => ({ symbol: r.symbol, above200: r.features.above200 }))
         : [];
       const risk = await ensureRisk();
+      let riskoffQuotes: Array<{ symbol: string; last: number }> = [];
+      if (!risk.riskOn) {
+        const qs = await fetchDelayedQuotes(["SPY", "QQQ", "IWM"]).catch(() => []);
+        riskoffQuotes = qs
+          .filter((q) => q.last !== null && Number.isFinite(q.last) && q.last > 0)
+          .map((q) => ({ symbol: q.symbol, last: q.last as number }));
+      }
       await runAutopilot({
         enabled: memory.autoPaper,
         getPositions: () => deps.broker.getPositionsSync(),
@@ -1046,11 +1054,18 @@ export function buildApp(deps: AppDeps): express.Express {
         featureRows,
         scanReady,
         riskOn: risk.riskOn,
+        riskoffQuotes,
         placeVertical: async (v: AutoVertical) => {
+          if (v.sleeveId === "riskoff" && v.right !== "P") {
+            return { ok: false, error: "riskoff sleeve: put debit verticals only" };
+          }
+          if (v.sleeveId === "options" && v.right !== "C") {
+            return { ok: false, error: "options auto: call debit only" };
+          }
           return placePaperVertical({
-            sleeveId: "options",
+            sleeveId: v.sleeveId,
             symbol: v.symbol,
-            right: "C",
+            right: v.right,
             expiry: v.expiry,
             longStrike: v.longStrike,
             shortStrike: v.shortStrike,
@@ -1483,7 +1498,7 @@ export function buildApp(deps: AppDeps): express.Express {
   app.get("/api/quotes", async (req, res) => {
     const id = parseSleeveId(String(req.query.sleeve ?? ""));
     if (!id) {
-      res.status(400).json({ error: "sleeve=day|momentum|options|ownership required" });
+      res.status(400).json({ error: `sleeve=${(SLEEVE_IDS as readonly string[]).join("|")} required` });
       return;
     }
     await ensureSleeves();
@@ -1648,9 +1663,11 @@ export function buildApp(deps: AppDeps): express.Express {
   });
 
   app.post("/api/paper/order", async (req, res) => {
-    if (isVerticalBody(req.body) || String((req.body as { sleeveId?: unknown } | undefined)?.sleeveId ?? "") === "options") {
+    if (isVerticalBody(req.body) || ["options", "riskoff"].includes(String((req.body as { sleeveId?: unknown } | undefined)?.sleeveId ?? ""))) {
       if (isVerticalBody(req.body)) {
-        const placedV = await placePaperVertical({ ...(req.body as object), sleeveId: "options" });
+        const hint = String((req.body as { sleeveId?: unknown } | undefined)?.sleeveId ?? "");
+        const sid = hint === "riskoff" ? "riskoff" : "options";
+        const placedV = await placePaperVertical({ ...(req.body as object), sleeveId: sid });
         if (!placedV.ok) {
           res.status(placedV.status ?? 400).json({ error: placedV.error });
           return;

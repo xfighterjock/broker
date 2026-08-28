@@ -25,6 +25,7 @@ const TAB_LABELS: { id: SleeveId; label: string }[] = [
   { id: "momentum", label: "Momentum" },
   { id: "options", label: "Options" },
   { id: "ownership", label: "Ownership" },
+  { id: "riskoff", label: "Risk-off" },
 ];
 
 function modeClass(mode: string): string {
@@ -561,7 +562,7 @@ export default function App() {
           </span>
         </label>
         <span
-          className={`badge ${state.riskOn ? "on" : "off"}`}
+          className={`badge ${state.riskOn ? "risk-on" : "risk-off"}`}
           title={riskBadgeTitle(state)}
         >
           {state.riskOn ? "RISK ON" : "RISK OFF"}
@@ -915,10 +916,14 @@ export default function App() {
             <div className="body">
               <QuoteStrip quotes={quotes} />
               <PaperBanner />
-              {tab === "options" ? (
+              {tab === "options" || tab === "riskoff" ? (
                 <OptionsPanel
+                  key={tab}
+                  sleeveId={tab}
+                  defaultRight={tab === "riskoff" ? "P" : "C"}
+                  showOverlay={tab === "options"}
                   positions={state.broker.positions}
-                  equityUsd={state.sleeveBooks?.options?.equityUsd ?? 100_000}
+                  equityUsd={state.sleeveBooks?.[tab]?.equityUsd ?? 100_000}
                   apply={apply}
                   setAuthNeeded={setAuthNeeded}
                   setErr={setErr}
@@ -943,7 +948,9 @@ export default function App() {
               <div className="hint">
                 {tab === "options"
                   ? "Paper debit verticals on MockBroker. Massive Starter chain (15m delayed). Not live."
-                  : "Paper buy/sell fills at delayed last on MockBroker. Iterate from fills. Not live."}
+                  : tab === "riskoff"
+                    ? "Paper put debit verticals on MockBroker when RISK OFF. Massive Starter chain (15m delayed). Not live. Day book is not gated by this sleeve."
+                    : "Paper buy/sell fills at delayed last on MockBroker. Iterate from fills. Not live."}
               </div>
               <div className="kv">
                 <div className="k">horizon</div>

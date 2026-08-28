@@ -36,7 +36,7 @@ export type OrderState =
 
 export type Side = "Buy" | "Sell";
 export type PositionSide = "Long" | "Short" | "Flat";
-export type SleeveId = "day" | "momentum" | "options" | "ownership";
+export type SleeveId = "day" | "momentum" | "options" | "ownership" | "riskoff";
 
 export interface WorkingOrder {
   id: string;
@@ -62,7 +62,7 @@ export interface Position {
   unrealizedPnl: number;
   gated: boolean;
   sleeveId?: SleeveId;
-  /** Two-leg debit vertical on the options sleeve. Absent for stock/futures paper. */
+  /** Two-leg debit vertical on the options or riskoff sleeve. Absent for stock/futures paper. */
   vertical?: VerticalMeta;
   /** Cash-secured put or covered call on the options sleeve (ownership overlay). */
   overlay?: OverlayMeta;
@@ -238,6 +238,23 @@ export function defaultSleeves(): Record<SleeveId, SleeveCard> {
       structure: "debit verticals; CSP/CC overlay tagged to ownership — no naked short vol",
       killRules: "thesis broken / max debit lost / sleeve loss cap",
       status: "idea",
+      paper: emptyPaperStats(),
+      updatedAt: null,
+    },
+    riskoff: {
+      id: "riskoff",
+      name: "Risk-off (put debit)",
+      horizon: "days–months",
+      budgetPct: 10,
+      lossCapUsd: 1000,
+      thesis:
+        "Defined-risk put debit while the global gate is RISK OFF.",
+      macroDrivers: "SPY/ACWI/HYG 200dma + UUP 20d dollar veto (global risk-off).",
+      microDrivers: "30–45 DTE put debit verticals on SPY/QQQ; skip missing bid/ask.",
+      instruments: "SPY / QQQ",
+      structure: "put debit verticals only, no naked short vol",
+      killRules: "max debit lost / DTE / sleeve loss cap",
+      status: "paper",
       paper: emptyPaperStats(),
       updatedAt: null,
     },

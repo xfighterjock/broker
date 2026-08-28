@@ -61,6 +61,16 @@ code, .mono, table, .clock, .badge, .log, .cd {
 .badge.flat { background: var(--flat-bg); color: #c9a6ff; border-color: #4a3270; }
 .badge.on { color: var(--green); border-color: #1d4a32; }
 .badge.off { color: var(--muted); }
+.badge.risk-on {
+  color: var(--green);
+  background: #102018;
+  border-color: #1d4a32;
+}
+.badge.risk-off {
+  color: var(--red);
+  background: var(--band-bg);
+  border-color: #6a2020;
+}
 
 .toggle {
   display: flex;

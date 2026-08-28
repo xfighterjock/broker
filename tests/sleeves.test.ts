@@ -6,10 +6,10 @@ import {
 } from "../shared/types";
 
 describe("defaultSleeves", () => {
-  it("returns four thesis/risk cards with the expected defaults", () => {
+  it("returns five thesis/risk cards with the expected defaults", () => {
     const sleeves = defaultSleeves();
     expect(Object.keys(sleeves).sort()).toEqual(
-      ["day", "momentum", "options", "ownership"].sort(),
+      ["day", "momentum", "options", "ownership", "riskoff"].sort(),
     );
     expect(sleeves.day.name).toBe("Day trading (events)");
     expect(sleeves.day.horizon).toBe("intraday");
@@ -36,7 +36,15 @@ describe("defaultSleeves", () => {
     expect(sleeves.ownership.structure).toMatch(/covered call/);
     expect(sleeves.ownership.killRules).toMatch(/not session clock/);
     expect(sleeves.ownership.status).toBe("idea");
+    expect(sleeves.riskoff.name).toMatch(/Risk-off/);
+    expect(sleeves.riskoff.status).toBe("paper");
+    expect(sleeves.riskoff.thesis).toMatch(/RISK OFF/);
+    expect(sleeves.riskoff.structure).toMatch(/put debit verticals only/);
+    expect(sleeves.riskoff.structure).toMatch(/no naked short vol/);
+    expect(sleeves.riskoff.killRules).toMatch(/max debit lost/);
+    expect(sleeves.riskoff.instruments).toMatch(/SPY/);
     expect(sleeves.day.paper).toEqual(emptyPaperStats());
+    expect(sleeves.riskoff.paper).toEqual(emptyPaperStats());
   });
 });
 

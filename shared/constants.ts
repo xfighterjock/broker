@@ -48,7 +48,7 @@ export const MARKET_OR_STOP: ReadonlySet<string> = new Set([
 export const DEMO_TRADOVATE_HOST = "demo.tradovateapi.com";
 export const DEMO_TRADOVATE_BASE = "https://demo.tradovateapi.com/v1";
 
-export const SLEEVE_IDS = ["day", "momentum", "options", "ownership"] as const;
+export const SLEEVE_IDS = ["day", "momentum", "options", "ownership", "riskoff"] as const;
 
 export const REDIS_KEYS = {
   gateEnabled: "gate:enabled",
@@ -65,7 +65,7 @@ export const REDIS_KEYS = {
   sessionMarks: "sleeves:session_marks",
 } as const;
 
-/** Independent mock starting equity per sleeve (day, momentum, options, ownership). */
+/** Independent mock starting equity per sleeve (day, momentum, options, ownership, riskoff). */
 export const DEFAULT_SLEEVE_EQUITY_USD = 100_000;
 
 /** Extra autopilot pass for sells while the scan cache is warm. */
@@ -83,6 +83,11 @@ export type OptionsV1Symbol = (typeof OPTIONS_V1_SYMBOLS)[number];
 export const MASSIVE_BASE = "https://api.massive.com";
 /** Options-sleeve auto debit-call cap (3–5). */
 export const MAX_AUTO_VERTICALS = 5;
+/** Risk-off sleeve auto put-debit cap (2–3). One per name. */
+export const MAX_AUTO_RISKOFF_VERTICALS = 3;
+/** Risk-off auto underlyers. IWM is optional third if quoted. */
+export const RISKOFF_SYMBOLS = ["SPY", "QQQ"] as const;
+export type RiskoffSymbol = (typeof RISKOFF_SYMBOLS)[number];
 /** Prefer 30–45 DTE, always above OPTIONS_DTE_EXIT. */
 export const OPTIONS_DTE_TARGET_MIN = 30;
 export const OPTIONS_DTE_TARGET_MAX = 45;

@@ -164,6 +164,12 @@ export function validatePaperOrder(
       error: "options sleeve: paper debit verticals only (POST /api/paper/vertical); no stock legs",
     };
   }
+  if (input.sleeveId === "riskoff") {
+    return {
+      ok: false,
+      error: "riskoff sleeve: paper put debit verticals only (POST /api/paper/vertical); no stock legs",
+    };
+  }
 
   return {
     ok: true,
@@ -179,7 +185,7 @@ export function parsePaperOrder(body: unknown): PaperOrderBody | { error: string
   const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
   const sleeveRaw = String(b.sleeveId ?? "");
   if (!(SLEEVE_IDS as readonly string[]).includes(sleeveRaw)) {
-    return { error: "sleeveId must be day|momentum|options|ownership" };
+    return { error: `sleeveId must be ${(SLEEVE_IDS as readonly string[]).join("|")}` };
   }
   const symbol = String(b.symbol ?? "").trim().toUpperCase();
   if (!symbol) return { error: "symbol required" };
@@ -204,7 +210,7 @@ export function parsePaperClose(body: unknown): PaperCloseBody | { error: string
   const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
   const sleeveRaw = String(b.sleeveId ?? "");
   if (!(SLEEVE_IDS as readonly string[]).includes(sleeveRaw)) {
-    return { error: "sleeveId must be day|momentum|options|ownership" };
+    return { error: `sleeveId must be ${(SLEEVE_IDS as readonly string[]).join("|")}` };
   }
   const symbol = String(b.symbol ?? "").trim().toUpperCase();
   if (!symbol) return { error: "symbol required" };

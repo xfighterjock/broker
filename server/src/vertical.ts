@@ -12,12 +12,13 @@ import type {
   OptionLeg,
   OptionRight,
   Position,
-  SleeveId,
   VerticalMeta,
 } from "../../shared/types";
 
+export type VerticalSleeveId = "options" | "riskoff";
+
 export type VerticalBody = {
-  sleeveId: SleeveId;
+  sleeveId: VerticalSleeveId;
   symbol: string;
   right: OptionRight;
   expiry: string;
@@ -115,10 +116,10 @@ export function parsePaperVertical(body: unknown): VerticalBody | { error: strin
   const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
   const sleeveRaw = String(b.sleeveId ?? "options");
   if (!(SLEEVE_IDS as readonly string[]).includes(sleeveRaw)) {
-    return { error: "sleeveId must be day|momentum|options|ownership" };
+    return { error: `sleeveId must be ${(SLEEVE_IDS as readonly string[]).join("|")}` };
   }
-  if (sleeveRaw !== "options") {
-    return { error: "debit verticals are options sleeve only" };
+  if (sleeveRaw !== "options" && sleeveRaw !== "riskoff") {
+    return { error: "debit verticals are options or riskoff sleeve only" };
   }
   const symbol = String(b.symbol ?? "").trim().toUpperCase();
   if (!symbol) return { error: "symbol required" };
@@ -126,6 +127,9 @@ export function parsePaperVertical(body: unknown): VerticalBody | { error: strin
   const right: OptionRight | null =
     rightRaw === "C" || rightRaw === "CALL" ? "C" : rightRaw === "P" || rightRaw === "PUT" ? "P" : null;
   if (!right) return { error: "right must be C or P" };
+  if (sleeveRaw === "riskoff" && right !== "P") {
+    return { error: "riskoff sleeve: put debit verticals only (no calls)" };
+  }
   let expiry = String(b.expiry ?? "").trim();
   if (!expiry) {
     const y = Number(b.expiryYear);
@@ -152,7 +156,7 @@ export function parsePaperVertical(body: unknown): VerticalBody | { error: strin
   const longOsiKey = typeof b.longOsiKey === "string" && b.longOsiKey.trim() ? b.longOsiKey.trim() : undefined;
   const shortOsiKey = typeof b.shortOsiKey === "string" && b.shortOsiKey.trim() ? b.shortOsiKey.trim() : undefined;
   return {
-    sleeveId: "options",
+    sleeveId: sleeveRaw as VerticalSleeveId,
     symbol,
     right,
     expiry,

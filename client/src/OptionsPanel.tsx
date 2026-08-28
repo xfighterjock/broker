@@ -7,6 +7,7 @@ import type {
   OptionRight,
   OverlayThesisSleeve,
   Position,
+  SleeveId,
   StatusSnapshot,
 } from "../../shared/types";
 import { api } from "./api";
@@ -56,19 +57,26 @@ export function OptionsPanel({
   apply,
   setAuthNeeded,
   setErr,
+  sleeveId = "options",
+  defaultRight = "C",
+  showOverlay = true,
 }: {
   positions: Position[];
   equityUsd: number;
   apply: (s: StatusSnapshot) => void;
   setAuthNeeded: (v: boolean) => void;
   setErr: (v: string | null) => void;
+  sleeveId?: SleeveId;
+  defaultRight?: OptionRight;
+  showOverlay?: boolean;
 }) {
+  const putsOnly = sleeveId === "riskoff";
   const [symbol, setSymbol] = useState("SPY");
   const [symbolDraft, setSymbolDraft] = useState("SPY");
   const [expiries, setExpiries] = useState<OptionExpiry[]>([]);
   const [expiry, setExpiry] = useState("");
   const [chain, setChain] = useState<OptionChainSnapshot | null>(null);
-  const [right, setRight] = useState<OptionRight>("C");
+  const [right, setRight] = useState<OptionRight>(putsOnly ? "P" : defaultRight);
   const [longStrike, setLongStrike] = useState("");
   const [shortStrike, setShortStrike] = useState("");
   const [qty, setQty] = useState("");
@@ -151,11 +159,12 @@ export function OptionsPanel({
     }
   }, [strikes.join(","), longStrike, shortStrike, overlayStrike]);
 
+  const ticketRight: OptionRight = putsOnly ? "P" : right;
   const long = chain?.legs.find(
-    (l) => l.right === right && Math.abs(l.strike - Number(longStrike)) < 1e-6,
+    (l) => l.right === ticketRight && Math.abs(l.strike - Number(longStrike)) < 1e-6,
   );
   const short = chain?.legs.find(
-    (l) => l.right === right && Math.abs(l.strike - Number(shortStrike)) < 1e-6,
+    (l) => l.right === ticketRight && Math.abs(l.strike - Number(shortStrike)) < 1e-6,
   );
   const debitPer = long?.ask != null && short?.bid != null ? long.ask - short.bid : null;
   const width =
@@ -171,7 +180,7 @@ export function OptionsPanel({
       : null;
 
   const open = positions.filter(
-    (p) => p.side !== "Flat" && p.qty > 0 && p.sleeveId === "options" && p.vertical,
+    (p) => p.side !== "Flat" && p.qty > 0 && p.sleeveId === sleeveId && p.vertical,
   );
   const overlays = positions.filter(
     (p) => p.side !== "Flat" && p.qty > 0 && p.sleeveId === "options" && p.overlay,
@@ -180,9 +189,9 @@ export function OptionsPanel({
   async function paperBuy() {
     try {
       const body: Record<string, unknown> = {
-        sleeveId: "options",
+        sleeveId,
         symbol,
-        right,
+        right: ticketRight,
         expiry,
         longStrike: Number(longStrike),
         shortStrike: Number(shortStrike),
@@ -205,7 +214,7 @@ export function OptionsPanel({
     try {
       const s = (await api("/api/paper/close", {
         method: "POST",
-        body: JSON.stringify({ sleeveId: "options", symbol: symbolToClose, reason: "manual" }),
+        body: JSON.stringify({ sleeveId, symbol: symbolToClose, reason: "manual" }),
       })) as StatusSnapshot;
       apply(s);
       setErr(null);
@@ -244,7 +253,7 @@ export function OptionsPanel({
   return (
     <section className="panel options-panel">
       <h2>
-        Debit vertical
+        {putsOnly ? "Put debit vertical" : "Debit vertical"}
         <span className="badge delayed">DELAYED · MOCK</span>
         {chain && (
           <span className="muted scan-asof">
@@ -253,7 +262,11 @@ export function OptionsPanel({
         )}
       </h2>
       <div className="body">
-        <div className="hint">{HINT}</div>
+        <div className="hint">
+          {putsOnly
+            ? "Massive Starter chain (DELAYED 15m). Paper put debit verticals on MockBroker. Never a live send."
+            : HINT}
+        </div>
         <div className="paper-form options-form">
           <div>
             <label>Underlyer</label>
@@ -289,10 +302,16 @@ export function OptionsPanel({
           </div>
           <div>
             <label>Right</label>
-            <select value={right} onChange={(e) => setRight(e.target.value as OptionRight)}>
-              <option value="C">Call debit</option>
-              <option value="P">Put debit</option>
-            </select>
+            {putsOnly ? (
+              <select value="P" disabled>
+                <option value="P">Put debit</option>
+              </select>
+            ) : (
+              <select value={right} onChange={(e) => setRight(e.target.value as OptionRight)}>
+                <option value="C">Call debit</option>
+                <option value="P">Put debit</option>
+              </select>
+            )}
           </div>
           <div>
             <label>Long strike</label>
@@ -419,6 +438,8 @@ export function OptionsPanel({
             )}
           </tbody>
         </table>
+{showOverlay && (
+        <>
         <label>Ownership overlay (CSP / covered call)</label>
         <div className="hint">
           Paper only. Fill at bid. CSP reserves strike×100×qty on the options sleeve. Covered call needs matching long shares.
@@ -508,6 +529,8 @@ export function OptionsPanel({
             )}
           </tbody>
         </table>
+        </>
+      )}
       </div>
     </section>
   );

@@ -432,7 +432,7 @@ describe("HTTP overlay (mocked Massive, MockBroker only)", () => {
       const res = await fetch(`${srv.url}/api/status`);
       expect(res.status).toBe(200);
       const snap = (await res.json()) as StatusSnapshot;
-      for (const id of ["day", "momentum", "options", "ownership"] as const) {
+      for (const id of ["day", "momentum", "options", "ownership", "riskoff"] as const) {
         expect(snap.sleeveBooks[id].totalPnlUsd).toBe(
           snap.sleeveBooks[id].equityUsd - 100_000,
         );

@@ -110,7 +110,7 @@ export function parsePaperOverlay(kind: OverlayKind, body: unknown): OverlayBody
   const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
   const sleeveRaw = String(b.sleeveId ?? "options");
   if (!(SLEEVE_IDS as readonly string[]).includes(sleeveRaw)) {
-    return { error: "sleeveId must be day|momentum|options|ownership" };
+    return { error: `sleeveId must be ${(SLEEVE_IDS as readonly string[]).join("|")}` };
   }
   if (sleeveRaw !== "options") {
     return { error: "CSP / covered call live on the options sleeve only" };

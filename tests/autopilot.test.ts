@@ -109,10 +109,11 @@ describe("decideBuys caps and skips", () => {
     expect(buys.some((b) => b.symbol === "SPY")).toBe(false);
   });
 
-  it("never auto-buys the day sleeve (or options)", () => {
+  it("never auto-buys the day sleeve (or options / riskoff stock)", () => {
     const rows = [row({ symbol: "DELL" }), row({ symbol: "MES" })];
     expect(decideBuys(rows, [], sleeve("day"))).toEqual([]);
     expect(decideBuys(rows, [], sleeve("options"))).toEqual([]);
+    expect(decideBuys(rows, [], sleeve("riskoff"))).toEqual([]);
   });
 
   it("skips new buys when sleeve realized P&L is at the loss cap", () => {
@@ -263,13 +264,16 @@ describe("sleeve equity math ($100k mock books)", () => {
     expect(book.equityUsd).toBe(100_070);
   });
 
-  it("day/options stay at $0 P/L with no fills", () => {
+  it("day/options/riskoff stay at $0 P/L with no fills", () => {
     const day = sleeveBook(sleeve("day"), [], []);
     const opt = sleeveBook(sleeve("options"), [], []);
+    const off = sleeveBook(sleeve("riskoff"), [], []);
     expect(day.pnlUsd).toBe(0);
     expect(day.equityUsd).toBe(100_000);
     expect(opt.pnlUsd).toBe(0);
     expect(opt.equityUsd).toBe(100_000);
+    expect(off.pnlUsd).toBe(0);
+    expect(off.equityUsd).toBe(100_000);
   });
 
   it("sizes qty so 1.5% stop risks ~1% of $100k (min 1)", () => {

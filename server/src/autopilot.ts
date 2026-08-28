@@ -1,9 +1,11 @@
 import {
   DEFAULT_SLEEVE_EQUITY_USD,
+  MAX_AUTO_RISKOFF_VERTICALS,
   MAX_AUTO_VERTICALS,
   OPTIONS_DTE_EXIT,
   OPTIONS_DTE_TARGET_MAX,
   OPTIONS_DTE_TARGET_MIN,
+  RISKOFF_SYMBOLS,
 } from "../../shared/constants";
 import type {
   OptionExpiry,
@@ -172,26 +174,27 @@ export function decideSells(
 
 
 export type AutoVerticalIntent = {
-  sleeveId: "options";
+  sleeveId: "options" | "riskoff";
   symbol: string;
   last: number;
   thesis: string;
 };
 
 export type AutoVertical = {
-  sleeveId: "options";
+  sleeveId: "options" | "riskoff";
   symbol: string;
-  right: "C";
+  right: "C" | "P";
   expiry: string;
   longStrike: number;
   shortStrike: number;
   thesis: string;
 };
 
-function openVerticalUnderlyers(positions: Position[]): Set<string> {
+function openVerticalUnderlyers(positions: Position[], sleeveId: SleeveId): Set<string> {
   const s = new Set<string>();
   for (const p of positions) {
     if (!isOpen(p) || !isVerticalPosition(p) || !p.vertical) continue;
+    if (p.sleeveId !== sleeveId) continue;
     s.add(p.vertical.underlying.toUpperCase());
     s.add(p.vertical.quoteSymbol.toUpperCase());
   }
@@ -211,7 +214,7 @@ export function decideCallVerticalIntents(
   const openV = openPositions.filter((p) => isOpen(p) && p.sleeveId === "options" && isVerticalPosition(p));
   let slots = MAX_AUTO_VERTICALS - openV.length;
   if (slots <= 0) return [];
-  const taken = openVerticalUnderlyers(openPositions);
+  const taken = openVerticalUnderlyers(openPositions, "options");
   const out: AutoVerticalIntent[] = [];
   for (const row of rows) {
     if (slots <= 0) break;
@@ -230,6 +233,69 @@ export function decideCallVerticalIntents(
     slots -= 1;
   }
   return out;
+}
+
+/** SPY/QQQ put debit intents when RISK OFF. Never calls. One per name. */
+export function decidePutVerticalIntents(
+  quotes: Array<{ symbol: string; last: number }>,
+  openPositions: Position[],
+  sleeve: SleeveCard,
+  riskOn = true,
+): AutoVerticalIntent[] {
+  if (riskOn) return [];
+  if (sleeve.id !== "riskoff") return [];
+  if (sleeve.paper.realizedPnlUsd <= -sleeve.lossCapUsd) return [];
+  const openV = openPositions.filter((p) => isOpen(p) && p.sleeveId === "riskoff" && isVerticalPosition(p));
+  let slots = MAX_AUTO_RISKOFF_VERTICALS - openV.length;
+  if (slots <= 0) return [];
+  const taken = openVerticalUnderlyers(openPositions, "riskoff");
+  const bySym = new Map<string, { symbol: string; last: number }>();
+  for (const q of quotes) {
+    const symbol = q.symbol.trim().toUpperCase();
+    if (!symbol || !Number.isFinite(q.last) || !(q.last > 0)) continue;
+    bySym.set(symbol, { symbol, last: q.last });
+  }
+  const order = [...RISKOFF_SYMBOLS, "IWM"];
+  const out: AutoVerticalIntent[] = [];
+  for (const symbol of order) {
+    if (slots <= 0) break;
+    const q = bySym.get(symbol);
+    if (!q) continue;
+    if (taken.has(symbol)) continue;
+    out.push({
+      sleeveId: "riskoff",
+      symbol,
+      last: q.last,
+      thesis: `auto put debit ${symbol} risk-off`,
+    });
+    taken.add(symbol);
+    slots -= 1;
+  }
+  return out;
+}
+
+/** Long higher-strike (ATM) put, short further OTM (lower strike). Skip if <2 put strikes. */
+export function pickAtmPutDebit(
+  legs: OptionLeg[],
+  last: number,
+): { long: OptionLeg; short: OptionLeg } | null {
+  if (!(last > 0)) return null;
+  const puts = legs.filter((l) => l.right === "P").sort((a, b) => a.strike - b.strike);
+  if (puts.length < 2) return null;
+  let atmIdx = 0;
+  let best = Infinity;
+  for (let i = 0; i < puts.length; i++) {
+    const d = Math.abs(puts[i].strike - last);
+    if (d < best) {
+      best = d;
+      atmIdx = i;
+    }
+  }
+  if (atmIdx === 0) atmIdx = 1;
+  const long = puts[atmIdx];
+  const short = puts[atmIdx - 1];
+  if (!(long.strike > short.strike)) return null;
+  return { long, short };
 }
 
 /** Long closer ATM, short the next further OTM call. Skip if <2 call strikes. */
@@ -285,10 +351,12 @@ export type AutopilotCtx = {
   riskOn: boolean;
   place: (buy: AutoBuy) => Promise<PlaceResult>;
   close: (sell: AutoSell) => Promise<CloseResult>;
-  /** Paper debit call verticals only. Must never place puts/CSP/CC. */
+  /** Paper debit verticals. Call on options when RISK ON; put on riskoff when RISK OFF. Never CSP/CC. */
   placeVertical?: (v: AutoVertical) => Promise<PlaceResult>;
   fetchExpiries?: (symbol: string) => Promise<OptionExpiry[]>;
   fetchChain?: (symbol: string, expiry: string) => Promise<OptionLeg[]>;
+  /** Delayed lasts for SPY/QQQ (IWM optional) used only for risk-off put intents. */
+  riskoffQuotes?: Array<{ symbol: string; last: number }>;
   log: (line: string) => void;
 };
 
@@ -385,6 +453,64 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
         if (r.ok) {
           ctx.log(
             `auto paper call debit ${v.symbol} ${v.longStrike}/${v.shortStrike} C ${v.expiry} ${v.thesis} (MockBroker, not live, not E*TRADE order)`,
+          );
+          verticals.push(v);
+        } else if (/bid\/ask/i.test(r.error)) {
+          ctx.log(`auto paper vertical skip ${intent.symbol} missing bid/ask`);
+        } else {
+          ctx.log(`auto paper vertical skip ${intent.symbol}: ${r.error}`);
+        }
+      } catch (err) {
+        ctx.log(
+          `auto paper vertical skip ${intent.symbol}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+  }
+
+  if (
+    !riskOn &&
+    ctx.placeVertical &&
+    ctx.fetchExpiries &&
+    ctx.fetchChain
+  ) {
+    const intents = decidePutVerticalIntents(
+      ctx.riskoffQuotes ?? [],
+      ctx.getPositions(),
+      ctx.getSleeves().riskoff,
+      riskOn,
+    );
+    for (const intent of intents) {
+      try {
+        const expiries = await ctx.fetchExpiries(intent.symbol);
+        const picked = pickTargetExpiry(expiries);
+        if (!picked) {
+          ctx.log(`auto paper vertical skip ${intent.symbol}: no 30–45 DTE expiry`);
+          continue;
+        }
+        const legs = await ctx.fetchChain(intent.symbol, picked.expiry);
+        const pair = pickAtmPutDebit(legs, intent.last);
+        if (!pair) {
+          ctx.log(`auto paper vertical skip ${intent.symbol}: no ATM put debit`);
+          continue;
+        }
+        if (pair.long.right !== "P" || pair.short.right !== "P") {
+          ctx.log(`auto paper vertical skip ${intent.symbol}: refuses calls`);
+          continue;
+        }
+        const v: AutoVertical = {
+          sleeveId: "riskoff",
+          symbol: intent.symbol,
+          right: "P",
+          expiry: picked.expiry,
+          longStrike: pair.long.strike,
+          shortStrike: pair.short.strike,
+          thesis: intent.thesis,
+        };
+        const r = await ctx.placeVertical(v);
+        if (r.ok) {
+          ctx.log(
+            `auto paper put debit ${v.symbol} ${v.longStrike}/${v.shortStrike} P ${v.expiry} ${v.thesis} (MockBroker, not live, not E*TRADE order)`,
           );
           verticals.push(v);
         } else if (/bid\/ask/i.test(r.error)) {
