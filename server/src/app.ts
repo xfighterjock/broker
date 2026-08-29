@@ -57,7 +57,7 @@ import { GateEngine } from "./gate";
 import { MockBroker } from "./mockBroker";
 import type { RedisClient } from "./redis";
 import { fetchDelayedQuotes, mapTicker, symbolsForSleeve } from "./quotes";
-import { attachScanReady, getScan, getScanFeaturesCache, rankMomentum, rankOwnership } from "./scan";
+import { attachScanReady, getScan, getScanFeaturesCache, rankMomentum } from "./scan";
 import {
   allSleeveBooks,
   applyExitStats,
@@ -1082,7 +1082,6 @@ export function buildApp(deps: AppDeps): express.Express {
       const momentumRows = cache
         ? rankMomentum(cache.rows, cache.spyRet63, cache.spyRet252)
         : [];
-      const ownershipRows = cache ? rankOwnership(cache.rows, cache.spyRet63) : [];
       const featureRows = cache
         ? cache.rows.map((r) => ({ symbol: r.symbol, above200: r.features.above200 }))
         : [];
@@ -1099,7 +1098,6 @@ export function buildApp(deps: AppDeps): express.Express {
         getPositions: () => deps.broker.getPositionsSync(),
         getSleeves: () => memory.sleeves,
         momentumRows,
-        ownershipRows,
         featureRows,
         scanReady,
         riskOn: risk.riskOn,

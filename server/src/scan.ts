@@ -224,7 +224,12 @@ export function parseYahooDailyBars(body: unknown): DailyBar[] | null {
   return bars.length ? bars : null;
 }
 
-export function passesMomentumFilter(f: ScanFeatures): boolean {
+/** Pullback-after-strength: above 200dma, near 52w high, last close to 20dma. */
+export function passesMomentumFilter(f: {
+  above200: boolean;
+  pctFrom52: number;
+  dist20: number;
+}): boolean {
   return (
     f.above200 &&
     f.pctFrom52 >= -0.1 &&

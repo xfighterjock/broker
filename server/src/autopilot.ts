@@ -16,6 +16,7 @@ import type {
   SleeveId,
 } from "../../shared/types";
 import { pointValueFor } from "./paper";
+import { passesMomentumFilter } from "./scan";
 import {
   daysToExpiry,
   isVerticalPosition,
@@ -111,6 +112,7 @@ export function decideBuys(
     if (!symbol) continue;
     if (openAny.has(symbol)) continue;
     if (!(row.last > 0) || !Number.isFinite(row.last)) continue;
+    if (!passesMomentumFilter(row)) continue;
     if (sleeve.id === "ownership" && isOwnershipArtifact(row)) continue;
 
     const stopPrice = row.last * stopMul;
@@ -350,8 +352,8 @@ export type AutopilotCtx = {
   enabled: boolean;
   getPositions: () => Position[];
   getSleeves: () => Record<SleeveId, SleeveCard>;
+  /** Ranked pullback-after-strength scan. Momentum and ownership entries share this gate. */
   momentumRows: ScanRow[];
-  ownershipRows: ScanRow[];
   featureRows: Array<{ symbol: string; above200: boolean }>;
   scanReady: boolean;
   riskOn: boolean;
@@ -402,8 +404,12 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
   const riskOn = ctx.riskOn === true;
 
   for (const sleeveId of ["momentum", "ownership"] as const) {
-    const rows = sleeveId === "momentum" ? ctx.momentumRows : ctx.ownershipRows;
-    const buys = decideBuys(rows, ctx.getPositions(), ctx.getSleeves()[sleeveId], riskOn);
+    const buys = decideBuys(
+      ctx.momentumRows,
+      ctx.getPositions(),
+      ctx.getSleeves()[sleeveId],
+      riskOn,
+    );
     for (const b of buys) {
       const r = await ctx.place(b);
       if (r.ok) {

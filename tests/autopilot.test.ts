@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SLEEVE_EQUITY_USD } from "../shared/constants";
 import { defaultSleeves, type Position, type ScanRow, type SleeveCard } from "../shared/types";
 import {
@@ -10,6 +10,11 @@ import {
   type AutoBuy,
 } from "../server/src/autopilot";
 import { sleeveBook } from "../server/src/paper";
+import { setPaperNow } from "../server/src/vertical";
+
+afterEach(() => {
+  setPaperNow(null);
+});
 
 function row(partial: Partial<ScanRow> & Pick<ScanRow, "symbol">): ScanRow {
   return {
@@ -82,6 +87,39 @@ describe("ownership artifact skip", () => {
     expect(buys.map((b) => b.symbol)).toEqual(["JPM"]);
     expect(buys[0].sleeveId).toBe("ownership");
     expect(buys[0].stopPrice).toBeCloseTo(210 * 0.98);
+  });
+
+  it("ownership opens only when the momentum pullback-after-strength gate fires", () => {
+    const pullback = row({
+      symbol: "DELL",
+      last: 120,
+      dist20: 0.01,
+      pctFrom52: -0.02,
+      above200: true,
+    });
+    const extended = row({
+      symbol: "JPM",
+      sector: "Financials",
+      last: 210,
+      dist20: 0.12,
+      pctFrom52: 0,
+      ret12m: 0.4,
+      above200: true,
+    });
+    const deep = row({
+      symbol: "XOM",
+      sector: "Energy",
+      last: 80,
+      dist20: -0.08,
+      pctFrom52: -0.05,
+      ret12m: 0.2,
+      above200: true,
+    });
+    expect(decideBuys([extended, deep], [], sleeve("ownership"))).toEqual([]);
+    expect(decideBuys([extended, deep], [], sleeve("momentum"))).toEqual([]);
+    const owns = decideBuys([pullback, extended], [], sleeve("ownership"));
+    expect(owns.map((b) => b.symbol)).toEqual(["DELL"]);
+    expect(owns[0].sleeveId).toBe("ownership");
   });
 });
 
@@ -181,6 +219,38 @@ describe("decideSells kill rules", () => {
     );
     expect(sells).toEqual([]);
   });
+
+  it("does not apply momentum setup-gone exits to ownership", () => {
+    const sells = decideSells(
+      [pos("JPM", "ownership"), pos("EXPE", "momentum")],
+      [row({ symbol: "DELL" })],
+      [
+        { symbol: "JPM", above200: true },
+        { symbol: "EXPE", above200: true },
+      ],
+      sleeves,
+    );
+    expect(sells).toEqual([{ sleeveId: "momentum", symbol: "EXPE", reason: "setup gone" }]);
+  });
+
+  it("still sells ownership on independent thesis-broken (below 200dma) or loss cap", () => {
+    const below = decideSells(
+      [pos("JPM", "ownership")],
+      [row({ symbol: "JPM" })],
+      [{ symbol: "JPM", above200: false }],
+      sleeves,
+    );
+    expect(below).toEqual([{ sleeveId: "ownership", symbol: "JPM", reason: "below 200dma" }]);
+    const capped = defaultSleeves();
+    capped.ownership.paper.realizedPnlUsd = -capped.ownership.lossCapUsd;
+    const capSells = decideSells(
+      [pos("JPM", "ownership")],
+      [row({ symbol: "JPM" })],
+      [{ symbol: "JPM", above200: true }],
+      capped,
+    );
+    expect(capSells).toEqual([{ sleeveId: "ownership", symbol: "JPM", reason: "sleeve loss cap" }]);
+  });
 });
 
 describe("runAutopilot toggle", () => {
@@ -193,7 +263,6 @@ describe("runAutopilot toggle", () => {
       getPositions: () => [],
       getSleeves: () => defaultSleeves(),
       momentumRows: [row({ symbol: "DELL" })],
-      ownershipRows: [row({ symbol: "JPM" })],
       featureRows: [{ symbol: "DELL", above200: true }],
       scanReady: true,
       riskOn: true,
@@ -210,28 +279,157 @@ describe("runAutopilot toggle", () => {
 
   it("skips a buy with no last and continues the rest", async () => {
     const placed: string[] = [];
+    const book: Position[] = [];
     const result = await runAutopilot({
       enabled: true,
-      getPositions: () => [],
+      getPositions: () => book,
       getSleeves: () => defaultSleeves(),
       momentumRows: [
         row({ symbol: "DELL", last: 120 }),
         row({ symbol: "EXPE", sector: "Consumer Discretionary", last: 140 }),
       ],
-      ownershipRows: [],
       featureRows: [],
       scanReady: true,
       riskOn: true,
       place: async (b) => {
         if (b.symbol === "DELL") return { ok: false, error: "no delayed last" };
-        placed.push(b.symbol);
+        book.push(pos(b.symbol, b.sleeveId));
+        placed.push(`${b.sleeveId}:${b.symbol}`);
         return { ok: true };
       },
       close: async () => ({ ok: true }),
       log: () => {},
     });
-    expect(placed).toEqual(["EXPE"]);
-    expect(result.bought.map((b) => b.symbol)).toEqual(["EXPE"]);
+    expect(placed).toEqual(["momentum:EXPE"]);
+    expect(result.bought.map((b) => `${b.sleeveId}:${b.symbol}`)).toEqual(["momentum:EXPE"]);
+  });
+
+  it("opens ownership from leftover momentum-gate names, never uptrend-only rows", async () => {
+    const book: Position[] = ["A", "B", "C", "D", "E"].map((s) => pos(s, "momentum"));
+    const momentumHits = ["A", "B", "C", "D", "E", "JPM"].map((s, i) =>
+      row({ symbol: s, sector: `S${i}`, score: 1 - i * 0.01, last: 100 + i }),
+    );
+    const result = await runAutopilot({
+      enabled: true,
+      getPositions: () => book,
+      getSleeves: () => defaultSleeves(),
+      momentumRows: momentumHits,
+      featureRows: book.map((p) => ({ symbol: p.symbol, above200: true })),
+      scanReady: true,
+      riskOn: true,
+      place: async (b) => {
+        book.push(pos(b.symbol, b.sleeveId));
+        return { ok: true };
+      },
+      close: async () => ({ ok: true }),
+      log: () => {},
+    });
+    expect(result.bought).toHaveLength(1);
+    expect(result.bought[0].sleeveId).toBe("ownership");
+    expect(result.bought[0].symbol).toBe("JPM");
+    expect(result.bought[0].stopPrice).toBeCloseTo(105 * 0.98);
+    expect(result.sold).toEqual([]);
+  });
+
+  it("risk-off skips new ownership buys but still allows independent ownership exits", async () => {
+    const closed: string[] = [];
+    const placed: string[] = [];
+    const result = await runAutopilot({
+      enabled: true,
+      getPositions: () => [pos("JPM", "ownership"), pos("DELL", "ownership")],
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [row({ symbol: "AAPL" })],
+      featureRows: [
+        { symbol: "JPM", above200: false },
+        { symbol: "DELL", above200: true },
+      ],
+      scanReady: true,
+      riskOn: false,
+      place: async (b) => {
+        placed.push(`${b.sleeveId}:${b.symbol}`);
+        return { ok: true };
+      },
+      close: async (s) => {
+        closed.push(`${s.sleeveId}:${s.symbol}:${s.reason}`);
+        return { ok: true };
+      },
+      log: () => {},
+    });
+    expect(placed).toEqual([]);
+    expect(result.bought).toEqual([]);
+    expect(closed).toEqual(["ownership:JPM:below 200dma"]);
+    expect(result.sold).toEqual([
+      { sleeveId: "ownership", symbol: "JPM", reason: "below 200dma" },
+    ]);
+  });
+
+  it("never auto-sells puts, calls, or naked shorts (CSP/CC stay manual)", async () => {
+    setPaperNow(new Date("2026-08-24T14:00:00Z")); // Mon 10:00 ET
+    const verts: string[] = [];
+    const result = await runAutopilot({
+      enabled: true,
+      getPositions: () => [],
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [row({ symbol: "AAPL", last: 67 })],
+      featureRows: [],
+      scanReady: true,
+      riskOn: true,
+      place: async () => ({ ok: true }),
+      close: async () => ({ ok: true }),
+      placeVertical: async (v) => {
+        verts.push(`${v.sleeveId}:${v.right}:${v.symbol}`);
+        expect(v.right).toBe("C");
+        expect(v.sleeveId).toBe("options");
+        return { ok: true };
+      },
+      fetchExpiries: async () => [
+        { year: 2026, month: 10, day: 9, expiry: "2026-10-09", expiryType: "MONTHLY" },
+      ],
+      fetchChain: async () => [
+        {
+          underlying: "AAPL",
+          osiKey: "O:AAPL261009C00065000",
+          displaySymbol: "AAPL C 65",
+          right: "C",
+          strike: 65,
+          expiry: "2026-10-09",
+          bid: 4.9,
+          ask: 5,
+          last: 5.15,
+          bidSize: 1,
+          askSize: 1,
+          openInterest: 10,
+          delta: 0.5,
+          gamma: 0.01,
+          theta: -0.02,
+          vega: 0.1,
+          iv: 0.2,
+        },
+        {
+          underlying: "AAPL",
+          osiKey: "O:AAPL261009C00070000",
+          displaySymbol: "AAPL C 70",
+          right: "C",
+          strike: 70,
+          expiry: "2026-10-09",
+          bid: 2.5,
+          ask: 2.6,
+          last: 2.45,
+          bidSize: 1,
+          askSize: 1,
+          openInterest: 10,
+          delta: 0.3,
+          gamma: 0.01,
+          theta: -0.02,
+          vega: 0.1,
+          iv: 0.2,
+        },
+      ],
+      log: () => {},
+    });
+    expect(verts).toEqual(["options:C:AAPL"]);
+    expect(result.verticals.every((v) => v.right === "C" && v.sleeveId === "options")).toBe(true);
+    expect(result.bought.every((b) => b.side === "Buy")).toBe(true);
   });
 });
 
