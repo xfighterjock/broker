@@ -9,10 +9,12 @@ import {
 } from "../server/src/risk";
 import { decideBuys, decideCallVerticalIntents, runAutopilot } from "../server/src/autopilot";
 import { defaultSleeves, type ScanRow } from "../shared/types";
+import { setPaperNow } from "../server/src/vertical";
 
 afterEach(() => {
   resetRiskCache();
   vi.unstubAllGlobals();
+  setPaperNow(null);
 });
 
 function feat(above200: boolean): ScanFeatures {
@@ -190,6 +192,7 @@ describe("risk-off blocks new buys, not exits", () => {
   });
 
   it("debit-call auto never sells puts", async () => {
+    setPaperNow(new Date("2026-08-24T14:00:00Z")); // Mon 10:00 ET
     const rights: string[] = [];
     const nowRows = [row("AAPL", { last: 67 })];
     const result = await runAutopilot({
@@ -219,8 +222,8 @@ describe("risk-off blocks new buys, not exits", () => {
           right: "C",
           strike: 65,
           expiry: "2026-10-09",
-          bid: 5.1,
-          ask: 5.2,
+          bid: 4.9,
+          ask: 5,
           last: 5.15,
           bidSize: 1,
           askSize: 1,
@@ -238,8 +241,8 @@ describe("risk-off blocks new buys, not exits", () => {
           right: "C",
           strike: 70,
           expiry: "2026-10-09",
-          bid: 2.4,
-          ask: 2.5,
+          bid: 2.5,
+          ask: 2.6,
           last: 2.45,
           bidSize: 1,
           askSize: 1,

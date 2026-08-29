@@ -1,12 +1,15 @@
 import {
   DEFAULT_SLEEVE_EQUITY_USD,
   OPTIONS_DEBIT_CAP_FRAC,
+  OPTIONS_DEBIT_MAX_WIDTH_FRAC,
   OPTIONS_DEBIT_STOP_FRAC,
   OPTIONS_DEBIT_TARGET_FRAC,
   OPTIONS_DTE_EXIT,
   OPTIONS_MULTIPLIER,
   OPTIONS_PROFIT_TAKE_FRAC,
+  OPTIONS_VERTICAL_CUTOFF_MINUTES,
   SLEEVE_IDS,
+  TZ,
 } from "../../shared/constants";
 import type {
   OptionLeg,
@@ -71,6 +74,75 @@ export function valuationNow(asOf?: string, injected?: Date): Date {
     if (!Number.isNaN(d.getTime())) return d;
   }
   return new Date();
+}
+
+const WEEKDAY_SUN0: Record<string, number> = {
+  Sun: 0,
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6,
+};
+
+/** America/New_York wall clock: YYYY-MM-DD, minutes since midnight, weekday Sun=0 Sat=6. */
+export function etWall(now: Date): { ymd: string; minutes: number; weekday: number } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: TZ,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    weekday: "short",
+  }).formatToParts(now);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  const y = get("year");
+  const mo = get("month");
+  const d = get("day");
+  const hour = Number(get("hour"));
+  const minute = Number(get("minute"));
+  const weekdayName = get("weekday");
+  return {
+    ymd: `${y}-${mo}-${d}`,
+    minutes: hour * 60 + minute,
+    weekday: WEEKDAY_SUN0[weekdayName] ?? 0,
+  };
+}
+
+/** Mon–Fri ET and before OPTIONS_VERTICAL_CUTOFF_MINUTES. Uses valuationNow when now is omitted. */
+export function verticalEntryWindowOpen(now?: Date): boolean {
+  const clock = valuationNow(undefined, now);
+  const w = etWall(clock);
+  return w.weekday >= 1 && w.weekday <= 5 && w.minutes < OPTIONS_VERTICAL_CUTOFF_MINUTES;
+}
+
+export function verticalEntryWindowError(now?: Date): string | null {
+  return verticalEntryWindowOpen(now) ? null : "no new verticals after 15:50 ET";
+}
+
+export function isVerticalStopReason(reason: string): boolean {
+  return /stop/i.test(reason);
+}
+
+export function noteVerticalStop(
+  map: Record<string, string>,
+  symbol: string,
+  at: Date,
+): Record<string, string> {
+  const sym = symbol.trim().toUpperCase();
+  return { ...map, [sym]: etWall(at).ymd };
+}
+
+export function verticalStopCooling(
+  map: Record<string, string>,
+  symbol: string,
+  at: Date,
+): boolean {
+  const sym = symbol.trim().toUpperCase();
+  return map[sym] === etWall(at).ymd;
 }
 
 export function parseYmdParts(expiry: string): { y: number; m: number; d: number } | null {
@@ -249,6 +321,9 @@ export function validateDebitVertical(
   const width = Math.abs(short.strike - long.strike);
   if (netDebitPerShare >= width) {
     return { ok: false, error: "net debit >= width (no defined profit)" };
+  }
+  if (netDebitPerShare > width * OPTIONS_DEBIT_MAX_WIDTH_FRAC + 1e-9) {
+    return { ok: false, error: "net debit exceeds half the width" };
   }
   const sized = sizeDebitContracts(netDebitPerShare, equityUsd, input.qty);
   if (!sized.ok) return sized;

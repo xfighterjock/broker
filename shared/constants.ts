@@ -63,6 +63,7 @@ export const REDIS_KEYS = {
   scanFeatures: "scan:features",
   autoPaper: "paper:auto",
   sessionMarks: "sleeves:session_marks",
+  verticalStopCooldown: "paper:vertical_stop_cooldown",
 } as const;
 
 /** Independent mock starting equity per sleeve (day, momentum, options, ownership, riskoff). */
@@ -101,6 +102,10 @@ export const OPTIONS_DEBIT_CAP_FRAC = 0.02;
 export const OPTIONS_DTE_EXIT = 21;
 export const OPTIONS_PROFIT_TAKE_FRAC = 0.5;
 export const OPTIONS_DEBIT_STOP_FRAC = 0.5;
+/** Refuse a debit vertical when net debit / width exceeds this (equal-to-half is OK). */
+export const OPTIONS_DEBIT_MAX_WIDTH_FRAC = 0.5;
+/** No new paper verticals at or after this many ET minutes (15:50). Mon–Fri only. */
+export const OPTIONS_VERTICAL_CUTOFF_MINUTES = 15 * 60 + 50;
 
 export const ETRADE_SANDBOX_BASE = "https://apisb.etrade.com";
 export const ETRADE_PROD_BASE = "https://api.etrade.com";

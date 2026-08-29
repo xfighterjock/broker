@@ -105,10 +105,15 @@ import {
   detectVerticalExits,
   isVerticalBody,
   isVerticalPosition,
+  isVerticalStopReason,
   makeVerticalMeta,
+  noteVerticalStop,
   parsePaperVertical,
   validateDebitVertical,
+  valuationNow,
+  verticalEntryWindowError,
   verticalPackageSymbol,
+  verticalStopCooling,
   verticalUnrealized,
 } from "./vertical";
 import type { StatusHub } from "./wsHub";
@@ -201,6 +206,8 @@ export function buildApp(deps: AppDeps): express.Express {
       riskoff: null,
     } as Record<SleeveId, SessionMark | null>,
     sessionMarksHydrated: false,
+    verticalStopCooldown: {} as Record<string, string>,
+    verticalStopCooldownHydrated: false,
   };
 
   async function ensureSleeves(): Promise<void> {
@@ -345,6 +352,33 @@ export function buildApp(deps: AppDeps): express.Express {
     if (!deps.redis) return;
     try {
       await deps.redis.set(REDIS_KEYS.sessionMarks, JSON.stringify(memory.sessionMarks));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function ensureVerticalStopCooldown(): Promise<void> {
+    if (memory.verticalStopCooldownHydrated) return;
+    memory.verticalStopCooldownHydrated = true;
+    if (!deps.redis) return;
+    try {
+      const raw = await deps.redis.get(REDIS_KEYS.verticalStopCooldown);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const next: Record<string, string> = {};
+      for (const [k, v] of Object.entries(parsed)) {
+        if (typeof v === "string" && k.trim()) next[k.trim().toUpperCase()] = v;
+      }
+      memory.verticalStopCooldown = next;
+    } catch {
+      /* keep empty */
+    }
+  }
+
+  async function persistVerticalStopCooldown(): Promise<void> {
+    if (!deps.redis) return;
+    try {
+      await deps.redis.set(REDIS_KEYS.verticalStopCooldown, JSON.stringify(memory.verticalStopCooldown));
     } catch {
       /* ignore */
     }
@@ -536,6 +570,15 @@ export function buildApp(deps: AppDeps): express.Express {
     for (const hit of exits) {
       const pos = hit.position;
       const v = pos.vertical!;
+      if (isVerticalStopReason(hit.reason)) {
+        await ensureVerticalStopCooldown();
+        memory.verticalStopCooldown = noteVerticalStop(
+          memory.verticalStopCooldown,
+          v.quoteSymbol || v.underlying,
+          valuationNow(),
+        );
+        await persistVerticalStopCooldown();
+      }
       await deps.broker.flattenSymbols([pos.symbol], hit.reason);
       await recordPaperExit({
         sleeveId: pos.sleeveId ?? "options",
@@ -798,6 +841,13 @@ export function buildApp(deps: AppDeps): express.Express {
     if (mockErr) return { ok: false, error: mockErr, status: 403 };
     const parsed = parsePaperVertical(body);
     if ("error" in parsed) return { ok: false, error: parsed.error };
+    await ensureVerticalStopCooldown();
+    const clock = valuationNow();
+    const windowErr = verticalEntryWindowError(clock);
+    if (windowErr) return { ok: false, error: windowErr };
+    if (verticalStopCooling(memory.verticalStopCooldown, parsed.symbol, clock)) {
+      return { ok: false, error: `${parsed.symbol} cooling after stop` };
+    }
     const ymd = parseYmd(parsed.expiry);
     if (!ymd) return { ok: false, error: "expiry must be YYYY-MM-DD" };
     const chain = await fetchOptionChain({
@@ -1020,6 +1070,7 @@ export function buildApp(deps: AppDeps): express.Express {
     try {
       await ensureAutoPaper();
       await ensureSleeves();
+      await ensureVerticalStopCooldown();
       if (!memory.autoPaper) return;
       const mockErr = assertMockOnly();
       if (mockErr) {
@@ -1053,6 +1104,7 @@ export function buildApp(deps: AppDeps): express.Express {
         scanReady,
         riskOn: risk.riskOn,
         riskoffQuotes,
+        verticalStopCooldown: memory.verticalStopCooldown,
         placeVertical: async (v: AutoVertical) => {
           if (v.sleeveId === "riskoff" && v.right !== "P") {
             return { ok: false, error: "riskoff sleeve: put debit verticals only" };
@@ -1138,6 +1190,7 @@ export function buildApp(deps: AppDeps): express.Express {
     await ensureSleeves();
     await ensureBlotter();
     await ensureAutoPaper();
+    await ensureVerticalStopCooldown();
     const risk = await ensureRisk();
     let freeze = memory.freeze;
     let knowledgeTime = memory.knowledgeTime;

@@ -192,18 +192,18 @@ describe("size debit vertical 1–2% cap", () => {
   const chain = parseOptionChain(chainFixture, "SPY");
 
   it("auto-sizes near 1% and stays under 2% of $100k", () => {
-    const long = legAt(chain, 65, "C");
-    const short = legAt(chain, 70, "C");
+    const long = { ...legAt(chain, 65, "C"), ask: 5 };
+    const short = { ...legAt(chain, 70, "C"), bid: 2.5 };
     const v = validateDebitVertical({ long, short, quoteSymbol: "SPY" }, 100_000);
     expect(v.ok).toBe(true);
     if (!v.ok) return;
-    // debit 5.2-2.4=2.8 → $280/ct. 1% of 100k = 1000 → 3 contracts ($840). 2% cap $2000.
-    expect(v.netDebitPerShare).toBeCloseTo(2.8);
-    expect(v.qty).toBe(3);
-    expect(v.netDebitPaid).toBeCloseTo(840);
-    expect(v.maxLoss).toBeCloseTo(840);
+    // debit 5-2.5=2.5 exactly → $250/ct. 1% of 100k = 1000 → 4 contracts ($1000). 2% cap $2000.
+    expect(v.netDebitPerShare).toBeCloseTo(2.5);
+    expect(v.qty).toBe(4);
+    expect(v.netDebitPaid).toBeCloseTo(1000);
+    expect(v.maxLoss).toBeCloseTo(1000);
     expect(v.width).toBe(5);
-    expect(v.maxProfit).toBeCloseTo(660);
+    expect(v.maxProfit).toBeCloseTo(1000);
     expect(v.qty * v.netDebitPerShare * 100).toBeLessThanOrEqual(2000);
   });
 
@@ -275,7 +275,7 @@ describe("vertical exits with injected clock", () => {
   const asOfOpen = "2013-02-01T15:00:00.000Z"; // DTE 43 vs 2013-03-16
 
   function openPos(marks?: { longBid?: number; shortAsk?: number }) {
-    const long = { ...legAt(chain, 65, "C"), bid: marks?.longBid ?? 5.1 };
+    const long = { ...legAt(chain, 65, "C"), bid: marks?.longBid ?? 5.1, ask: 4.9 };
     const short = { ...legAt(chain, 70, "C"), ask: marks?.shortAsk ?? 2.5 };
     const v = validateDebitVertical({ long, short, qty: 1, asOf: asOfOpen, quoteSymbol: "SPY" }, 100_000);
     if (!v.ok) throw new Error(v.error);
@@ -299,7 +299,7 @@ describe("vertical exits with injected clock", () => {
   afterEach(() => setPaperNow(null));
 
   it("exits at 50% of max profit", () => {
-    // debit 2.8, maxProfit 2.2*100=220. 50% profit = 110. Need close-280 >= 110 → close >= 390 → longBid-shortAsk >= 3.9
+    // debit 2.5, maxProfit 2.5*100=250. 50% profit = 125. Need close-250 >= 125 → close >= 375 → longBid-shortAsk >= 3.75
     const p = openPos({ longBid: 5.5, shortAsk: 1.4 });
     const hits = detectVerticalExits([p], new Date(asOfOpen));
     expect(hits).toHaveLength(1);
@@ -308,7 +308,7 @@ describe("vertical exits with injected clock", () => {
   });
 
   it("exits when 50% of debit is gone", () => {
-    // debit paid 280. 50% stop when close value <= 140 → longBid-shortAsk <= 1.4
+    // debit paid 250. 50% stop when close value <= 125 → longBid-shortAsk <= 1.25
     const p = openPos({ longBid: 1.2, shortAsk: 1.5 });
     const hits = detectVerticalExits([p], new Date(asOfOpen));
     expect(hits).toHaveLength(1);
@@ -340,7 +340,7 @@ describe("HTTP options chain + paper vertical (mocked E*TRADE)", () => {
     resetEtradeCache();
     resetMassiveCache();
     resetRiskCache();
-    setPaperNow(null);
+    setPaperNow(new Date("2013-02-01T15:00:00.000Z")); // Fri 10:00 ET — window open, sandbox DTE intact
   });
 
   afterEach(() => {
@@ -426,7 +426,7 @@ describe("HTTP options chain + paper vertical (mocked E*TRADE)", () => {
           right: "C",
           expiry: "2013-03-16",
           longStrike: 65,
-          shortStrike: 70,
+          shortStrike: 75,
           qty: 1,
           thesis: "fixture debit",
           asOf: "2013-02-01T15:00:00.000Z",
@@ -438,17 +438,17 @@ describe("HTTP options chain + paper vertical (mocked E*TRADE)", () => {
       expect(pos?.sleeveId).toBe("options");
       expect(pos?.vertical?.kind).toBe("debit-vertical");
       expect(pos?.vertical?.qty).toBe(1);
-      expect(pos?.vertical?.netDebitPaid).toBeCloseTo(280);
-      expect(pos?.vertical?.maxLoss).toBeCloseTo(280);
-      expect(pos?.vertical?.maxProfit).toBeCloseTo(220);
+      expect(pos?.vertical?.netDebitPaid).toBeCloseTo(410);
+      expect(pos?.vertical?.maxLoss).toBeCloseTo(410);
+      expect(pos?.vertical?.maxProfit).toBeCloseTo(590);
       expect(pos?.vertical?.long.osiKey).toContain("C00065000");
-      expect(pos?.vertical?.short.osiKey).toContain("C00070000");
+      expect(pos?.vertical?.short.osiKey).toContain("C00075000");
       const buys = snap.paperBlotter.filter((f) => f.notes.includes("vertical long"));
       const sells = snap.paperBlotter.filter((f) => f.notes.includes("vertical short"));
       expect(buys).toHaveLength(1);
       expect(sells).toHaveLength(1);
       expect(buys[0].price).toBe(5.2);
-      expect(sells[0].price).toBe(2.4);
+      expect(sells[0].price).toBe(1.1);
       expect(broker.getPositionsSync().some((p) => p.vertical)).toBe(true);
     } finally {
       await srv.close();

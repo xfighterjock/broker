@@ -208,6 +208,9 @@ describe("decidePutVerticalIntents", () => {
 });
 
 describe("runAutopilot risk-off puts vs risk-on calls", () => {
+  beforeEach(() => setPaperNow(new Date("2026-08-24T14:00:00Z")));
+  afterEach(() => setPaperNow(null));
+
   const putChain: OptionLeg[] = [
     putLeg(500, 6.1, 6.3),
     putLeg(490, 3.4, 3.6),
@@ -310,7 +313,7 @@ describe("HTTP riskoff put vertical (mocked E*TRADE chain)", () => {
     resetEtradeCache();
     resetMassiveCache();
     resetRiskCache();
-    setPaperNow(null);
+    setPaperNow(new Date("2013-02-01T15:00:00.000Z")); // Fri 10:00 ET — window open, sandbox DTE intact
   });
 
   afterEach(() => {

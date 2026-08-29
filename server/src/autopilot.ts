@@ -16,7 +16,13 @@ import type {
   SleeveId,
 } from "../../shared/types";
 import { pointValueFor } from "./paper";
-import { daysToExpiry, isVerticalPosition } from "./vertical";
+import {
+  daysToExpiry,
+  isVerticalPosition,
+  valuationNow,
+  verticalEntryWindowOpen,
+  verticalStopCooling,
+} from "./vertical";
 
 export const MAX_AUTO_MOMENTUM = 5;
 export const MAX_AUTO_OWNERSHIP = 5;
@@ -357,6 +363,8 @@ export type AutopilotCtx = {
   fetchChain?: (symbol: string, expiry: string) => Promise<OptionLeg[]>;
   /** Delayed lasts for SPY/QQQ (IWM optional) used only for risk-off put intents. */
   riskoffQuotes?: Array<{ symbol: string; last: number }>;
+  /** Underlying -> ET ymd of last 50% debit stop. Same-day skip. */
+  verticalStopCooldown?: Record<string, string>;
   log: (line: string) => void;
 };
 
@@ -422,7 +430,20 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
       ctx.getSleeves().options,
       riskOn,
     );
+    let windowLogged = false;
     for (const intent of intents) {
+      const now = valuationNow();
+      if (!verticalEntryWindowOpen(now)) {
+        if (!windowLogged) {
+          ctx.log("auto paper vertical skip: no new verticals after 15:50 ET");
+          windowLogged = true;
+        }
+        continue;
+      }
+      if (verticalStopCooling(ctx.verticalStopCooldown ?? {}, intent.symbol, now)) {
+        ctx.log(`auto paper vertical skip ${intent.symbol}: cooling after stop`);
+        continue;
+      }
       try {
         const expiries = await ctx.fetchExpiries(intent.symbol);
         const picked = pickTargetExpiry(expiries);
@@ -480,7 +501,20 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
       ctx.getSleeves().riskoff,
       riskOn,
     );
+    let windowLogged = false;
     for (const intent of intents) {
+      const now = valuationNow();
+      if (!verticalEntryWindowOpen(now)) {
+        if (!windowLogged) {
+          ctx.log("auto paper vertical skip: no new verticals after 15:50 ET");
+          windowLogged = true;
+        }
+        continue;
+      }
+      if (verticalStopCooling(ctx.verticalStopCooldown ?? {}, intent.symbol, now)) {
+        ctx.log(`auto paper vertical skip ${intent.symbol}: cooling after stop`);
+        continue;
+      }
       try {
         const expiries = await ctx.fetchExpiries(intent.symbol);
         const picked = pickTargetExpiry(expiries);
