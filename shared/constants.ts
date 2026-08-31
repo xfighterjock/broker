@@ -89,6 +89,25 @@ export const MAX_AUTO_RISKOFF_VERTICALS = 3;
 /** Risk-off auto underlyers. IWM is optional third if quoted. */
 export const RISKOFF_SYMBOLS = ["SPY", "QQQ"] as const;
 export type RiskoffSymbol = (typeof RISKOFF_SYMBOLS)[number];
+/**
+ * Second risk-off expression: one ETF long (GLD or UUP or BIL). Paper only.
+ * Classic gold-vs-dollar relative strength vs T-bills.
+ */
+export const RISKOFF_ETF_SYMBOLS = ["GLD", "UUP", "BIL"] as const;
+export type RiskoffEtfSymbol = (typeof RISKOFF_ETF_SYMBOLS)[number];
+/**
+ * Exact trading-day total-return lookback for GLD vs UUP vs BIL.
+ * 63 sessions ≈ 3 months — same convention as scan `ret63`, and clearly
+ * multi-month (not the 20-session UUP dollar veto on the global gate).
+ */
+export const RISKOFF_ETF_LOOKBACK_DAYS = 63;
+/**
+ * Fraction of the $100k risk-off mock book for the ETF long (~$20k).
+ * Puts keep the rest of the sleeve. Easy to change.
+ */
+export const RISKOFF_ETF_NOTIONAL_FRAC = 0.20;
+/** Disaster stop on the ETF long. Rotation — not this stop — is the primary exit. */
+export const RISKOFF_ETF_STOP_MUL = 0.92;
 /** Prefer 30–45 DTE, always above OPTIONS_DTE_EXIT. */
 export const OPTIONS_DTE_TARGET_MIN = 30;
 export const OPTIONS_DTE_TARGET_MAX = 45;

@@ -949,7 +949,7 @@ export default function App() {
                 {tab === "options"
                   ? "Paper debit verticals on MockBroker. Massive Starter chain (15m delayed). Not live."
                   : tab === "riskoff"
-                    ? "Paper put debit verticals on MockBroker when RISK OFF. Massive Starter chain (15m delayed). Not live. Day book is not gated by this sleeve."
+                    ? "Paper put debit verticals plus one GLD/UUP/BIL ETF long on MockBroker when RISK OFF. Massive delayed dailies for the ETF RS. Not live. Day book is not gated by this sleeve."
                     : "Paper buy/sell fills at delayed last on MockBroker. Iterate from fills. Not live."}
               </div>
               <div className="kv">

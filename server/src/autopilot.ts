@@ -16,6 +16,11 @@ import type {
   SleeveId,
 } from "../../shared/types";
 import { pointValueFor } from "./paper";
+import {
+  decideRiskoffEtf,
+  openRiskoffEtfPositions,
+  type RiskoffEtfReturns,
+} from "./riskoffEtf";
 import { passesMomentumFilter } from "./scan";
 import {
   daysToExpiry,
@@ -32,7 +37,7 @@ export const OWNERSHIP_STOP_MUL = 0.98;
 export const AUTO_RISK_FRAC = 0.01;
 
 export type AutoBuy = {
-  sleeveId: "momentum" | "ownership";
+  sleeveId: "momentum" | "ownership" | "riskoff";
   symbol: string;
   side: "Buy";
   qty: number;
@@ -365,6 +370,10 @@ export type AutopilotCtx = {
   fetchChain?: (symbol: string, expiry: string) => Promise<OptionLeg[]>;
   /** Delayed lasts for SPY/QQQ (IWM optional) used only for risk-off put intents. */
   riskoffQuotes?: Array<{ symbol: string; last: number }>;
+  /** 63d total returns for GLD/UUP/BIL. Missing/null → ETF expression fails closed to cash. */
+  riskoffEtfReturns?: RiskoffEtfReturns | null;
+  /** Delayed lasts used to size/rotate the risk-off ETF long. */
+  riskoffEtfQuotes?: Array<{ symbol: string; last: number }>;
   /** Underlying -> ET ymd of last 50% debit stop. Same-day skip. */
   verticalStopCooldown?: Record<string, string>;
   log: (line: string) => void;
@@ -379,6 +388,8 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
   const sold: AutoSell[] = [];
   const verticals: AutoVertical[] = [];
   if (!ctx.enabled) return { bought, sold, verticals };
+
+  const riskOn = ctx.riskOn === true;
 
   const sells = decideSells(
     ctx.getPositions(),
@@ -399,9 +410,29 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
     }
   }
 
-  if (!ctx.scanReady) return { bought, sold, verticals };
+  const etf = decideRiskoffEtf({
+    riskOn,
+    positions: ctx.getPositions(),
+    sleeve: ctx.getSleeves().riskoff,
+    returns: ctx.riskoffEtfReturns ?? null,
+    quotes: ctx.riskoffEtfQuotes ?? [],
+  });
+  for (const s of etf.sells) {
+    const r = await ctx.close(s);
+    if (r.ok) {
+      ctx.log(
+        `auto paper close ${s.sleeveId} ${s.symbol} ${s.reason} (MockBroker, not Tradovate, not live)`,
+      );
+      sold.push(s);
+    } else {
+      ctx.log(`auto paper close skip ${s.symbol}: ${r.error}`);
+    }
+  }
 
-  const riskOn = ctx.riskOn === true;
+  if (!ctx.scanReady) {
+    await placeRiskoffEtfBuy(ctx, etf.buy, bought);
+    return { bought, sold, verticals };
+  }
 
   for (const sleeveId of ["momentum", "ownership"] as const) {
     const buys = decideBuys(
@@ -566,5 +597,41 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
     }
   }
 
+  await placeRiskoffEtfBuy(ctx, etf.buy, bought);
   return { bought, sold, verticals };
+}
+
+async function placeRiskoffEtfBuy(
+  ctx: AutopilotCtx,
+  buy: AutoBuy | null,
+  bought: AutoBuy[],
+): Promise<void> {
+  if (!buy) return;
+  const leftover = openRiskoffEtfPositions(ctx.getPositions()).filter(
+    (p) => p.symbol.toUpperCase() !== buy.symbol.toUpperCase(),
+  );
+  if (leftover.length) {
+    ctx.log(
+      `auto paper skip ${buy.symbol}: still holding ${leftover.map((p) => p.symbol).join(",")}`,
+    );
+    return;
+  }
+  if (
+    openRiskoffEtfPositions(ctx.getPositions()).some(
+      (p) => p.symbol.toUpperCase() === buy.symbol.toUpperCase(),
+    )
+  ) {
+    return;
+  }
+  const r = await ctx.place(buy);
+  if (r.ok) {
+    ctx.log(
+      `auto paper buy ${buy.sleeveId} ${buy.qty} ${buy.symbol} stop ${buy.stopPrice} ${buy.thesis} (MockBroker, not Tradovate, not live)`,
+    );
+    bought.push(buy);
+  } else if (/no delayed last/i.test(r.error)) {
+    ctx.log(`auto paper skip ${buy.symbol} no delayed last`);
+  } else {
+    ctx.log(`auto paper skip ${buy.symbol}: ${r.error}`);
+  }
 }

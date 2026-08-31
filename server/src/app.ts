@@ -85,6 +85,7 @@ import {
   parseYmd,
 } from "./etrade";
 import { ensureRisk, kickRisk } from "./risk";
+import { fetchRiskoffEtfReturns } from "./riskoffEtf";
 import {
   applyOverlayMarks,
   detectOverlaySettlements,
@@ -1093,6 +1094,13 @@ export function buildApp(deps: AppDeps): express.Express {
           .filter((q) => q.last !== null && Number.isFinite(q.last) && q.last > 0)
           .map((q) => ({ symbol: q.symbol, last: q.last as number }));
       }
+      const [riskoffEtfReturns, etfQuoteRows] = await Promise.all([
+        fetchRiskoffEtfReturns(),
+        fetchDelayedQuotes(["GLD", "UUP", "BIL"]).catch(() => []),
+      ]);
+      const riskoffEtfQuotes = etfQuoteRows
+        .filter((q) => q.last !== null && Number.isFinite(q.last) && q.last > 0)
+        .map((q) => ({ symbol: q.symbol, last: q.last as number }));
       await runAutopilot({
         enabled: memory.autoPaper,
         getPositions: () => deps.broker.getPositionsSync(),
@@ -1102,6 +1110,8 @@ export function buildApp(deps: AppDeps): express.Express {
         scanReady,
         riskOn: risk.riskOn,
         riskoffQuotes,
+        riskoffEtfReturns,
+        riskoffEtfQuotes,
         verticalStopCooldown: memory.verticalStopCooldown,
         placeVertical: async (v: AutoVertical) => {
           if (v.sleeveId === "riskoff" && v.right !== "P") {
@@ -1136,6 +1146,16 @@ export function buildApp(deps: AppDeps): express.Express {
           return got.ok ? got.data.legs : [];
         },
         place: async (buy: AutoBuy) => {
+          if (buy.sleeveId === "riskoff") {
+            return placePaperOrder({
+              sleeveId: "riskoff",
+              symbol: buy.symbol,
+              side: "Buy",
+              qty: buy.qty,
+              stopPrice: buy.stopPrice,
+              thesis: buy.thesis,
+            });
+          }
           const quotes = await fetchDelayedQuotes([buy.symbol]);
           const last = lastFromQuotes(quotes, buy.symbol);
           if (last === null) return { ok: false, error: "no delayed last" };

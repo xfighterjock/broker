@@ -88,7 +88,13 @@ describe("mapTicker / parseInstrumentTickers", () => {
       "TLT",
       "IWM",
     ]);
-    expect(symbolsForSleeve(sleeves.riskoff, "riskoff")).toEqual(["SPY", "QQQ"]);
+    expect(symbolsForSleeve(sleeves.riskoff, "riskoff")).toEqual([
+      "SPY",
+      "QQQ",
+      "GLD",
+      "UUP",
+      "BIL",
+    ]);
     sleeves.momentum.instruments = "ES, NQ, SPY";
     expect(symbolsForSleeve(sleeves.momentum, "momentum")).toEqual(["ES=F", "NQ=F", "SPY"]);
   });

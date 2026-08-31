@@ -182,6 +182,14 @@ export function OptionsPanel({
   const open = positions.filter(
     (p) => p.side !== "Flat" && p.qty > 0 && p.sleeveId === sleeveId && p.vertical,
   );
+  const etfOpen = positions.filter(
+    (p) =>
+      p.side !== "Flat" &&
+      p.qty > 0 &&
+      p.sleeveId === sleeveId &&
+      !p.vertical &&
+      !p.overlay,
+  );
   const overlays = positions.filter(
     (p) => p.side !== "Flat" && p.qty > 0 && p.sleeveId === "options" && p.overlay,
   );
@@ -264,7 +272,7 @@ export function OptionsPanel({
       <div className="body">
         <div className="hint">
           {putsOnly
-            ? "Massive Starter chain (DELAYED 15m). Paper put debit verticals on MockBroker. Never a live send."
+            ? "Massive Starter chain (DELAYED 15m). Paper put debit verticals on MockBroker. GLD/UUP/BIL is a separate ETF long on this sleeve when RISK OFF. Never a live send."
             : HINT}
         </div>
         <div className="paper-form options-form">
@@ -396,6 +404,52 @@ export function OptionsPanel({
             </tbody>
           </table>
         </div>
+        {putsOnly && (
+          <>
+            <label>GLD / UUP / BIL (one name)</label>
+            <div className="hint">
+              Autopilot holds whichever of GLD or UUP has stronger 63-session return while RISK OFF.
+              Sits in BIL (or cash) if both trail T-bills. Flattened on RISK ON. Modest size so puts still have room.
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Shares</th>
+                  <th>Avg</th>
+                  <th>uPnL</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {etfOpen.map((p) => (
+                  <tr key={p.id}>
+                    <td>{p.symbol}</td>
+                    <td>{p.qty}</td>
+                    <td>{fmt(p.avgPrice)}</td>
+                    <td>{fmtUsd(p.unrealizedPnl)}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="tiny danger"
+                        onClick={() => void closeVertical(p.symbol)}
+                      >
+                        Close
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {etfOpen.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="muted">
+                      cash
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </>
+        )}
         <label>Open verticals</label>
         <table>
           <thead>

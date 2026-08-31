@@ -39,10 +39,12 @@ describe("defaultSleeves", () => {
     expect(sleeves.riskoff.name).toMatch(/Risk-off/);
     expect(sleeves.riskoff.status).toBe("paper");
     expect(sleeves.riskoff.thesis).toMatch(/RISK OFF/);
-    expect(sleeves.riskoff.structure).toMatch(/put debit verticals only/);
+    expect(sleeves.riskoff.structure).toMatch(/put debit verticals/);
+    expect(sleeves.riskoff.structure).toMatch(/GLD/);
     expect(sleeves.riskoff.structure).toMatch(/no naked short vol/);
     expect(sleeves.riskoff.killRules).toMatch(/max debit lost/);
     expect(sleeves.riskoff.instruments).toMatch(/SPY/);
+    expect(sleeves.riskoff.instruments).toMatch(/GLD/);
     expect(sleeves.day.paper).toEqual(emptyPaperStats());
     expect(sleeves.riskoff.paper).toEqual(emptyPaperStats());
   });

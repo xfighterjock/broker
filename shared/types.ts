@@ -243,17 +243,19 @@ export function defaultSleeves(): Record<SleeveId, SleeveCard> {
     },
     riskoff: {
       id: "riskoff",
-      name: "Risk-off (put debit)",
+      name: "Risk-off (puts + GLD/UUP)",
       horizon: "days–months",
       budgetPct: 10,
       lossCapUsd: 1000,
       thesis:
-        "Defined-risk put debit while the global gate is RISK OFF.",
+        "Defined-risk put debit while RISK OFF, plus one GLD/UUP/BIL relative-strength ETF long.",
       macroDrivers: "SPY/ACWI/HYG 200dma + UUP 20d dollar veto (global risk-off).",
-      microDrivers: "30–45 DTE put debit verticals on SPY/QQQ; skip missing bid/ask.",
-      instruments: "SPY / QQQ",
-      structure: "put debit verticals only, no naked short vol",
-      killRules: "max debit lost / DTE / sleeve loss cap",
+      microDrivers:
+        "30–45 DTE put debit verticals on SPY/QQQ; skip missing bid/ask. GLD vs UUP vs BIL 63d total return; hold the winner if it beats T-bills, else BIL/cash. Flatten the ETF on RISK ON.",
+      instruments: "SPY / QQQ / GLD / UUP / BIL",
+      structure:
+        "put debit verticals + one GLD/UUP/BIL ETF long; no naked short vol",
+      killRules: "max debit lost / DTE / sleeve loss cap; ETF rotates only when the winner changes",
       status: "paper",
       paper: emptyPaperStats(),
       updatedAt: null,

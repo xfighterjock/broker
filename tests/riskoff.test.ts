@@ -1,7 +1,7 @@
 import http from "node:http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { seedEvents } from "../shared/clock";
-import type { CalendarEvent, OptionLeg, ScanRow, StatusSnapshot } from "../shared/types";
+import type { CalendarEvent, OptionLeg, Position, ScanRow, StatusSnapshot } from "../shared/types";
 import { defaultSleeves } from "../shared/types";
 import { buildApp } from "../server/src/app";
 import type { AppConfig } from "../server/src/config";
@@ -22,7 +22,22 @@ import {
   decidePutVerticalIntents,
   pickAtmPutDebit,
   runAutopilot,
+  type AutoBuy,
+  type AutoSell,
 } from "../server/src/autopilot";
+import {
+  DEFAULT_SLEEVE_EQUITY_USD,
+  RISKOFF_ETF_LOOKBACK_DAYS,
+  RISKOFF_ETF_NOTIONAL_FRAC,
+  SLEEVE_IDS,
+} from "../shared/constants";
+import {
+  decideRiskoffEtf,
+  periodReturn,
+  pickRiskoffEtfWinner,
+  sizeRiskoffEtfShares,
+} from "../server/src/riskoffEtf";
+import { sleeveBook } from "../server/src/paper";
 import { setPaperNow, validateDebitVertical } from "../server/src/vertical";
 
 function testCfg(): AppConfig {
@@ -386,5 +401,348 @@ describe("HTTP riskoff put vertical (mocked E*TRADE chain)", () => {
     } finally {
       await srv.close();
     }
+  });
+
+  it("POST /api/paper/order accepts GLD on riskoff and refuses other stock names", async () => {
+    const { app, broker } = makeTestApp();
+    stubMarketFetch({ lastBySymbol: { GLD: 180, SPY: 500 } });
+    const srv = await listen(app);
+    try {
+      const gld = await fetch(`${srv.url}/api/paper/order`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sleeveId: "riskoff",
+          symbol: "GLD",
+          side: "Buy",
+          qty: 10,
+          stopPrice: 165,
+          thesis: "manual GLD",
+        }),
+      });
+      expect(gld.status).toBe(200);
+      const snap = (await gld.json()) as StatusSnapshot;
+      const pos = snap.broker.positions.find((p) => p.symbol === "GLD" && p.side !== "Flat");
+      expect(pos?.sleeveId).toBe("riskoff");
+      expect(pos?.qty).toBe(10);
+      expect(pos?.vertical).toBeUndefined();
+      expect(snap.sleeveBooks.riskoff.equityUsd).toBeGreaterThan(0);
+
+      const spy = await fetch(`${srv.url}/api/paper/order`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sleeveId: "riskoff",
+          symbol: "SPY",
+          side: "Buy",
+          qty: 1,
+          stopPrice: 400,
+          thesis: "not an etf expression",
+        }),
+      });
+      expect(spy.status).toBe(400);
+      const body = (await spy.json()) as { error: string };
+      expect(body.error).toMatch(/GLD\/UUP\/BIL|put debit/i);
+    } finally {
+      await srv.close();
+      broker.reset();
+    }
+  });
+});
+
+function etfPos(symbol: string, qty: number, avg = 100): Position {
+  return {
+    id: `etf-${symbol}`,
+    symbol,
+    root: null,
+    qty,
+    side: "Long",
+    avgPrice: avg,
+    unrealizedPnl: 0,
+    gated: false,
+    sleeveId: "riskoff",
+  };
+}
+
+function etfQuotes(lasts: Record<string, number>) {
+  return Object.entries(lasts).map(([symbol, last]) => ({ symbol, last }));
+}
+
+const gldWins = { GLD: 0.12, UUP: 0.04, BIL: 0.01 };
+const uupWins = { GLD: 0.03, UUP: 0.11, BIL: 0.01 };
+const bothTrail = { GLD: -0.02, UUP: -0.04, BIL: 0.01 };
+
+function paperBook(initial: Position[] = []) {
+  let positions = initial.map((p) => ({ ...p }));
+  return {
+    getPositions: () => positions,
+    place: async (b: AutoBuy) => {
+      positions = [
+        ...positions.filter(
+          (p) => !(p.sleeveId === b.sleeveId && p.symbol.toUpperCase() === b.symbol.toUpperCase()),
+        ),
+        etfPos(b.symbol, b.qty, 100),
+      ];
+      return { ok: true as const };
+    },
+    close: async (s: AutoSell) => {
+      positions = positions.filter(
+        (p) =>
+          !(p.sleeveId === s.sleeveId && p.symbol.toUpperCase() === s.symbol.toUpperCase()),
+      );
+      return { ok: true as const };
+    },
+  };
+}
+
+const putChainForAuto: OptionLeg[] = [
+  putLeg(500, 6.1, 6.3),
+  putLeg(490, 3.4, 3.6),
+  callLeg(500, 5.1, 5.2),
+  callLeg(510, 2.4, 2.5),
+];
+
+describe("GLD/UUP/BIL relative-strength expression", () => {
+  beforeEach(() => setPaperNow(new Date("2026-08-24T14:00:00Z")));
+  afterEach(() => setPaperNow(null));
+  it("uses a 63-session lookback and fails closed without an exact series", () => {
+    expect(RISKOFF_ETF_LOOKBACK_DAYS).toBe(63);
+    const closes = Array.from({ length: 80 }, () => 100);
+    closes[closes.length - 1] = 110;
+    expect(periodReturn(closes, 63)).toBeCloseTo(0.1);
+    expect(periodReturn(closes.slice(-63), 63)).toBeNull();
+    expect(periodReturn([], 63)).toBeNull();
+  });
+
+  it("picks GLD or UUP only when that name beats BIL", () => {
+    expect(pickRiskoffEtfWinner(gldWins)).toBe("GLD");
+    expect(pickRiskoffEtfWinner(uupWins)).toBe("UUP");
+    expect(pickRiskoffEtfWinner(bothTrail)).toBe("BIL");
+    expect(pickRiskoffEtfWinner({ GLD: null, UUP: 0.2, BIL: 0.01 })).toBeNull();
+  });
+
+  it("sizes a modest stake well under the $100k sleeve", () => {
+    const qty = sizeRiskoffEtfShares(180);
+    expect(qty).toBe(Math.floor((DEFAULT_SLEEVE_EQUITY_USD * RISKOFF_ETF_NOTIONAL_FRAC) / 180));
+    expect(qty * 180).toBeLessThan(25_000);
+    expect(qty * 180).toBeLessThan(DEFAULT_SLEEVE_EQUITY_USD);
+    expect(SLEEVE_IDS).toHaveLength(5);
+    expect(SLEEVE_IDS).toEqual(
+      expect.arrayContaining(["day", "momentum", "options", "ownership", "riskoff"]),
+    );
+  });
+
+  it("1. RISK OFF + GLD beats UUP and BIL → paper long GLD at modest size, no extra sleeve", async () => {
+    const book = paperBook();
+    const result = await runAutopilot({
+      enabled: true,
+      getPositions: book.getPositions,
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [],
+      featureRows: [],
+      scanReady: true,
+      riskOn: false,
+      riskoffQuotes: [
+        { symbol: "SPY", last: 500 },
+        { symbol: "QQQ", last: 400 },
+      ],
+      riskoffEtfReturns: gldWins,
+      riskoffEtfQuotes: etfQuotes({ GLD: 180, UUP: 28, BIL: 91 }),
+      place: book.place,
+      close: book.close,
+      placeVertical: async () => ({ ok: true }),
+      fetchExpiries: async () => [
+        { year: 2026, month: 10, day: 9, expiry: "2026-10-09", expiryType: "MONTHLY" },
+      ],
+      fetchChain: async () => putChainForAuto,
+      log: () => {},
+    });
+    const etfBuys = result.bought.filter((b) => b.sleeveId === "riskoff");
+    expect(etfBuys).toHaveLength(1);
+    expect(etfBuys[0].symbol).toBe("GLD");
+    expect(etfBuys[0].qty).toBe(sizeRiskoffEtfShares(180));
+    expect(etfBuys[0].qty * 180).toBeLessThan(DEFAULT_SLEEVE_EQUITY_USD * 0.25);
+    expect(book.getPositions().filter((p) => !p.vertical).map((p) => p.symbol)).toEqual(["GLD"]);
+    expect(result.verticals.every((v) => v.right === "P" && v.sleeveId === "riskoff")).toBe(true);
+    expect(result.verticals.map((v) => v.symbol).sort()).toEqual(["QQQ", "SPY"]);
+    const sleeves = defaultSleeves();
+    const marked = sleeveBook(
+      sleeves.riskoff,
+      book.getPositions().map((p) => ({ ...p, unrealizedPnl: 50 })),
+    );
+    expect(marked.unrealizedPnlUsd).toBe(50);
+    expect(Object.keys(defaultSleeves()).sort()).toEqual([...SLEEVE_IDS].sort());
+  });
+
+  it("2. Winner flips to UUP → rotate, still one name", async () => {
+    const book = paperBook([etfPos("GLD", 100, 180)]);
+    const result = await runAutopilot({
+      enabled: true,
+      getPositions: book.getPositions,
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [],
+      featureRows: [],
+      scanReady: true,
+      riskOn: false,
+      riskoffEtfReturns: uupWins,
+      riskoffEtfQuotes: etfQuotes({ GLD: 180, UUP: 28, BIL: 91 }),
+      place: book.place,
+      close: book.close,
+      log: () => {},
+    });
+    expect(result.sold.map((s) => s.symbol)).toEqual(["GLD"]);
+    expect(result.bought.map((b) => b.symbol)).toEqual(["UUP"]);
+    const etfs = book.getPositions().filter((p) => p.sleeveId === "riskoff" && !p.vertical);
+    expect(etfs).toHaveLength(1);
+    expect(etfs[0].symbol).toBe("UUP");
+  });
+
+  it("3. Both trail BIL → BIL or cash, not GLD/UUP", async () => {
+    const book = paperBook([etfPos("GLD", 100, 180)]);
+    const result = await runAutopilot({
+      enabled: true,
+      getPositions: book.getPositions,
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [],
+      featureRows: [],
+      scanReady: true,
+      riskOn: false,
+      riskoffEtfReturns: bothTrail,
+      riskoffEtfQuotes: etfQuotes({ GLD: 180, UUP: 28, BIL: 91 }),
+      place: book.place,
+      close: book.close,
+      log: () => {},
+    });
+    expect(result.sold.map((s) => s.symbol)).toEqual(["GLD"]);
+    expect(result.bought.map((b) => b.symbol)).toEqual(["BIL"]);
+    expect(book.getPositions().map((p) => p.symbol)).toEqual(["BIL"]);
+    expect(book.getPositions().some((p) => p.symbol === "GLD" || p.symbol === "UUP")).toBe(false);
+
+    const cashBook = paperBook([etfPos("GLD", 50, 180)]);
+    const cash = await runAutopilot({
+      enabled: true,
+      getPositions: cashBook.getPositions,
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [],
+      featureRows: [],
+      scanReady: true,
+      riskOn: false,
+      riskoffEtfReturns: bothTrail,
+      riskoffEtfQuotes: etfQuotes({ GLD: 180, UUP: 28 }),
+      place: cashBook.place,
+      close: cashBook.close,
+      log: () => {},
+    });
+    expect(cash.bought).toEqual([]);
+    expect(cash.sold.map((s) => s.symbol)).toEqual(["GLD"]);
+    expect(cashBook.getPositions()).toEqual([]);
+  });
+
+  it("4. RISK ON → ETF flattened; put-debit autopilot still present/unchanged", async () => {
+    const book = paperBook([etfPos("GLD", 100, 180)]);
+    const result = await runAutopilot({
+      enabled: true,
+      getPositions: book.getPositions,
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [],
+      featureRows: [],
+      scanReady: true,
+      riskOn: true,
+      riskoffQuotes: [
+        { symbol: "SPY", last: 500 },
+        { symbol: "QQQ", last: 400 },
+      ],
+      riskoffEtfReturns: gldWins,
+      riskoffEtfQuotes: etfQuotes({ GLD: 180, UUP: 28, BIL: 91 }),
+      place: book.place,
+      close: book.close,
+      placeVertical: async () => ({ ok: true }),
+      fetchExpiries: async () => [
+        { year: 2026, month: 10, day: 9, expiry: "2026-10-09", expiryType: "MONTHLY" },
+      ],
+      fetchChain: async () => putChainForAuto,
+      log: () => {},
+    });
+    expect(result.sold.map((s) => s.symbol)).toEqual(["GLD"]);
+    expect(result.bought.filter((b) => b.sleeveId === "riskoff")).toEqual([]);
+    expect(result.verticals).toEqual([]);
+    expect(book.getPositions()).toEqual([]);
+
+    const puts = decidePutVerticalIntents(
+      [
+        { symbol: "SPY", last: 500 },
+        { symbol: "QQQ", last: 400 },
+      ],
+      [],
+      defaultSleeves().riskoff,
+      false,
+    );
+    expect(puts.map((i) => i.symbol)).toEqual(["SPY", "QQQ"]);
+    expect(puts.every((i) => i.sleeveId === "riskoff")).toBe(true);
+    expect(
+      decidePutVerticalIntents(
+        [
+          { symbol: "SPY", last: 500 },
+          { symbol: "QQQ", last: 400 },
+        ],
+        [],
+        defaultSleeves().riskoff,
+        true,
+      ),
+    ).toEqual([]);
+  });
+
+  it("5. Missing bars → fail closed to cash", async () => {
+    const book = paperBook([etfPos("UUP", 200, 28)]);
+    const result = await runAutopilot({
+      enabled: true,
+      getPositions: book.getPositions,
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [],
+      featureRows: [],
+      scanReady: true,
+      riskOn: false,
+      riskoffEtfReturns: { GLD: null, UUP: 0.2, BIL: 0.01 },
+      riskoffEtfQuotes: etfQuotes({ GLD: 180, UUP: 28, BIL: 91 }),
+      place: book.place,
+      close: book.close,
+      log: () => {},
+    });
+    expect(result.bought).toEqual([]);
+    expect(result.sold.map((s) => s.symbol)).toEqual(["UUP"]);
+    expect(book.getPositions()).toEqual([]);
+    expect(pickRiskoffEtfWinner({ GLD: null, UUP: 0.2, BIL: 0.01 })).toBeNull();
+  });
+
+  it("6. Size stays modest (well under $100k) and hold does not churn", async () => {
+    const qty = sizeRiskoffEtfShares(180);
+    const book = paperBook([etfPos("GLD", qty, 180)]);
+    const result = await runAutopilot({
+      enabled: true,
+      getPositions: book.getPositions,
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [],
+      featureRows: [],
+      scanReady: true,
+      riskOn: false,
+      riskoffEtfReturns: gldWins,
+      riskoffEtfQuotes: etfQuotes({ GLD: 180, UUP: 28, BIL: 91 }),
+      place: book.place,
+      close: book.close,
+      log: () => {},
+    });
+    expect(result.bought).toEqual([]);
+    expect(result.sold).toEqual([]);
+    expect(book.getPositions()).toHaveLength(1);
+    expect(qty * 180).toBeLessThan(DEFAULT_SLEEVE_EQUITY_USD);
+    const decided = decideRiskoffEtf({
+      riskOn: false,
+      positions: book.getPositions(),
+      sleeve: defaultSleeves().riskoff,
+      returns: gldWins,
+      quotes: etfQuotes({ GLD: 180, UUP: 28, BIL: 91 }),
+    });
+    expect(decided.buy).toBeNull();
+    expect(decided.winner).toBe("GLD");
   });
 });

@@ -12,7 +12,12 @@ import type {
   SleeveId,
   WorkingOrder,
 } from "../../shared/types";
-import { DEFAULT_SLEEVE_EQUITY_USD, SLEEVE_IDS, TZ } from "../../shared/constants";
+import {
+  DEFAULT_SLEEVE_EQUITY_USD,
+  RISKOFF_ETF_SYMBOLS,
+  SLEEVE_IDS,
+  TZ,
+} from "../../shared/constants";
 import { mapTicker } from "./quotes";
 import { isOverlayPosition } from "./overlay";
 import { isVerticalPosition } from "./vertical";
@@ -165,10 +170,20 @@ export function validatePaperOrder(
     };
   }
   if (input.sleeveId === "riskoff") {
-    return {
-      ok: false,
-      error: "riskoff sleeve: paper put debit verticals only (POST /api/paper/vertical); no stock legs",
-    };
+    const etf = input.symbol.trim().toUpperCase();
+    if (!(RISKOFF_ETF_SYMBOLS as readonly string[]).includes(etf)) {
+      return {
+        ok: false,
+        error:
+          "riskoff sleeve: put debit verticals (POST /api/paper/vertical) or GLD/UUP/BIL ETF long only",
+      };
+    }
+    if (input.side !== "Buy") {
+      return {
+        ok: false,
+        error: "riskoff ETF: long only (close via POST /api/paper/close)",
+      };
+    }
   }
 
   return {

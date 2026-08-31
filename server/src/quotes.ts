@@ -6,7 +6,7 @@ export const DEFAULT_SYMBOLS: Record<SleeveId, string[]> = {
   momentum: ["MES=F", "ES=F", "SPY", "QQQ", "TLT"],
   options: ["SPY", "QQQ", "IWM"],
   ownership: ["SPY", "QQQ", "TLT", "IWM"],
-  riskoff: ["SPY", "QQQ"],
+  riskoff: ["SPY", "QQQ", "GLD", "UUP", "BIL"],
 };
 
 /** Exact root → Yahoo futures ticker. Longer keys are not prefixes of shorter ones here. */
