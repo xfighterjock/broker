@@ -83,6 +83,7 @@ import {
   fetchOptionExpiries,
   findLeg,
   parseYmd,
+  renewAccessToken,
 } from "./etrade";
 import { ensureRisk, kickRisk } from "./risk";
 import { fetchRiskoffEtfReturns } from "./riskoffEtf";
@@ -1699,6 +1700,15 @@ export function buildApp(deps: AppDeps): express.Express {
       return;
     }
     res.json(got.data);
+  });
+
+  app.post("/api/etrade/renew", async (_req, res) => {
+    const got = await renewAccessToken();
+    if (!got.ok) {
+      res.status(got.status || 502).json({ ok: false, error: got.error });
+      return;
+    }
+    res.json({ ok: true });
   });
 
   app.post("/api/paper/vertical", async (req, res) => {

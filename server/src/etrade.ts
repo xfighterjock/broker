@@ -1,6 +1,7 @@
 import { createHmac, randomBytes } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { etParts } from "../../shared/clock";
 import {
   ETRADE_PROD_BASE,
   ETRADE_SANDBOX_BASE,
@@ -17,6 +18,16 @@ import sandboxOptionChainJson from "./sandbox-optionchain.json" with { type: "js
 
 export const ETRADE_FETCH_TIMEOUT_MS = 12_000;
 export const ETRADE_CACHE_MS = 45_000;
+/** Idle access tokens drop after ~2h. Renew this often during the cash session. */
+export const ETRADE_ACCESS_TOKEN_RENEW_MS = 30 * 60 * 1000;
+/** First keep-alive tick after listen — not a long wait. */
+export const ETRADE_ACCESS_TOKEN_RENEW_FIRST_DELAY_MS = 0;
+/** Mon–Fri cash session start in America/New_York minutes from midnight (09:30). */
+export const ETRADE_CASH_SESSION_START_MINUTES = 9 * 60 + 30;
+/** Inclusive cash session end in America/New_York minutes from midnight (16:00). */
+export const ETRADE_CASH_SESSION_END_MINUTES = 16 * 60;
+
+const ET_WEEKDAYS = new Set(["Mon", "Tue", "Wed", "Thu", "Fri"]);
 
 export type EtradeEnvName = "sandbox" | "production";
 
@@ -92,19 +103,51 @@ export function loadEnvFile(filePath: string, env: NodeJS.ProcessEnv = process.e
   }
 }
 
+export function etradeEnvFileCandidates(cwd = process.cwd()): string[] {
+  return [path.resolve(cwd, ".env.etrade"), path.resolve(cwd, "..", ".env.etrade")];
+}
+
+export function findEtradeEnvFile(cwd = process.cwd()): string | null {
+  for (const f of etradeEnvFileCandidates(cwd)) {
+    if (existsSync(f)) return f;
+  }
+  return null;
+}
+
 export function maybeLoadEtradeDotenv(env: NodeJS.ProcessEnv = process.env): void {
   if ((env.NODE_ENV || "").toLowerCase() === "test") return;
-  const cwd = process.cwd();
-  const candidates = [
-    path.resolve(cwd, ".env.etrade"),
-    path.resolve(cwd, "..", ".env.etrade"),
-  ];
-  for (const f of candidates) {
-    if (existsSync(f)) {
-      loadEnvFile(f, env);
-      return;
+  const f = findEtradeEnvFile();
+  if (f) loadEnvFile(f, env);
+}
+
+/** Upsert KEY=VALUE lines. chmod 600. Never logs values. */
+export function upsertEnvFile(filePath: string, updates: Record<string, string>): void {
+  const orig = existsSync(filePath) ? readFileSync(filePath, "utf8") : "";
+  const seen = new Set<string>();
+  const lines = orig.split("\n");
+  const out = lines.map((line) => {
+    const t = line.trim();
+    if (!t || t.startsWith("#") || !t.includes("=")) return line;
+    const k = t.slice(0, t.indexOf("="));
+    if (k in updates) {
+      seen.add(k);
+      return `${k}=${updates[k]}`;
     }
+    return line;
+  });
+  for (const [k, v] of Object.entries(updates)) {
+    if (!seen.has(k)) out.push(`${k}=${v}`);
   }
+  let text = out.join("\n");
+  if (!text.endsWith("\n")) text += "\n";
+  writeFileSync(filePath, text, { mode: 0o600 });
+  chmodSync(filePath, 0o600);
+}
+
+export function etradeAccessEnvKeys(name: EtradeEnvName): { token: string; secret: string } {
+  return name === "sandbox"
+    ? { token: "ETRADE_SANDBOX_ACCESS_TOKEN", secret: "ETRADE_SANDBOX_ACCESS_SECRET" }
+    : { token: "ETRADE_PROD_ACCESS_TOKEN", secret: "ETRADE_PROD_ACCESS_SECRET" };
 }
 
 export function etradeEnvName(env: NodeJS.ProcessEnv = process.env): EtradeEnvName {
@@ -155,6 +198,205 @@ export function loadEtradeCreds(env: NodeJS.ProcessEnv = process.env): EtradeCre
     accessToken,
     accessSecret,
   };
+}
+
+export type EtradeRenewOk = { ok: true; rotated: boolean };
+export type EtradeRenewErr = {
+  ok: false;
+  error: string;
+  status: number;
+  /** Missing creds: timer should stay quiet. */
+  silent?: boolean;
+};
+export type EtradeRenewResult = EtradeRenewOk | EtradeRenewErr;
+
+export type EtradeFetchFn = (
+  input: string,
+  init?: RequestInit,
+) => Promise<{ ok: boolean; status: number; text: () => Promise<string> }>;
+
+export type RenewAccessTokenOpts = {
+  env?: NodeJS.ProcessEnv;
+  envFile?: string;
+  fetch?: EtradeFetchFn;
+  log?: (msg: string) => void;
+};
+
+function parseOAuthQs(body: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const part of String(body).trim().split("&")) {
+    if (!part.includes("=")) continue;
+    const i = part.indexOf("=");
+    try {
+      out[decodeURIComponent(part.slice(0, i))] = decodeURIComponent(part.slice(i + 1));
+    } catch {
+      /* skip malformed pair */
+    }
+  }
+  return out;
+}
+
+function credsMissingKind(err: string): "missing credentials" | "missing access token" | null {
+  if (/access tokens missing/i.test(err)) return "missing access token";
+  if (/credentials missing/i.test(err)) return "missing credentials";
+  return null;
+}
+
+function applyAccessTokensToEnv(
+  env: NodeJS.ProcessEnv,
+  name: EtradeEnvName,
+  token: string,
+  secret: string,
+): Record<string, string> {
+  const keys = etradeAccessEnvKeys(name);
+  const updates: Record<string, string> = {
+    [keys.token]: token,
+    [keys.secret]: secret,
+  };
+  env[keys.token] = token;
+  env[keys.secret] = secret;
+  if (name === "production") {
+    if (env.ETRADE_ACCESS_TOKEN !== undefined) env.ETRADE_ACCESS_TOKEN = token;
+    if (env.ETRADE_ACCESS_SECRET !== undefined) env.ETRADE_ACCESS_SECRET = secret;
+  }
+  return updates;
+}
+
+/**
+ * GET {base}/oauth/renew_access_token signed OAuth 1.0a with the current access token.
+ * Quotes/chains keep-alive only. Midnight ET still needs a human PIN (CLI request + access);
+ * this only resets idle expiry.
+ */
+export async function renewAccessToken(
+  opts: RenewAccessTokenOpts = {},
+): Promise<EtradeRenewResult> {
+  const env = opts.env ?? process.env;
+  const log = opts.log ?? ((msg: string) => console.log(msg));
+  const fetchFn = opts.fetch ?? globalThis.fetch.bind(globalThis);
+
+  try {
+    const creds = loadEtradeCreds(env);
+    if ("error" in creds) {
+      const kind = credsMissingKind(creds.error);
+      return {
+        ok: false,
+        error: kind ?? "missing credentials",
+        status: creds.status,
+        silent: true,
+      };
+    }
+
+    const url = `${creds.baseUrl}/oauth/renew_access_token`;
+    const signed = signEtradeGet(url, {}, creds);
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), ETRADE_FETCH_TIMEOUT_MS);
+    let status = 0;
+    let text = "";
+    try {
+      const res = await fetchFn(signed.href, {
+        method: "GET",
+        headers: { Authorization: signed.authorization },
+        signal: ac.signal,
+      });
+      status = res.status;
+      text = await res.text();
+      if (!res.ok) {
+        const error = `HTTP ${status}`;
+        log(`[EventGate] etrade renew failed: ${error}`);
+        return { ok: false, error, status };
+      }
+    } catch {
+      log("[EventGate] etrade renew failed: unreachable");
+      return { ok: false, error: "unreachable", status: 502 };
+    } finally {
+      clearTimeout(timer);
+    }
+
+    const parsed = parseOAuthQs(text);
+    const newToken = parsed.oauth_token?.trim() ?? "";
+    const newSecret = parsed.oauth_token_secret?.trim() ?? "";
+    if (newToken && newSecret) {
+      const updates = applyAccessTokensToEnv(env, creds.env, newToken, newSecret);
+      const envFile = opts.envFile ?? findEtradeEnvFile();
+      if (envFile) {
+        try {
+          upsertEnvFile(envFile, updates);
+        } catch {
+          log("[EventGate] etrade renew failed: could not write env file");
+        }
+      }
+    }
+
+    log("[EventGate] etrade access token renewed");
+    return { ok: true, rotated: Boolean(newToken && newSecret) };
+  } catch {
+    log("[EventGate] etrade renew failed");
+    return { ok: false, error: "etrade renew failed", status: 502 };
+  }
+}
+
+export function etradeKeepAliveEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env.NODE_ENV || "").toLowerCase() !== "test";
+}
+
+/** Weekdays during the cash session in America/New_York. Nights and weekends skip. */
+export function isEtradeCashSession(now: Date = new Date()): boolean {
+  const p = etParts(now);
+  if (!ET_WEEKDAYS.has(p.weekday)) return false;
+  const minutes = p.hour * 60 + p.minute;
+  return (
+    minutes >= ETRADE_CASH_SESSION_START_MINUTES && minutes <= ETRADE_CASH_SESSION_END_MINUTES
+  );
+}
+
+export type EtradeKeepAliveOpts = {
+  env?: NodeJS.ProcessEnv;
+  now?: () => Date;
+  renew?: (opts?: RenewAccessTokenOpts) => Promise<EtradeRenewResult>;
+  log?: (msg: string) => void;
+};
+
+let keepAliveInterval: ReturnType<typeof setInterval> | null = null;
+let keepAliveFirst: ReturnType<typeof setTimeout> | null = null;
+
+export function stopEtradeAccessTokenKeepAlive(): void {
+  if (keepAliveFirst) {
+    clearTimeout(keepAliveFirst);
+    keepAliveFirst = null;
+  }
+  if (keepAliveInterval) {
+    clearInterval(keepAliveInterval);
+    keepAliveInterval = null;
+  }
+}
+
+/**
+ * In-process access-token keep-alive. Starts from the listen callback.
+ * Skips NODE_ENV=test, nights, and weekends. Midnight ET still needs a PIN.
+ */
+export function startEtradeAccessTokenKeepAlive(opts: EtradeKeepAliveOpts = {}): () => void {
+  stopEtradeAccessTokenKeepAlive();
+  const env = opts.env ?? process.env;
+  if (!etradeKeepAliveEnabled(env)) return stopEtradeAccessTokenKeepAlive;
+
+  const log = opts.log ?? ((msg: string) => console.log(msg));
+  const nowFn = opts.now ?? (() => new Date());
+  const renew = opts.renew ?? renewAccessToken;
+
+  const tick = (): void => {
+    if (!isEtradeCashSession(nowFn())) return;
+    void renew({ env, log })
+      .then((got) => {
+        if (!got.ok && got.silent) return;
+      })
+      .catch(() => {
+        /* never crash the process */
+      });
+  };
+
+  keepAliveFirst = setTimeout(tick, ETRADE_ACCESS_TOKEN_RENEW_FIRST_DELAY_MS);
+  keepAliveInterval = setInterval(tick, ETRADE_ACCESS_TOKEN_RENEW_MS);
+  return stopEtradeAccessTokenKeepAlive;
 }
 
 export function isOptionsV1Symbol(raw: string): boolean {

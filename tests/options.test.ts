@@ -514,9 +514,12 @@ describe("options source never places broker orders", () => {
     const src = readFileSync(resolve("server/src/etrade.ts"), "utf8");
     expect(src).not.toMatch(/\/v1\/order/);
     expect(src).not.toMatch(/placeOrder/i);
+    expect(src).not.toMatch(/previewOrder/i);
+    expect(src).not.toMatch(/\/v1\/accounts/);
     expect(src).not.toMatch(/request_token/i);
     expect(src).toMatch(/optionchains/);
     expect(src).toMatch(/optionexpiredate/);
+    expect(src).toMatch(/renew_access_token/);
     const app = readFileSync(resolve("server/src/app.ts"), "utf8");
     expect(app).toMatch(/\/api\/paper\/vertical/);
     expect(app).toMatch(/\/api\/paper\/csp/);
@@ -547,6 +550,8 @@ describe("options source never places broker orders", () => {
     expect(script).not.toMatch(/placeOrder/i);
     const src = readFileSync(resolve("server/src/etrade.ts"), "utf8");
     expect(src).not.toMatch(/request_token/i);
+    expect(src).not.toMatch(/previewOrder/i);
+    expect(src).not.toMatch(/\/v1\/accounts/);
   });
 });
 

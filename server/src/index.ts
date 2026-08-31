@@ -14,6 +14,7 @@ import { MockBroker } from "./mockBroker";
 import { connectRedis } from "./redis";
 import { createTradovateFromEnv } from "./tradovateBroker";
 import { attachScanRedis, kickScan } from "./scan";
+import { startEtradeAccessTokenKeepAlive, stopEtradeAccessTokenKeepAlive } from "./etrade";
 import { StatusHub } from "./wsHub";
 
 async function main(): Promise<void> {
@@ -209,11 +210,13 @@ async function main(): Promise<void> {
     console.log(`[EventGate] listening on ${cfg.bind}:${cfg.port}`);
     console.log(`[EventGate] trading mode ${cfg.tradingMode}`);
     console.log(`[EventGate] GATE_PASSWORD ${authRequired() ? "set" : "UNSET"}`);
+    startEtradeAccessTokenKeepAlive();
   });
 
   const shutdown = async () => {
     clearInterval(enableWatch);
     if (tickHandle) clearInterval(tickHandle);
+    stopEtradeAccessTokenKeepAlive();
     stopAutoPaperLoop();
     server.close();
     if (pool) await pool.end();
