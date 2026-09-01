@@ -23,6 +23,7 @@ import {
   riskBadgeTitle,
   SLEEVE_TAB_LABELS as TAB_LABELS,
 } from "./essentials";
+import { EtradePinBar } from "./EtradePin";
 import { MobileEssentials, useEssentialsView } from "./MobileEssentials";
 import { PaperBanner, PaperTradeRow, type PaperPrefill } from "./PaperTrade";
 import { OptionsPanel } from "./OptionsPanel";
@@ -485,6 +486,15 @@ export default function App() {
         onToggleGate={() => post("/api/gate/enable", { enabled: !state.gateEnabled })}
         onToggleAutoPaper={() => post("/api/paper/auto", { enabled: state.autoPaper === false })}
         onFlatten={() => post("/api/flatten")}
+        pin={
+          <EtradePinBar
+            auth={state.etradeAuth}
+            variant="essentials"
+            onRefresh={refresh}
+            setAuthNeeded={setAuthNeeded}
+            setErr={setErr}
+          />
+        }
       />
     );
   }
@@ -532,6 +542,13 @@ export default function App() {
         >
           {state.riskOn ? "RISK ON" : "RISK OFF"}
         </span>
+        <EtradePinBar
+          auth={state.etradeAuth}
+          variant="header"
+          onRefresh={refresh}
+          setAuthNeeded={setAuthNeeded}
+          setErr={setErr}
+        />
       </header>
 
       <nav className="tabs">

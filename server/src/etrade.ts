@@ -1,5 +1,5 @@
 import { createHmac, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { etParts } from "../../shared/clock";
 import {
@@ -8,6 +8,7 @@ import {
   OPTIONS_V1_SYMBOLS,
 } from "../../shared/constants";
 import type {
+  EtradeAuthState,
   OptionChainSnapshot,
   OptionExpiry,
   OptionExpiriesResponse,
@@ -16,6 +17,7 @@ import type {
 } from "../../shared/types";
 import sandboxOptionChainJson from "./sandbox-optionchain.json" with { type: "json" };
 
+export const ETRADE_AUTHORIZE_URL = "https://us.etrade.com/e/t/etws/authorize";
 export const ETRADE_FETCH_TIMEOUT_MS = 12_000;
 export const ETRADE_CACHE_MS = 45_000;
 /** Idle access tokens drop after ~2h. Renew this often during the cash session. */
@@ -45,10 +47,13 @@ export type EtradeCredsErr = { error: string; status: number };
 type CacheEntry<T> = { at: number; value: T };
 const expiryCache = new Map<string, CacheEntry<OptionExpiriesResponse>>();
 const chainCache = new Map<string, CacheEntry<OptionChainSnapshot>>();
+/** Last market/renew HTTP auth outcome. Snapshot reads this — never probes. */
+let lastHttpAuth: "ok" | "needs_pin" | null = null;
 
 export function resetEtradeCache(): void {
   expiryCache.clear();
   chainCache.clear();
+  lastHttpAuth = null;
 }
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -179,15 +184,13 @@ export function loadEtradeCreds(env: NodeJS.ProcessEnv = process.env): EtradeCre
   if (!consumerKey || !consumerSecret) {
     return {
       status: 503,
-      error:
-        "E*TRADE Market API credentials missing. Chain-only; PIN handshake is not implemented. Set sandbox key/secret.",
+      error: "E*TRADE Market API credentials missing. Chain-only. Set production key/secret.",
     };
   }
   if (!accessToken || !accessSecret) {
     return {
       status: 503,
-      error:
-        "E*TRADE access tokens missing. PIN handshake is not implemented. Market chain endpoints unavailable.",
+      error: "E*TRADE access tokens missing. Authorize with PIN from Event Gate. Market chain endpoints unavailable.",
     };
   }
   return {
@@ -262,9 +265,302 @@ function applyAccessTokensToEnv(
   return updates;
 }
 
+export type { EtradeAuthState } from "../../shared/types";
+
+type PendingRequestToken = {
+  envName: EtradeEnvName;
+  token: string;
+  secret: string;
+};
+
+let pendingRequest: PendingRequestToken | null = null;
+
+function noteEtradeHttpStatus(status: number): void {
+  if (status === 401) lastHttpAuth = "needs_pin";
+  else if (status >= 200 && status < 300) lastHttpAuth = "ok";
+}
+
+export function resetEtradePinHandshake(): void {
+  pendingRequest = null;
+  lastHttpAuth = null;
+}
+
+export function etradeOauthTmpPath(cwd = process.cwd()): string {
+  const envFile = findEtradeEnvFile(cwd);
+  if (envFile) return `${envFile}.oauth-tmp`;
+  return path.resolve(cwd, ".env.etrade.oauth-tmp");
+}
+
+function skipDefaultSecretFiles(env: NodeJS.ProcessEnv): boolean {
+  return (env.NODE_ENV || "").toLowerCase() === "test";
+}
+
+function productionConsumer(
+  env: NodeJS.ProcessEnv,
+): { consumerKey: string; consumerSecret: string; baseUrl: string } | EtradeCredsErr {
+  maybeLoadEtradeDotenv(env);
+  const consumerKey = env.ETRADE_PROD_KEY || env.ETRADE_KEY;
+  const consumerSecret = env.ETRADE_PROD_SECRET || env.ETRADE_SECRET;
+  if (!consumerKey || !consumerSecret) {
+    return {
+      status: 503,
+      error: "missing credentials",
+    };
+  }
+  return { consumerKey, consumerSecret, baseUrl: ETRADE_PROD_BASE };
+}
+
+function parsePendingFile(filePath: string): PendingRequestToken | null {
+  if (!existsSync(filePath)) return null;
+  let raw = "";
+  try {
+    raw = readFileSync(filePath, "utf8");
+  } catch {
+    return null;
+  }
+  const row: Record<string, string> = {};
+  for (const line of raw.split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t || t.startsWith("#") || !t.includes("=")) continue;
+    const i = t.indexOf("=");
+    row[t.slice(0, i)] = t.slice(i + 1);
+  }
+  const token = row.oauth_token?.trim() ?? "";
+  const secret = row.oauth_token_secret?.trim() ?? "";
+  if (!token || !secret) return null;
+  return { envName: "production", token, secret };
+}
+
+function loadPending(tmpFile: string | undefined): PendingRequestToken | null {
+  if (pendingRequest) return pendingRequest;
+  if (!tmpFile) return null;
+  return parsePendingFile(tmpFile);
+}
+
+function storePending(pending: PendingRequestToken, tmpFile: string | undefined): void {
+  pendingRequest = pending;
+  if (!tmpFile) return;
+  try {
+    writeFileSync(
+      tmpFile,
+      `env=${pending.envName}\noauth_token=${pending.token}\noauth_token_secret=${pending.secret}\n`,
+      { mode: 0o600 },
+    );
+    chmodSync(tmpFile, 0o600);
+  } catch {
+    /* in-memory still holds it */
+  }
+}
+
+function clearPending(tmpFile: string | undefined): void {
+  pendingRequest = null;
+  if (!tmpFile || !existsSync(tmpFile)) return;
+  try {
+    unlinkSync(tmpFile);
+  } catch {
+    /* ignore */
+  }
+}
+
+function resolvePinEnvFile(opts: { env?: NodeJS.ProcessEnv; envFile?: string }): string | undefined {
+  if (opts.envFile) return opts.envFile;
+  const env = opts.env ?? process.env;
+  if (skipDefaultSecretFiles(env)) return undefined;
+  return findEtradeEnvFile() ?? undefined;
+}
+
+function resolvePinTmpFile(opts: { env?: NodeJS.ProcessEnv; tmpFile?: string }): string | undefined {
+  if (opts.tmpFile) return opts.tmpFile;
+  const env = opts.env ?? process.env;
+  if (skipDefaultSecretFiles(env)) return undefined;
+  return etradeOauthTmpPath();
+}
+
+export function etradeAuthState(env: NodeJS.ProcessEnv = process.env): EtradeAuthState {
+  maybeLoadEtradeDotenv(env);
+  const creds = loadEtradeCreds(env);
+  if ("error" in creds) {
+    if (credsMissingKind(creds.error) === "missing access token") return "needs_pin";
+    return "error";
+  }
+  if (lastHttpAuth === "needs_pin") return "needs_pin";
+  return "ok";
+}
+
+export type EtradePinHandshakeOpts = {
+  env?: NodeJS.ProcessEnv;
+  envFile?: string;
+  tmpFile?: string;
+  fetch?: EtradeFetchFn;
+  log?: (msg: string) => void;
+};
+
+export type EtradePinStartOk = { ok: true; authorizeUrl: string };
+export type EtradePinStartErr = { ok: false; error: string; status: number };
+export type EtradePinStartResult = EtradePinStartOk | EtradePinStartErr;
+
+export type EtradePinCompleteOk = { ok: true };
+export type EtradePinCompleteErr = { ok: false; error: string; status: number };
+export type EtradePinCompleteResult = EtradePinCompleteOk | EtradePinCompleteErr;
+
+async function etradeOauthGet(
+  url: string,
+  extraOAuth: Record<string, string>,
+  creds: {
+    consumerKey: string;
+    consumerSecret: string;
+    token?: string;
+    tokenSecret?: string;
+  },
+  fetchFn: EtradeFetchFn,
+): Promise<{ ok: true; parsed: Record<string, string> } | { ok: false; status: number; error: string }> {
+  const signed = signEtradeOAuthGet(url, extraOAuth, creds);
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), ETRADE_FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetchFn(signed.href, {
+      method: "GET",
+      headers: { Authorization: signed.authorization },
+      signal: ac.signal,
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      return { ok: false, status: res.status, error: `HTTP ${res.status}` };
+    }
+    return { ok: true, parsed: parseOAuthQs(text) };
+  } catch {
+    return { ok: false, status: 502, error: "unreachable" };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * OAuth 1.0a request_token (production). Stores the request token in memory
+ * (and optional 600 tmp file). Returns the authorize URL for the client to open.
+ * Never logs the URL, consumer key, or request token.
+ */
+export async function startEtradePinHandshake(
+  opts: EtradePinHandshakeOpts = {},
+): Promise<EtradePinStartResult> {
+  const env = opts.env ?? process.env;
+  const log = opts.log ?? ((msg: string) => console.log(msg));
+  const fetchFn = opts.fetch ?? globalThis.fetch.bind(globalThis);
+  const tmpFile = resolvePinTmpFile({ env, tmpFile: opts.tmpFile });
+
+  try {
+    const consumer = productionConsumer(env);
+    if ("error" in consumer) {
+      log("[EventGate] etrade authorize failed: missing credentials");
+      return { ok: false, error: "missing credentials", status: consumer.status };
+    }
+
+    const url = `${consumer.baseUrl}/oauth/request_token`;
+    const got = await etradeOauthGet(
+      url,
+      { oauth_callback: "oob" },
+      { consumerKey: consumer.consumerKey, consumerSecret: consumer.consumerSecret },
+      fetchFn,
+    );
+    if (!got.ok) {
+      log(`[EventGate] etrade authorize failed: ${got.error}`);
+      return { ok: false, error: got.error, status: got.status };
+    }
+    const token = got.parsed.oauth_token?.trim() ?? "";
+    const secret = got.parsed.oauth_token_secret?.trim() ?? "";
+    if (!token || !secret) {
+      log("[EventGate] etrade authorize failed");
+      return { ok: false, error: "request token failed", status: 502 };
+    }
+    storePending({ envName: "production", token, secret }, tmpFile);
+    const authorizeUrl = `${ETRADE_AUTHORIZE_URL}?key=${encodeURIComponent(consumer.consumerKey)}&token=${encodeURIComponent(token)}`;
+    log("[EventGate] etrade authorize started");
+    return { ok: true, authorizeUrl };
+  } catch {
+    log("[EventGate] etrade authorize failed");
+    return { ok: false, error: "etrade authorize failed", status: 502 };
+  }
+}
+
+/**
+ * OAuth 1.0a access_token with the verifier PIN. Upserts .env.etrade (mode 600),
+ * updates process.env, deletes the pending request token. Never logs the PIN.
+ */
+export async function completeEtradePinHandshake(
+  pinRaw: string,
+  opts: EtradePinHandshakeOpts = {},
+): Promise<EtradePinCompleteResult> {
+  const env = opts.env ?? process.env;
+  const log = opts.log ?? ((msg: string) => console.log(msg));
+  const fetchFn = opts.fetch ?? globalThis.fetch.bind(globalThis);
+  const tmpFile = resolvePinTmpFile({ env, tmpFile: opts.tmpFile });
+  const envFile = resolvePinEnvFile({ env, envFile: opts.envFile });
+
+  const pin = String(pinRaw ?? "").trim();
+  if (!pin || pin.length > 32) {
+    return { ok: false, error: "PIN required", status: 400 };
+  }
+
+  const pending = loadPending(tmpFile);
+  if (!pending) {
+    log("[EventGate] etrade PIN exchange failed: no request token");
+    return { ok: false, error: "no request token", status: 400 };
+  }
+
+  try {
+    const consumer = productionConsumer(env);
+    if ("error" in consumer) {
+      log("[EventGate] etrade PIN exchange failed: missing credentials");
+      return { ok: false, error: "missing credentials", status: consumer.status };
+    }
+
+    const url = `${consumer.baseUrl}/oauth/access_token`;
+    const got = await etradeOauthGet(
+      url,
+      { oauth_verifier: pin },
+      {
+        consumerKey: consumer.consumerKey,
+        consumerSecret: consumer.consumerSecret,
+        token: pending.token,
+        tokenSecret: pending.secret,
+      },
+      fetchFn,
+    );
+    if (!got.ok) {
+      log(`[EventGate] etrade PIN exchange failed: ${got.error}`);
+      return { ok: false, error: got.error, status: got.status || 502 };
+    }
+    const token = got.parsed.oauth_token?.trim() ?? "";
+    const secret = got.parsed.oauth_token_secret?.trim() ?? "";
+    if (!token || !secret) {
+      log("[EventGate] etrade PIN exchange failed");
+      return { ok: false, error: "access token failed", status: 502 };
+    }
+
+    env.ETRADE_ENV = "production";
+    const updates = applyAccessTokensToEnv(env, "production", token, secret);
+    updates.ETRADE_ENV = "production";
+    if (envFile) {
+      try {
+        upsertEnvFile(envFile, updates);
+      } catch {
+        log("[EventGate] etrade PIN exchange failed: could not write env file");
+        return { ok: false, error: "could not write env file", status: 500 };
+      }
+    }
+    clearPending(tmpFile);
+    lastHttpAuth = "ok";
+    log("[EventGate] etrade access token stored");
+    return { ok: true };
+  } catch {
+    log("[EventGate] etrade PIN exchange failed");
+    return { ok: false, error: "etrade PIN exchange failed", status: 502 };
+  }
+}
+
 /**
  * GET {base}/oauth/renew_access_token signed OAuth 1.0a with the current access token.
- * Quotes/chains keep-alive only. Midnight ET still needs a human PIN (CLI request + access);
+ * Quotes/chains keep-alive only. Midnight ET still needs a human PIN (dashboard or CLI);
  * this only resets idle expiry.
  */
 export async function renewAccessToken(
@@ -302,6 +598,7 @@ export async function renewAccessToken(
       text = await res.text();
       if (!res.ok) {
         const error = `HTTP ${status}`;
+        noteEtradeHttpStatus(status);
         log(`[EventGate] etrade renew failed: ${error}`);
         return { ok: false, error, status };
       }
@@ -327,6 +624,7 @@ export async function renewAccessToken(
       }
     }
 
+    noteEtradeHttpStatus(200);
     log("[EventGate] etrade access token renewed");
     return { ok: true, rotated: Boolean(newToken && newSecret) };
   } catch {
@@ -429,23 +727,31 @@ function oauthHeader(
   method: string,
   url: string,
   query: Record<string, string>,
-  creds: EtradeCreds,
+  creds: {
+    consumerKey: string;
+    consumerSecret: string;
+    accessToken?: string;
+    accessSecret?: string;
+  },
+  extraOAuth: Record<string, string> = {},
 ): string {
   const oauth: Record<string, string> = {
     oauth_consumer_key: creds.consumerKey,
     oauth_nonce: randomBytes(16).toString("hex"),
     oauth_signature_method: "HMAC-SHA1",
     oauth_timestamp: String(Math.floor(Date.now() / 1000)),
-    oauth_token: creds.accessToken,
     oauth_version: "1.0",
+    ...extraOAuth,
   };
+  const token = creds.accessToken?.trim() ?? "";
+  if (token) oauth.oauth_token = token;
   const params: Record<string, string> = { ...query, ...oauth };
   const encoded = Object.keys(params)
     .sort()
     .map((k) => `${percentEncode(k)}=${percentEncode(params[k])}`)
     .join("&");
   const base = `${method.toUpperCase()}&${percentEncode(url)}&${percentEncode(encoded)}`;
-  const key = `${percentEncode(creds.consumerSecret)}&${percentEncode(creds.accessSecret)}`;
+  const key = `${percentEncode(creds.consumerSecret)}&${percentEncode(creds.accessSecret ?? "")}`;
   const signature = createHmac("sha1", key).update(base).digest("base64");
   oauth.oauth_signature = signature;
   return (
@@ -470,6 +776,32 @@ export function signEtradeGet(
   return { authorization, href: q ? `${url}?${q}` : url };
 }
 
+/** Token endpoints (request/access/renew). extraOAuth is signed into the header, not the query string. */
+export function signEtradeOAuthGet(
+  url: string,
+  extraOAuth: Record<string, string>,
+  creds: {
+    consumerKey: string;
+    consumerSecret: string;
+    token?: string;
+    tokenSecret?: string;
+  },
+): { authorization: string; href: string } {
+  const authorization = oauthHeader(
+    "GET",
+    url,
+    {},
+    {
+      consumerKey: creds.consumerKey,
+      consumerSecret: creds.consumerSecret,
+      accessToken: creds.token,
+      accessSecret: creds.tokenSecret,
+    },
+    extraOAuth,
+  );
+  return { authorization, href: url };
+}
+
 async function etradeGetJson(
   relPath: string,
   query: Record<string, string>,
@@ -490,6 +822,7 @@ async function etradeGetJson(
     });
     const text = await res.text();
     if (!res.ok) {
+      noteEtradeHttpStatus(res.status);
       return {
         ok: false,
         status: res.status === 401 || res.status === 403 ? 503 : 502,
@@ -497,7 +830,9 @@ async function etradeGetJson(
       };
     }
     try {
-      return { ok: true, body: JSON.parse(text) as unknown };
+      const body = JSON.parse(text) as unknown;
+      noteEtradeHttpStatus(res.status);
+      return { ok: true, body };
     } catch {
       return { ok: false, status: 502, error: "E*TRADE Market API returned non-JSON" };
     }

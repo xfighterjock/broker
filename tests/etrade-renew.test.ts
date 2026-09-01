@@ -279,6 +279,7 @@ describe("etrade.ts stays chain-only with in-process renew", () => {
   it("never references order, preview, placeOrder, or accounts endpoints", () => {
     const src = readFileSync(resolve("server/src/etrade.ts"), "utf8");
     expect(src).toMatch(/renew_access_token/);
+    expect(src).toMatch(/request_token/);
     expect(src).not.toMatch(/\/v1\/order/);
     expect(src).not.toMatch(/placeOrder/i);
     expect(src).not.toMatch(/previewOrder/i);

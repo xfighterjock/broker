@@ -61,6 +61,7 @@ function snapshot(over: Partial<StatusSnapshot> = {}): StatusSnapshot {
     qtyCap: 1,
     gatedRoots: ["MES"],
     authRequired: false,
+    etradeAuth: "ok",
     broker: {
       name: "MockBroker",
       mode: "mock",
@@ -222,5 +223,27 @@ describe("MobileEssentials", () => {
       btn.click();
     });
     expect(onFlatten).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows Authorize + PIN when etradeAuth is needs_pin", () => {
+    const node = render(
+      <MobileEssentials
+        state={snapshot({ etradeAuth: "needs_pin" })}
+        onToggleGate={() => {}}
+        onToggleAutoPaper={() => {}}
+        onFlatten={() => {}}
+        pin={
+          <div className="etrade-pin etrade-pin-essentials" data-etrade-auth="needs_pin">
+            <span className="badge">E*TRADE needs PIN</span>
+            <button type="button">Authorize</button>
+            <input aria-label="E*TRADE PIN" />
+          </div>
+        }
+      />,
+    );
+    expect(node.textContent).toMatch(/E\*TRADE needs PIN/);
+    expect(node.textContent).toMatch(/Authorize/);
+    expect(node.querySelector("[aria-label=\"E*TRADE PIN\"]")).toBeTruthy();
+    expect(node.querySelector("[data-etrade-auth=needs_pin]")).toBeTruthy();
   });
 });

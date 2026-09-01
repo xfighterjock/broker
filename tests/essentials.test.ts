@@ -69,6 +69,7 @@ function snapshot(over: Partial<StatusSnapshot> = {}): StatusSnapshot {
     qtyCap: 1,
     gatedRoots: ["MES"],
     authRequired: false,
+    etradeAuth: "ok",
     broker: {
       name: "MockBroker",
       mode: "mock",

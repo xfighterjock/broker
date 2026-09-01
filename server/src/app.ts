@@ -79,11 +79,14 @@ import {
   type SessionMark,
 } from "./paper";
 import {
+  completeEtradePinHandshake,
+  etradeAuthState,
   fetchOptionChain,
   fetchOptionExpiries,
   findLeg,
   parseYmd,
   renewAccessToken,
+  startEtradePinHandshake,
 } from "./etrade";
 import { ensureRisk, kickRisk } from "./risk";
 import { fetchRiskoffEtfReturns } from "./riskoffEtf";
@@ -1254,6 +1257,7 @@ export function buildApp(deps: AppDeps): express.Express {
       qtyCap: MAX_QTY,
       gatedRoots: GATED_ROOTS,
       authRequired: authRequired(),
+      etradeAuth: etradeAuthState(),
       broker: {
         name: deps.brokerName,
         mode: deps.brokerMode,
@@ -1708,6 +1712,26 @@ export function buildApp(deps: AppDeps): express.Express {
       res.status(got.status || 502).json({ ok: false, error: got.error });
       return;
     }
+    res.json({ ok: true });
+  });
+
+  app.post("/api/etrade/oauth/start", async (_req, res) => {
+    const got = await startEtradePinHandshake();
+    if (!got.ok) {
+      res.status(got.status || 502).json({ ok: false, error: got.error });
+      return;
+    }
+    res.json({ ok: true, authorizeUrl: got.authorizeUrl });
+  });
+
+  app.post("/api/etrade/oauth/pin", async (req, res) => {
+    const pin = typeof req.body?.pin === "string" ? req.body.pin : "";
+    const got = await completeEtradePinHandshake(pin);
+    if (!got.ok) {
+      res.status(got.status || 502).json({ ok: false, error: got.error });
+      return;
+    }
+    await publishStatus();
     res.json({ ok: true });
   });
 

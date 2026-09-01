@@ -409,6 +409,8 @@ export interface SleeveBook {
   dailyPnlUsd: number;
 }
 
+export type EtradeAuthState = "ok" | "needs_pin" | "error";
+
 export interface StatusSnapshot {
   trader: string;
   tz: string;
@@ -424,6 +426,8 @@ export interface StatusSnapshot {
   qtyCap: number;
   gatedRoots: readonly string[];
   authRequired: boolean;
+  /** Quotes/chains OAuth. Never includes tokens, PIN, or authorize URLs. */
+  etradeAuth: EtradeAuthState;
   broker: BrokerSnapshot;
   sleeves: Record<SleeveId, SleeveCard>;
   activeSleeve: SleeveId;

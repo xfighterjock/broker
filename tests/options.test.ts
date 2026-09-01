@@ -510,13 +510,13 @@ describe("HTTP options chain + paper vertical (mocked E*TRADE)", () => {
 });
 
 describe("options source never places broker orders", () => {
-  it("etrade.ts is chain-only (no order paths, no PIN handshake)", () => {
+  it("etrade.ts is chain-only (no order paths; PIN handshake is oauth only)", () => {
     const src = readFileSync(resolve("server/src/etrade.ts"), "utf8");
     expect(src).not.toMatch(/\/v1\/order/);
     expect(src).not.toMatch(/placeOrder/i);
     expect(src).not.toMatch(/previewOrder/i);
     expect(src).not.toMatch(/\/v1\/accounts/);
-    expect(src).not.toMatch(/request_token/i);
+    expect(src).toMatch(/request_token/i);
     expect(src).toMatch(/optionchains/);
     expect(src).toMatch(/optionexpiredate/);
     expect(src).toMatch(/renew_access_token/);
@@ -541,7 +541,7 @@ describe("options source never places broker orders", () => {
     expect(massiveBlock).not.toMatch(/fetchOptionExpiries/);
   });
 
-  it("OAuth PIN flow lives in scripts/etrade-oauth.mjs, not etrade.ts", () => {
+  it("OAuth PIN flow lives in etrade.ts; CLI remains for emergency use", () => {
     const script = readFileSync(resolve("scripts/etrade-oauth.mjs"), "utf8");
     expect(script).toMatch(/request_token/);
     expect(script).toMatch(/us\.etrade\.com\/e\/t\/etws\/authorize/);
@@ -549,9 +549,13 @@ describe("options source never places broker orders", () => {
     expect(script).not.toMatch(/\/v1\/order/);
     expect(script).not.toMatch(/placeOrder/i);
     const src = readFileSync(resolve("server/src/etrade.ts"), "utf8");
-    expect(src).not.toMatch(/request_token/i);
+    expect(src).toMatch(/request_token/i);
+    expect(src).toMatch(/us\.etrade\.com\/e\/t\/etws\/authorize/);
     expect(src).not.toMatch(/previewOrder/i);
     expect(src).not.toMatch(/\/v1\/accounts/);
+    const app = readFileSync(resolve("server/src/app.ts"), "utf8");
+    expect(app).toMatch(/\/api\/etrade\/oauth\/start/);
+    expect(app).toMatch(/\/api\/etrade\/oauth\/pin/);
   });
 });
 

@@ -587,3 +587,59 @@ tr.active-row { background: #1a2430; }
 }
 .essentials-err { padding: 8px 16px; }
 
+.etrade-pin {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.etrade-pin-header {
+  padding: 0;
+}
+.etrade-pin-badge {
+  color: var(--amber);
+  background: var(--warn-bg);
+  border-color: #6a4a12;
+}
+.etrade-pin-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.etrade-pin-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+.etrade-pin-label-text {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.etrade-pin-label input {
+  width: 7.5rem;
+  padding: 4px 8px;
+}
+.etrade-pin-essentials {
+  padding: 12px 16px;
+  border-bottom: 1px solid #6a4a12;
+  background: var(--warn-bg);
+  gap: 10px;
+}
+.etrade-pin-essentials .etrade-pin-badge {
+  font-size: 14px;
+  padding: 6px 10px;
+}
+.etrade-pin-essentials .etrade-pin-auth,
+.etrade-pin-essentials .etrade-pin-form button,
+.etrade-pin-essentials .etrade-pin-label input {
+  min-height: 44px;
+  font-size: 16px;
+}
+.etrade-pin-essentials .etrade-pin-label input {
+  width: 8.5rem;
+}
+

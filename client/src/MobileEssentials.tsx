@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { StatusSnapshot } from "../../shared/types";
 import {
   ESSENTIALS_MEDIA_QUERY,
@@ -42,12 +42,14 @@ export function MobileEssentials({
   onToggleGate,
   onToggleAutoPaper,
   onFlatten,
+  pin,
 }: {
   state: StatusSnapshot;
   err?: string | null;
   onToggleGate: () => void;
   onToggleAutoPaper: () => void;
   onFlatten: () => void;
+  pin?: ReactNode;
 }) {
   const clock = state.clock;
   const mode = clock?.mode ?? "idle";
@@ -66,6 +68,8 @@ export function MobileEssentials({
         <div className="sim">PAPER · MOCK</div>
         <div className="essentials-clock">{clock?.nowEt ?? "—"}</div>
       </header>
+
+      {pin}
 
       <section className="essentials-summary" aria-label="session">
         <div className="essentials-summary-row">
