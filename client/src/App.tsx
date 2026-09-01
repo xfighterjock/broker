@@ -16,24 +16,17 @@ import {
   type StatusSnapshot,
 } from "../../shared/types";
 import { api } from "./api";
+import {
+  formatPnlPct,
+  formatPnlUsd,
+  gateModeClass as modeClass,
+  riskBadgeTitle,
+  SLEEVE_TAB_LABELS as TAB_LABELS,
+} from "./essentials";
+import { MobileEssentials, useEssentialsView } from "./MobileEssentials";
 import { PaperBanner, PaperTradeRow, type PaperPrefill } from "./PaperTrade";
 import { OptionsPanel } from "./OptionsPanel";
 import { ScanPanel } from "./ScanPanel";
-
-const TAB_LABELS: { id: SleeveId; label: string }[] = [
-  { id: "day", label: "Day" },
-  { id: "momentum", label: "Momentum" },
-  { id: "options", label: "Options" },
-  { id: "ownership", label: "Ownership" },
-  { id: "riskoff", label: "Risk-off" },
-];
-
-function modeClass(mode: string): string {
-  if (mode === "PRE-ARM") return "pre";
-  if (mode === "NO-STOP BAND") return "band";
-  if (mode === "SESSION FLATTEN") return "flat";
-  return "idle";
-}
 
 function formatEventEt(iso: string): string {
   return new Date(iso).toLocaleString("en-US", {
@@ -79,22 +72,6 @@ function formatAsOf(iso: string | null): string {
   );
 }
 
-function formatPnlUsd(n: number): string {
-  const abs = Math.abs(n).toFixed(2);
-  if (n > 0) return `+$${abs}`;
-  if (n < 0) return `-$${abs}`;
-  return `$${abs}`;
-}
-
-function formatPnlPct(pnl: number, equity: number): string {
-  if (!Number.isFinite(equity) || equity === 0) return "";
-  const start = equity - pnl;
-  if (!Number.isFinite(start) || start === 0) return "";
-  const pct = (pnl / start) * 100;
-  const sign = pct > 0 ? "+" : "";
-  return `${sign}${pct.toFixed(2)}%`;
-}
-
 function formatFillTs(iso: string): string {
   return new Date(iso).toLocaleString("en-US", {
     timeZone: "America/New_York",
@@ -117,31 +94,6 @@ function lastForSymbol(quotes: DelayedQuote[], symbol: string): number | null {
 
 const DELAYED_HINT =
   "Delayed last: Massive Starter (equities/ETFs, 15m) or Yahoo (futures =F). Not a live book. Paper fills are a journal, not broker orders.";
-
-function riskBadgeTitle(s: StatusSnapshot): string {
-  const c = s.riskChecks;
-  const note = "Does not bind the day book.";
-  if (!c) return `Risk gate (SPY/ACWI/HYG 200dma, UUP 20d veto). ${note}`;
-  if (s.riskOn) {
-    const uup =
-      c.uup20dPct === null || !Number.isFinite(c.uup20dPct)
-        ? "UUP 20d n/a"
-        : `UUP 20d ${(c.uup20dPct * 100).toFixed(1)}%`;
-    return `SPY/ACWI/HYG above 200dma · ${uup}. ${note}`;
-  }
-  const failed: string[] = [];
-  if (!c.spyAbove200) failed.push("SPY below 200dma");
-  if (!c.acwiAbove200) failed.push("ACWI below 200dma");
-  if (!c.hygAbove200) failed.push("HYG below 200dma");
-  if (c.dollarVeto) {
-    failed.push(
-      c.uup20dPct === null || !Number.isFinite(c.uup20dPct)
-        ? "UUP 20d missing (dollar veto)"
-        : `UUP 20d ${(c.uup20dPct * 100).toFixed(1)}% (dollar veto)`,
-    );
-  }
-  return `${failed.join(" · ") || "risk-off"}. ${note}`;
-}
 
 function QuoteStrip({ quotes }: { quotes: DelayedQuote[] }) {
   return (
@@ -380,6 +332,7 @@ export default function App() {
   const [sleeveDraft, setSleeveDraft] = useState<SleeveCard | null>(null);
   const [quotes, setQuotes] = useState<DelayedQuote[]>([]);
   const [paperPrefill, setPaperPrefill] = useState<PaperPrefill | null>(null);
+  const essentials = useEssentialsView();
 
   const apply = useCallback((s: StatusSnapshot) => {
     setState(s);
@@ -439,7 +392,7 @@ export default function App() {
   }, [apply, refresh]);
 
   useEffect(() => {
-    if (authNeeded) return;
+    if (authNeeded || essentials) return;
     let cancel = false;
     async function loadQuotes() {
       try {
@@ -460,7 +413,7 @@ export default function App() {
       cancel = true;
       clearInterval(t);
     };
-  }, [tab, authNeeded]);
+  }, [tab, authNeeded, essentials]);
 
   async function login(e: FormEvent) {
     e.preventDefault();
@@ -522,6 +475,18 @@ export default function App() {
 
   if (!state) {
     return <div className="login muted">Loading Event Gate… {err}</div>;
+  }
+
+  if (essentials) {
+    return (
+      <MobileEssentials
+        state={state}
+        err={err}
+        onToggleGate={() => post("/api/gate/enable", { enabled: !state.gateEnabled })}
+        onToggleAutoPaper={() => post("/api/paper/auto", { enabled: state.autoPaper === false })}
+        onFlatten={() => post("/api/flatten")}
+      />
+    );
   }
 
   const working = state.broker.orders.filter(

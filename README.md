@@ -9,7 +9,7 @@ Trader: Richard. Timezone America/New_York.
 ## Seed events
 2026-09-04T12:30:00Z NFP flatten 15:45 ET. 2026-09-11T12:30:00Z CPI flatten 15:45 ET. 2026-09-16T18:00:00Z FOMC_STATEMENT flatten 15:30 ET. 2026-09-16T18:30:00Z FOMC_PC flatten 15:30 ET. Also inserted by db/migrations/001_init.sql.
 ## Layout
-client/ Vite+React+TS SPA. server/ Node 20 Express. shared/ clock types. db/migrations/ Postgres. deploy/ nginx systemd setup.sh deploy.sh. tests/ unit tests. No Docker.
+client/ Vite+React+TS SPA. Phones (narrow viewport or `/m`) get a compact essentials dashboard (gate, risk, autopilot, flatten, sleeve P/L); the desktop layout is unchanged. server/ Node 20 Express. shared/ clock types. db/migrations/ Postgres. deploy/ nginx systemd setup.sh deploy.sh. tests/ unit tests. No Docker.
 ## Massive market data
 MASSIVE_API_KEY on Mac `.env` and VPS `/opt/broker/.env` (gitignored). Starter plan is 15-minute delayed stocks. Equities last quotes, S&P scan dailies, and the SPY/ACWI/HYG/UUP risk gate use `https://api.massive.com`. Futures (`=F` / MES,ZN,6E,M6E,SR3,ES,NQ,MNQ) still use Yahoo. App boots without the key (clear errors on equity Massive paths; Yahoo futures still work). Never commit the key.
 
