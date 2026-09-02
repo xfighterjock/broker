@@ -146,14 +146,10 @@ export function validatePaperOrder(
     const potential = dist * input.qty * pv.value;
     const cap = Math.abs(ctx.dailyLossUsd);
     if (cap > 0) {
-      if (ctx.dayPnl <= -cap) {
-        return { ok: false, error: "day P&L already at dailyLossUsd" };
-      }
-      if (ctx.dayPnl - potential <= -cap) {
-        return { ok: false, error: "stop loss would exceed dailyLossUsd" };
-      }
+      // Day-sleeve cap is this sleeve's realized P/L only. MockBroker.getDayPnl()
+      // is broker-wide (leftover risk-off tape, other sleeves) and must not block MES.
       if (ctx.sleeveRealizedPnl <= -cap) {
-        return { ok: false, error: "sleeve day loss already at dailyLossUsd" };
+        return { ok: false, error: "day P&L already at dailyLossUsd" };
       }
       if (ctx.sleeveRealizedPnl - potential <= -cap) {
         return { ok: false, error: "stop loss would exceed dailyLossUsd" };

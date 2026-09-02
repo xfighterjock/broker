@@ -152,6 +152,35 @@ describe("day band refuses entry", () => {
     if (!r.ok) expect(r.error).toMatch(/NO-STOP BAND/);
   });
 
+  it("day sleeve $500 cap ignores broker-wide mock day P&L", () => {
+    const r = validatePaperOrder(
+      { sleeveId: "day", symbol: "MES", side: "Buy", qty: 1, stopPrice: 5790, thesis: "stoch" },
+      {
+        last: 5800,
+        gateMode: "idle",
+        dailyLossUsd: 500,
+        dayPnl: -4140,
+        sleeveRealizedPnl: 0,
+      },
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it("day sleeve refuses when sleeve realized is already at the cap", () => {
+    const r = validatePaperOrder(
+      { sleeveId: "day", symbol: "MES", side: "Buy", qty: 1, stopPrice: 5790, thesis: "stoch" },
+      {
+        last: 5800,
+        gateMode: "idle",
+        dailyLossUsd: 500,
+        dayPnl: 0,
+        sleeveRealizedPnl: -500,
+      },
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/day P&L already at dailyLossUsd/);
+  });
+
   it("HTTP refuses a day-sleeve entry while the clock is in band", async () => {
     const events: CalendarEvent[] = [
       {

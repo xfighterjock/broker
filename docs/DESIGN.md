@@ -32,7 +32,7 @@ Binds the day sleeve only. Does not flatten momentum, options, ownership, or ris
 | SESSION FLATTEN | flatten ET +/- 5m (FLATTEN_WINDOW_MS) | flatten gated names; also daily loss |
 
 - Gated roots (GATED_ROOTS): MES, MNQ, ES, NQ, ZN, ZF, ZT, ZB, SR3, 6E, M6E. Qty over MAX_QTY (1) is cancelled. Limits left alone unless oversize.
-- Daily loss cap default $500 (DEFAULT_DAILY_LOSS_USD). FOMC in the event type forces 15:30 ET flatten; NFP/CPI seed flatten 15:45 ET.
+- Daily loss cap default $500 (DEFAULT_DAILY_LOSS_USD). Day-sleeve paper entries use that sleeve's realized P/L, not broker-wide mock:day_pnl (other sleeves must not block MES). GATE flatten-on-daily-loss still reads MockBroker.getDayPnl(). FOMC in the event type forces 15:30 ET flatten; NFP/CPI seed flatten 15:45 ET.
 - Freeze card (NFP/CPI/FOMC): consensus objects, source, FedWatch, liquid contracts MES/ZN/M6E/SR3. Print-day veto is Flatten or GATE OFF. Freeze auto-save must never flatten or place directional orders.
 - Checklist: freeze existed, knowledge_time after print, no market orders, kill/flatten clicked, paper bid/ask seen.
 
@@ -66,7 +66,7 @@ E*TRADE: in-process access-token renew every 30 minutes weekdays 09:30-16:00 ET.
 
 - MockBroker in Redis (mock:orders, mock:positions, mock:day_pnl). Independent $100k equity per sleeve (DEFAULT_SLEEVE_EQUITY_USD).
 - Blotter + sleeve cards in Redis. Session marks (NY calendar date) split daily vs total P/L.
-- Autopilot (AUTO_PAPER_INTERVAL_MS = 5 min) when AUTO PAPER is on. Default on. Never CSP/CC/naked from auto. Day sleeve stays manual.
+- Autopilot (AUTO_PAPER_INTERVAL_MS = 5 min) when AUTO PAPER is on. Default on. Never CSP/CC/naked from auto. Day sleeve auto-papers MES (stochastic + VWAP); other sleeves as below.
 - Vertical guards (shared/constants.ts): no new verticals at/after 15:50 ET weekdays (OPTIONS_VERTICAL_CUTOFF_MINUTES); net debit at most half the width (OPTIONS_DEBIT_MAX_WIDTH_FRAC); same-underlying cooldown the rest of the ET day after a 50% debit stop (OPTIONS_DEBIT_STOP_FRAC). Target 30-45 DTE; exit at 21 DTE; profit take 50% of debit. Size near 1% of sleeve equity (OPTIONS_DEBIT_TARGET_FRAC), hard cap 2% (OPTIONS_DEBIT_CAP_FRAC). Multiplier 100.
 - Stops on mock last. Paper only.
 
@@ -76,7 +76,7 @@ Five sleeves (SLEEVE_IDS). Each has its own mock book.
 
 ### 1. day — Day trading (events)
 
-Horizon: intraday. Budget hint 15%. Loss cap $500.
+Horizon: intraday. Budget hint 15%. Loss cap $500 (day sleeve realized P/L, not mock:day_pnl).
 
 Event-clock futures sleeve. Instruments on the quote strip: MES, ZN, M6E, SR3 (Yahoo =F). NFP/CPI/FOMC GATE still binds: PRE-ARM, NO-STOP BAND, and session flatten refuse new entries; flatten 15:45 ET (15:30 FOMC). Autopilot papers MES only: 5-minute slow stochastic 14,3,3, longs only above session VWAP, shorts only below, qty 1, stop at least 8 ticks or the signal bar. Yahoo 5m MES=F bars (not E*TRADE). RISK ON does not bind this book. MockBroker only.
 
