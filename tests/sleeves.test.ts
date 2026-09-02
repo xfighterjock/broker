@@ -44,6 +44,7 @@ describe("defaultSleeves", () => {
     expect(sleeves.riskoff.structure).toMatch(/no naked short vol/);
     expect(sleeves.riskoff.killRules).toMatch(/max debit lost/);
     expect(sleeves.riskoff.instruments).toMatch(/SPY/);
+    expect(sleeves.riskoff.instruments).toMatch(/HYG/);
     expect(sleeves.riskoff.instruments).toMatch(/GLD/);
     expect(sleeves.day.paper).toEqual(emptyPaperStats());
     expect(sleeves.riskoff.paper).toEqual(emptyPaperStats());

@@ -5,6 +5,7 @@ import {
   OPTIONS_DTE_EXIT,
   OPTIONS_DTE_TARGET_MAX,
   OPTIONS_DTE_TARGET_MIN,
+  RISKOFF_HYG_SYMBOL,
   RISKOFF_SYMBOLS,
 } from "../../shared/constants";
 import type {
@@ -248,29 +249,68 @@ export function decideCallVerticalIntents(
   return out;
 }
 
-/** True only when RISK OFF and SPY is known below 200dma. Missing check fails closed. */
-export function riskoffPutsAllowed(
+export type RiskoffPutChecks = {
+  spyAbove200?: boolean | null;
+  hygAbove200?: boolean | null;
+};
+
+const RISKOFF_EQUITY_PUTS = new Set<string>([...RISKOFF_SYMBOLS, "IWM"]);
+
+function knownBool(v: boolean | null | undefined): boolean | undefined {
+  return typeof v === "boolean" ? v : undefined;
+}
+
+function verticalUnderlyer(p: Position): string {
+  if (!p.vertical) return "";
+  return (p.vertical.quoteSymbol || p.vertical.underlying || "").trim().toUpperCase();
+}
+
+/** True when RISK OFF and SPY is known below 200dma. Missing check fails closed. */
+export function riskoffEquityPutsAllowed(
   riskOn: boolean,
   spyAbove200?: boolean | null,
 ): boolean {
   return riskOn === false && spyAbove200 === false;
 }
 
+/** True when RISK OFF and HYG is known below 200dma. Missing check fails closed. */
+export function riskoffHygPutAllowed(
+  riskOn: boolean,
+  hygAbove200?: boolean | null,
+): boolean {
+  return riskOn === false && hygAbove200 === false;
+}
+
+/** Either the equity-index puts or the HYG credit-leg put may fire. */
+export function riskoffPutsAllowed(
+  riskOn: boolean,
+  checks?: RiskoffPutChecks | null,
+): boolean {
+  return (
+    riskoffEquityPutsAllowed(riskOn, knownBool(checks?.spyAbove200)) ||
+    riskoffHygPutAllowed(riskOn, knownBool(checks?.hygAbove200))
+  );
+}
+
 /**
- * SPY/QQQ/IWM put debit intents when RISK OFF and SPY is below 200dma.
- * Credit-only OFF (HYG below, SPY still above) and missing spyAbove200 → no new puts.
- * Never calls. One per name.
+ * Risk-off put debit intents. HYG first when credit is the broken leg;
+ * SPY/QQQ/IWM only when SPY is below 200dma. Missing checks fail closed.
+ * Never calls. One per name. Cap MAX_AUTO_RISKOFF_VERTICALS.
  */
 export function decidePutVerticalIntents(
   quotes: Array<{ symbol: string; last: number }>,
   openPositions: Position[],
   sleeve: SleeveCard,
   riskOn = true,
-  spyAbove200?: boolean | null,
+  checks?: RiskoffPutChecks | null,
 ): AutoVerticalIntent[] {
-  if (!riskoffPutsAllowed(riskOn, spyAbove200)) return [];
   if (sleeve.id !== "riskoff") return [];
   if (sleeve.paper.realizedPnlUsd <= -sleeve.lossCapUsd) return [];
+  const spyAbove200 = knownBool(checks?.spyAbove200);
+  const hygAbove200 = knownBool(checks?.hygAbove200);
+  const wantHyg = riskoffHygPutAllowed(riskOn, hygAbove200);
+  const wantEquity = riskoffEquityPutsAllowed(riskOn, spyAbove200);
+  if (!wantHyg && !wantEquity) return [];
   const openV = openPositions.filter((p) => isOpen(p) && p.sleeveId === "riskoff" && isVerticalPosition(p));
   let slots = MAX_AUTO_RISKOFF_VERTICALS - openV.length;
   if (slots <= 0) return [];
@@ -281,18 +321,24 @@ export function decidePutVerticalIntents(
     if (!symbol || !Number.isFinite(q.last) || !(q.last > 0)) continue;
     bySym.set(symbol, { symbol, last: q.last });
   }
-  const order = [...RISKOFF_SYMBOLS, "IWM"];
+  const order: string[] = [];
+  if (wantHyg) order.push(RISKOFF_HYG_SYMBOL);
+  if (wantEquity) order.push(...RISKOFF_SYMBOLS, "IWM");
   const out: AutoVerticalIntent[] = [];
   for (const symbol of order) {
     if (slots <= 0) break;
     const q = bySym.get(symbol);
     if (!q) continue;
     if (taken.has(symbol)) continue;
+    const thesis =
+      symbol === RISKOFF_HYG_SYMBOL
+        ? `auto put debit ${symbol} credit-leg`
+        : `auto put debit ${symbol} risk-off`;
     out.push({
       sleeveId: "riskoff",
       symbol,
       last: q.last,
-      thesis: `auto put debit ${symbol} risk-off`,
+      thesis,
     });
     taken.add(symbol);
     slots -= 1;
@@ -301,24 +347,46 @@ export function decidePutVerticalIntents(
 }
 
 /**
- * Paper-close risk-off put verticals when SPY is still above 200dma.
- * Leaves the GLD/UUP/BIL ETF long alone. Missing spyAbove200 does not flatten.
+ * Flatten equity-index puts when SPY is back above 200dma.
+ * Flatten the HYG credit-leg put when HYG is back above 200dma or RISK ON.
+ * Leaves the GLD/UUP/BIL ETF long alone. Missing checks do not flatten that name.
  */
 export function decideRiskoffPutSells(
   positions: Position[],
-  spyAbove200?: boolean | null,
+  riskOn = false,
+  checks?: RiskoffPutChecks | null,
 ): AutoSell[] {
-  if (spyAbove200 !== true) return [];
+  const spyAbove200 = knownBool(checks?.spyAbove200);
+  const hygAbove200 = knownBool(checks?.hygAbove200);
   const out: AutoSell[] = [];
   for (const p of positions) {
     if (!isOpen(p) || p.sleeveId !== "riskoff") continue;
     if (!isVerticalPosition(p) || !p.vertical) continue;
     if (p.vertical.right !== "P") continue;
-    out.push({
-      sleeveId: "riskoff",
-      symbol: p.symbol,
-      reason: "SPY above 200dma: flatten risk-off puts",
-    });
+    const u = verticalUnderlyer(p);
+    if (u === RISKOFF_HYG_SYMBOL) {
+      if (riskOn === true) {
+        out.push({
+          sleeveId: "riskoff",
+          symbol: p.symbol,
+          reason: "risk on: flatten credit-leg put",
+        });
+      } else if (hygAbove200 === true) {
+        out.push({
+          sleeveId: "riskoff",
+          symbol: p.symbol,
+          reason: "HYG above 200dma: flatten credit-leg put",
+        });
+      }
+      continue;
+    }
+    if (RISKOFF_EQUITY_PUTS.has(u) && spyAbove200 === true) {
+      out.push({
+        sleeveId: "riskoff",
+        symbol: p.symbol,
+        reason: "SPY above 200dma: flatten risk-off puts",
+      });
+    }
   }
   return out;
 }
@@ -398,15 +466,15 @@ export type AutopilotCtx = {
   featureRows: Array<{ symbol: string; above200: boolean }>;
   scanReady: boolean;
   riskOn: boolean;
-  /** From ensureRisk(). Missing spyAbove200 → no new risk-off puts (fail closed). */
-  riskChecks?: { spyAbove200?: boolean | null } | null;
+  /** From ensureRisk(). Missing spyAbove200 / hygAbove200 fail closed for that name's puts. */
+  riskChecks?: RiskoffPutChecks | null;
   place: (buy: AutoBuy) => Promise<PlaceResult>;
   close: (sell: AutoSell) => Promise<CloseResult>;
-  /** Paper debit verticals. Call on options when RISK ON; put on riskoff when RISK OFF and SPY below 200dma. Never CSP/CC. */
+  /** Paper debit verticals. Call on options when RISK ON; risk-off puts: equity-index if SPY below 200, HYG credit-leg if HYG below 200. Never CSP/CC. */
   placeVertical?: (v: AutoVertical) => Promise<PlaceResult>;
   fetchExpiries?: (symbol: string) => Promise<OptionExpiry[]>;
   fetchChain?: (symbol: string, expiry: string) => Promise<OptionLeg[]>;
-  /** Delayed lasts for SPY/QQQ (IWM optional) used only for risk-off put intents. */
+  /** Delayed lasts for SPY/QQQ (IWM optional) and HYG, used for risk-off put intents. */
   riskoffQuotes?: Array<{ symbol: string; last: number }>;
   /** 63d total returns for GLD/UUP/BIL. Missing/null → ETF expression fails closed to cash. */
   riskoffEtfReturns?: RiskoffEtfReturns | null;
@@ -428,10 +496,9 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
   if (!ctx.enabled) return { bought, sold, verticals };
 
   const riskOn = ctx.riskOn === true;
-  const spyAbove200 =
-    ctx.riskChecks && typeof ctx.riskChecks.spyAbove200 === "boolean"
-      ? ctx.riskChecks.spyAbove200
-      : undefined;
+  const spyAbove200 = knownBool(ctx.riskChecks?.spyAbove200);
+  const hygAbove200 = knownBool(ctx.riskChecks?.hygAbove200);
+  const putChecks: RiskoffPutChecks = { spyAbove200, hygAbove200 };
 
   const sells = decideSells(
     ctx.getPositions(),
@@ -471,7 +538,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
     }
   }
 
-  const putSells = decideRiskoffPutSells(ctx.getPositions(), spyAbove200);
+  const putSells = decideRiskoffPutSells(ctx.getPositions(), riskOn, putChecks);
   for (const s of putSells) {
     const r = await ctx.close(s);
     if (r.ok) {
@@ -582,7 +649,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
   }
 
   if (
-    riskoffPutsAllowed(riskOn, spyAbove200) &&
+    riskoffPutsAllowed(riskOn, putChecks) &&
     ctx.placeVertical &&
     ctx.fetchExpiries &&
     ctx.fetchChain
@@ -592,7 +659,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
       ctx.getPositions(),
       ctx.getSleeves().riskoff,
       riskOn,
-      spyAbove200,
+      putChecks,
     );
     let windowLogged = false;
     for (const intent of intents) {

@@ -1093,7 +1093,7 @@ export function buildApp(deps: AppDeps): express.Express {
       const risk = await ensureRisk();
       let riskoffQuotes: Array<{ symbol: string; last: number }> = [];
       if (!risk.riskOn) {
-        const qs = await fetchDelayedQuotes(["SPY", "QQQ", "IWM"]).catch(() => []);
+        const qs = await fetchDelayedQuotes(["SPY", "QQQ", "IWM", "HYG"]).catch(() => []);
         riskoffQuotes = qs
           .filter((q) => q.last !== null && Number.isFinite(q.last) && q.last > 0)
           .map((q) => ({ symbol: q.symbol, last: q.last as number }));

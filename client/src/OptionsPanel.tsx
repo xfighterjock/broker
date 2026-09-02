@@ -272,7 +272,7 @@ export function OptionsPanel({
       <div className="body">
         <div className="hint">
           {putsOnly
-            ? "Massive Starter chain (DELAYED 15m). Paper put debit verticals on MockBroker. GLD/UUP/BIL is a separate ETF long on this sleeve when RISK OFF. Never a live send."
+            ? "Massive Starter chain (DELAYED 15m). Paper put debit verticals on MockBroker (SPY/QQQ/IWM after SPY 200dma break; HYG when credit is the broken leg). GLD/UUP/BIL is a separate ETF long on this sleeve when RISK OFF. Never a live send."
             : HINT}
         </div>
         <div className="paper-form options-form">

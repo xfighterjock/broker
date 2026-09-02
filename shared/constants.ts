@@ -86,9 +86,11 @@ export const MASSIVE_BASE = "https://api.massive.com";
 export const MAX_AUTO_VERTICALS = 5;
 /** Risk-off sleeve auto put-debit cap (2–3). One per name. */
 export const MAX_AUTO_RISKOFF_VERTICALS = 3;
-/** Risk-off auto underlyers. IWM is optional third if quoted. */
+/** Risk-off auto equity-index underlyers. IWM is optional third if quoted. */
 export const RISKOFF_SYMBOLS = ["SPY", "QQQ"] as const;
 export type RiskoffSymbol = (typeof RISKOFF_SYMBOLS)[number];
+/** Credit-leg put debit when HYG is below 200dma. Not an inverse ETF. */
+export const RISKOFF_HYG_SYMBOL = "HYG";
 /**
  * Second risk-off expression: one ETF long (GLD or UUP or BIL). Paper only.
  * Classic gold-vs-dollar relative strength vs T-bills.

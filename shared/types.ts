@@ -248,11 +248,11 @@ export function defaultSleeves(): Record<SleeveId, SleeveCard> {
       budgetPct: 10,
       lossCapUsd: 1000,
       thesis:
-        "Defined-risk put debit while RISK OFF and SPY is below 200dma, plus one GLD/UUP/BIL relative-strength ETF long.",
+        "Defined-risk put debit while RISK OFF: SPY/QQQ/IWM only after SPY breaks 200dma; one HYG ATM put when credit is the broken leg; plus one GLD/UUP/BIL relative-strength ETF long.",
       macroDrivers: "SPY/ACWI/HYG 200dma + UUP 20d dollar veto (global risk-off).",
       microDrivers:
-        "30–45 DTE put debit verticals on SPY/QQQ only after an equity 200dma break (SPY below); credit-only HYG OFF keeps/rotates GLD/UUP/BIL, no new puts. Skip missing bid/ask. GLD vs UUP vs BIL 63d total return; hold the winner if it beats T-bills, else BIL/cash. Flatten the ETF on RISK ON; flatten leftover puts while SPY is still above 200dma.",
-      instruments: "SPY / QQQ / GLD / UUP / BIL",
+        "30–45 DTE put debit verticals: HYG when HYG is below 200dma (credit-leg); SPY/QQQ/IWM only after an equity 200dma break (SPY below). Prefer HYG first inside the auto cap. Skip missing bid/ask. GLD vs UUP vs BIL 63d total return; hold the winner if it beats T-bills, else BIL/cash. Flatten the ETF on RISK ON; flatten equity-index puts while SPY is still above 200dma; flatten the HYG put when HYG is back above 200 or RISK ON.",
+      instruments: "SPY / QQQ / HYG / GLD / UUP / BIL",
       structure:
         "put debit verticals + one GLD/UUP/BIL ETF long; no naked short vol",
       killRules: "max debit lost / DTE / sleeve loss cap; ETF rotates only when the winner changes",

@@ -182,33 +182,65 @@ describe("decidePutVerticalIntents", () => {
   const quotes = [
     { symbol: "SPY", last: 500 },
     { symbol: "QQQ", last: 400 },
+    { symbol: "HYG", last: 77 },
     { symbol: "AAPL", last: 200 },
   ];
 
   it("returns [] when risk-on", () => {
-    const intents = decidePutVerticalIntents(quotes, [], defaultSleeves().riskoff, true, false);
+    const intents = decidePutVerticalIntents(quotes, [], defaultSleeves().riskoff, true, {
+      spyAbove200: false,
+      hygAbove200: false,
+    });
     expect(intents).toEqual([]);
   });
 
-  it("returns [] on the options sleeve even when risk-off and SPY is below 200", () => {
-    const intents = decidePutVerticalIntents(quotes, [], defaultSleeves().options, false, false);
+  it("returns [] on the options sleeve even when risk-off and both 200dma checks are false", () => {
+    const intents = decidePutVerticalIntents(quotes, [], defaultSleeves().options, false, {
+      spyAbove200: false,
+      hygAbove200: false,
+    });
     expect(intents).toEqual([]);
   });
 
   it("returns SPY/QQQ put intents when risk-off and SPY is below 200dma, never single names", () => {
-    const intents = decidePutVerticalIntents(quotes, [], defaultSleeves().riskoff, false, false);
+    const intents = decidePutVerticalIntents(quotes, [], defaultSleeves().riskoff, false, {
+      spyAbove200: false,
+    });
     expect(intents.map((i) => i.symbol)).toEqual(["SPY", "QQQ"]);
     expect(intents.every((i) => i.sleeveId === "riskoff")).toBe(true);
   });
 
-  it("returns [] on HYG-only / credit-only OFF (SPY still above 200dma)", () => {
-    const intents = decidePutVerticalIntents(quotes, [], defaultSleeves().riskoff, false, true);
+  it("HYG-only / credit-only OFF (SPY still above 200dma) opens HYG, not SPY/QQQ", () => {
+    const intents = decidePutVerticalIntents(quotes, [], defaultSleeves().riskoff, false, {
+      spyAbove200: true,
+      hygAbove200: false,
+    });
+    expect(intents.map((i) => i.symbol)).toEqual(["HYG"]);
+    expect(intents[0].thesis).toMatch(/credit-leg/);
+  });
+
+  it("returns [] when spyAbove200 and hygAbove200 are missing (fail closed)", () => {
+    const intents = decidePutVerticalIntents(quotes, [], defaultSleeves().riskoff, false);
     expect(intents).toEqual([]);
   });
 
-  it("returns [] when spyAbove200 is missing (fail closed)", () => {
-    const intents = decidePutVerticalIntents(quotes, [], defaultSleeves().riskoff, false);
-    expect(intents).toEqual([]);
+  it("returns [] for HYG when hygAbove200 is missing even if SPY puts are allowed", () => {
+    const intents = decidePutVerticalIntents(quotes, [], defaultSleeves().riskoff, false, {
+      spyAbove200: false,
+    });
+    expect(intents.map((i) => i.symbol)).toEqual(["SPY", "QQQ"]);
+    expect(intents.some((i) => i.symbol === "HYG")).toBe(false);
+  });
+
+  it("prefers HYG first then SPY/QQQ when both gates fire, inside the auto cap", () => {
+    const intents = decidePutVerticalIntents(
+      [...quotes, { symbol: "IWM", last: 200 }],
+      [],
+      defaultSleeves().riskoff,
+      false,
+      { spyAbove200: false, hygAbove200: false },
+    );
+    expect(intents.map((i) => i.symbol)).toEqual(["HYG", "SPY", "QQQ"]);
   });
 
   it("options auto never emits put intents; riskoff auto never emits call intents", () => {
@@ -219,9 +251,15 @@ describe("decidePutVerticalIntents", () => {
       true,
     );
     expect(calls.every((i) => i.sleeveId === "options")).toBe(true);
-    const putsOff = decidePutVerticalIntents(quotes, [], defaultSleeves().options, false, false);
+    const putsOff = decidePutVerticalIntents(quotes, [], defaultSleeves().options, false, {
+      spyAbove200: false,
+      hygAbove200: false,
+    });
     expect(putsOff).toEqual([]);
-    const putsOnRiskoff = decidePutVerticalIntents(quotes, [], defaultSleeves().riskoff, false, false);
+    const putsOnRiskoff = decidePutVerticalIntents(quotes, [], defaultSleeves().riskoff, false, {
+      spyAbove200: false,
+      hygAbove200: false,
+    });
     expect(putsOnRiskoff.every((i) => i.sleeveId === "riskoff")).toBe(true);
     const callsOnRiskoff = decideCallVerticalIntents(
       [scanRow("SPY")],
@@ -282,7 +320,81 @@ describe("runAutopilot risk-off puts vs risk-on calls", () => {
     expect(result.bought).toEqual([]);
   });
 
-  it("HYG-only OFF (SPY still above 200) does not open riskoff puts", async () => {
+  it("when SPY and HYG are both below 200, HYG is first then SPY/QQQ inside the cap", async () => {
+    const placed: string[] = [];
+    const result = await runAutopilot({
+      enabled: true,
+      getPositions: () => [],
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [],
+      featureRows: [],
+      scanReady: true,
+      riskOn: false,
+      riskChecks: { spyAbove200: false, hygAbove200: false },
+      riskoffQuotes: [
+        { symbol: "SPY", last: 500 },
+        { symbol: "QQQ", last: 400 },
+        { symbol: "IWM", last: 200 },
+        { symbol: "HYG", last: 77 },
+      ],
+      place: async () => ({ ok: true }),
+      close: async () => ({ ok: true }),
+      placeVertical: async (v) => {
+        placed.push(v.symbol);
+        expect(v.right).toBe("P");
+        expect(v.sleeveId).toBe("riskoff");
+        return { ok: true };
+      },
+      fetchExpiries: async () => [
+        { year: 2026, month: 10, day: 9, expiry: "2026-10-09", expiryType: "MONTHLY" },
+      ],
+      fetchChain: async () => putChain,
+      log: () => {},
+    });
+    expect(placed).toEqual(["HYG", "SPY", "QQQ"]);
+    expect(result.verticals.map((v) => v.symbol)).toEqual(["HYG", "SPY", "QQQ"]);
+    expect(result.verticals[0].thesis).toMatch(/credit-leg/);
+  });
+
+  it("HYG-only OFF (SPY still above 200) opens the HYG credit-leg put, not SPY/QQQ", async () => {
+    const placed: string[] = [];
+    const theses: string[] = [];
+    const result = await runAutopilot({
+      enabled: true,
+      getPositions: () => [],
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [scanRow("AAPL", { last: 67 })],
+      featureRows: [],
+      scanReady: true,
+      riskOn: false,
+      riskChecks: { spyAbove200: true, hygAbove200: false },
+      riskoffQuotes: [
+        { symbol: "SPY", last: 500 },
+        { symbol: "QQQ", last: 400 },
+        { symbol: "HYG", last: 77 },
+      ],
+      place: async () => ({ ok: true }),
+      close: async () => ({ ok: true }),
+      placeVertical: async (v) => {
+        placed.push(`${v.sleeveId}:${v.right}:${v.symbol}`);
+        theses.push(v.thesis);
+        expect(v.right).toBe("P");
+        expect(v.sleeveId).toBe("riskoff");
+        return { ok: true };
+      },
+      fetchExpiries: async () => [
+        { year: 2026, month: 10, day: 9, expiry: "2026-10-09", expiryType: "MONTHLY" },
+      ],
+      fetchChain: async () => putChain,
+      log: () => {},
+    });
+    expect(placed).toEqual(["riskoff:P:HYG"]);
+    expect(theses[0]).toMatch(/credit-leg/);
+    expect(result.verticals.map((v) => v.symbol)).toEqual(["HYG"]);
+    expect(result.bought).toEqual([]);
+  });
+
+  it("missing hygAbove200 fails closed: no HYG put on credit-only OFF", async () => {
     const placed: string[] = [];
     const result = await runAutopilot({
       enabled: true,
@@ -296,6 +408,7 @@ describe("runAutopilot risk-off puts vs risk-on calls", () => {
       riskoffQuotes: [
         { symbol: "SPY", last: 500 },
         { symbol: "QQQ", last: 400 },
+        { symbol: "HYG", last: 77 },
       ],
       place: async () => ({ ok: true }),
       close: async () => ({ ok: true }),
@@ -642,7 +755,7 @@ describe("GLD/UUP/BIL relative-strength expression", () => {
     );
   });
 
-  it("1. HYG-only OFF (SPY above 200) → paper long GLD, no new puts", async () => {
+  it("1. HYG-only OFF (SPY above 200, HYG below) → paper long GLD plus HYG credit-leg put", async () => {
     const book = paperBook();
     const result = await runAutopilot({
       enabled: true,
@@ -652,10 +765,11 @@ describe("GLD/UUP/BIL relative-strength expression", () => {
       featureRows: [],
       scanReady: true,
       riskOn: false,
-      riskChecks: { spyAbove200: true },
+      riskChecks: { spyAbove200: true, hygAbove200: false },
       riskoffQuotes: [
         { symbol: "SPY", last: 500 },
         { symbol: "QQQ", last: 400 },
+        { symbol: "HYG", last: 77 },
       ],
       riskoffEtfReturns: gldWins,
       riskoffEtfQuotes: etfQuotes({ GLD: 180, UUP: 28, BIL: 91 }),
@@ -674,7 +788,9 @@ describe("GLD/UUP/BIL relative-strength expression", () => {
     expect(etfBuys[0].qty).toBe(sizeRiskoffEtfShares(180));
     expect(etfBuys[0].qty * 180).toBeLessThan(DEFAULT_SLEEVE_EQUITY_USD * 0.25);
     expect(book.getPositions().filter((p) => !p.vertical).map((p) => p.symbol)).toEqual(["GLD"]);
-    expect(result.verticals).toEqual([]);
+    expect(result.verticals.map((v) => v.symbol)).toEqual(["HYG"]);
+    expect(result.verticals[0].right).toBe("P");
+    expect(result.verticals[0].thesis).toMatch(/credit-leg/);
     const sleeves = defaultSleeves();
     const marked = sleeveBook(
       sleeves.riskoff,
@@ -779,8 +895,9 @@ describe("GLD/UUP/BIL relative-strength expression", () => {
     expect(cashBook.getPositions()).toEqual([]);
   });
 
-  it("4. RISK ON → ETF flattened; no puts", async () => {
-    const book = paperBook([etfPos("GLD", 100, 180)]);
+  it("4. RISK ON → ETF flattened and HYG credit-leg put flattened; no new puts", async () => {
+    const hygPut = putVertPos("HYG");
+    const book = paperBook([etfPos("GLD", 100, 180), hygPut]);
     const result = await runAutopilot({
       enabled: true,
       getPositions: book.getPositions,
@@ -789,10 +906,11 @@ describe("GLD/UUP/BIL relative-strength expression", () => {
       featureRows: [],
       scanReady: true,
       riskOn: true,
-      riskChecks: { spyAbove200: true },
+      riskChecks: { spyAbove200: true, hygAbove200: true },
       riskoffQuotes: [
         { symbol: "SPY", last: 500 },
         { symbol: "QQQ", last: 400 },
+        { symbol: "HYG", last: 77 },
       ],
       riskoffEtfReturns: gldWins,
       riskoffEtfQuotes: etfQuotes({ GLD: 180, UUP: 28, BIL: 91 }),
@@ -805,7 +923,7 @@ describe("GLD/UUP/BIL relative-strength expression", () => {
       fetchChain: async () => putChainForAuto,
       log: () => {},
     });
-    expect(result.sold.map((s) => s.symbol)).toEqual(["GLD"]);
+    expect(result.sold.map((s) => s.symbol).sort()).toEqual(["GLD", hygPut.symbol].sort());
     expect(result.bought.filter((b) => b.sleeveId === "riskoff")).toEqual([]);
     expect(result.verticals).toEqual([]);
     expect(book.getPositions()).toEqual([]);
@@ -813,12 +931,22 @@ describe("GLD/UUP/BIL relative-strength expression", () => {
     const quotes = [
       { symbol: "SPY", last: 500 },
       { symbol: "QQQ", last: 400 },
+      { symbol: "HYG", last: 77 },
     ];
     expect(
-      decidePutVerticalIntents(quotes, [], defaultSleeves().riskoff, false, false).map((i) => i.symbol),
+      decidePutVerticalIntents(quotes, [], defaultSleeves().riskoff, false, { spyAbove200: false }).map(
+        (i) => i.symbol,
+      ),
     ).toEqual(["SPY", "QQQ"]);
-    expect(decidePutVerticalIntents(quotes, [], defaultSleeves().riskoff, true, true)).toEqual([]);
-    expect(decidePutVerticalIntents(quotes, [], defaultSleeves().riskoff, false, true)).toEqual([]);
+    expect(decidePutVerticalIntents(quotes, [], defaultSleeves().riskoff, true, { spyAbove200: true })).toEqual(
+      [],
+    );
+    expect(
+      decidePutVerticalIntents(quotes, [], defaultSleeves().riskoff, false, {
+        spyAbove200: true,
+        hygAbove200: false,
+      }).map((i) => i.symbol),
+    ).toEqual(["HYG"]);
   });
 
   it("5. Missing bars → fail closed to cash", async () => {
@@ -880,19 +1008,43 @@ describe("flatten risk-off puts while SPY is above 200dma", () => {
   beforeEach(() => setPaperNow(new Date("2026-08-24T14:00:00Z")));
   afterEach(() => setPaperNow(null));
 
-  it("decideRiskoffPutSells closes open puts when spyAbove200, leaves ETF", () => {
+  it("decideRiskoffPutSells closes equity-index puts when spyAbove200, leaves ETF and HYG", () => {
     const spyPut = putVertPos("SPY");
+    const hygPut = putVertPos("HYG");
     const gld = etfPos("GLD", 100, 180);
-    expect(decideRiskoffPutSells([spyPut, gld], true)).toEqual([
+    expect(decideRiskoffPutSells([spyPut, hygPut, gld], false, { spyAbove200: true })).toEqual([
       { sleeveId: "riskoff", symbol: spyPut.symbol, reason: "SPY above 200dma: flatten risk-off puts" },
     ]);
-    expect(decideRiskoffPutSells([spyPut, gld], false)).toEqual([]);
-    expect(decideRiskoffPutSells([spyPut, gld])).toEqual([]);
+    expect(decideRiskoffPutSells([spyPut, hygPut, gld], false, { spyAbove200: false })).toEqual([]);
+    expect(decideRiskoffPutSells([spyPut, hygPut, gld], false)).toEqual([]);
   });
 
-  it("HYG-only OFF flattens leftover puts and keeps/rotates the ETF long", async () => {
+  it("flattens the HYG credit-leg put when HYG is back above 200, not the equity put or ETF", () => {
     const spyPut = putVertPos("SPY");
-    const book = paperBook([etfPos("GLD", 100, 180), spyPut]);
+    const hygPut = putVertPos("HYG");
+    const gld = etfPos("GLD", 100, 180);
+    expect(
+      decideRiskoffPutSells([spyPut, hygPut, gld], false, { spyAbove200: false, hygAbove200: true }),
+    ).toEqual([
+      {
+        sleeveId: "riskoff",
+        symbol: hygPut.symbol,
+        reason: "HYG above 200dma: flatten credit-leg put",
+      },
+    ]);
+  });
+
+  it("flattens the HYG credit-leg put on RISK ON", () => {
+    const hygPut = putVertPos("HYG");
+    expect(decideRiskoffPutSells([hygPut], true, { hygAbove200: false })).toEqual([
+      { sleeveId: "riskoff", symbol: hygPut.symbol, reason: "risk on: flatten credit-leg put" },
+    ]);
+  });
+
+  it("HYG-only OFF flattens leftover SPY/QQQ puts, keeps the HYG put and ETF", async () => {
+    const spyPut = putVertPos("SPY");
+    const hygPut = putVertPos("HYG");
+    const book = paperBook([etfPos("GLD", 100, 180), spyPut, hygPut]);
     const result = await runAutopilot({
       enabled: true,
       getPositions: book.getPositions,
@@ -901,10 +1053,11 @@ describe("flatten risk-off puts while SPY is above 200dma", () => {
       featureRows: [],
       scanReady: true,
       riskOn: false,
-      riskChecks: { spyAbove200: true },
+      riskChecks: { spyAbove200: true, hygAbove200: false },
       riskoffQuotes: [
         { symbol: "SPY", last: 500 },
         { symbol: "QQQ", last: 400 },
+        { symbol: "HYG", last: 77 },
       ],
       riskoffEtfReturns: gldWins,
       riskoffEtfQuotes: etfQuotes({ GLD: 180, UUP: 28, BIL: 91 }),
@@ -921,8 +1074,8 @@ describe("flatten risk-off puts while SPY is above 200dma", () => {
     expect(result.sold.map((s) => s.symbol)).toEqual([spyPut.symbol]);
     expect(result.bought).toEqual([]);
     const left = book.getPositions();
-    expect(left).toHaveLength(1);
-    expect(left[0].symbol).toBe("GLD");
-    expect(left[0].vertical).toBeUndefined();
+    expect(left.map((p) => p.symbol).sort()).toEqual([hygPut.symbol, "GLD"].sort());
+    expect(left.some((p) => p.symbol === "GLD" && !p.vertical)).toBe(true);
+    expect(left.some((p) => p.vertical?.quoteSymbol === "HYG")).toBe(true);
   });
 });

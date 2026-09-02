@@ -91,6 +91,7 @@ describe("mapTicker / parseInstrumentTickers", () => {
     expect(symbolsForSleeve(sleeves.riskoff, "riskoff")).toEqual([
       "SPY",
       "QQQ",
+      "HYG",
       "GLD",
       "UUP",
       "BIL",
