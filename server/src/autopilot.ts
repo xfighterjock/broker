@@ -248,14 +248,27 @@ export function decideCallVerticalIntents(
   return out;
 }
 
-/** SPY/QQQ put debit intents when RISK OFF. Never calls. One per name. */
+/** True only when RISK OFF and SPY is known below 200dma. Missing check fails closed. */
+export function riskoffPutsAllowed(
+  riskOn: boolean,
+  spyAbove200?: boolean | null,
+): boolean {
+  return riskOn === false && spyAbove200 === false;
+}
+
+/**
+ * SPY/QQQ/IWM put debit intents when RISK OFF and SPY is below 200dma.
+ * Credit-only OFF (HYG below, SPY still above) and missing spyAbove200 → no new puts.
+ * Never calls. One per name.
+ */
 export function decidePutVerticalIntents(
   quotes: Array<{ symbol: string; last: number }>,
   openPositions: Position[],
   sleeve: SleeveCard,
   riskOn = true,
+  spyAbove200?: boolean | null,
 ): AutoVerticalIntent[] {
-  if (riskOn) return [];
+  if (!riskoffPutsAllowed(riskOn, spyAbove200)) return [];
   if (sleeve.id !== "riskoff") return [];
   if (sleeve.paper.realizedPnlUsd <= -sleeve.lossCapUsd) return [];
   const openV = openPositions.filter((p) => isOpen(p) && p.sleeveId === "riskoff" && isVerticalPosition(p));
@@ -283,6 +296,29 @@ export function decidePutVerticalIntents(
     });
     taken.add(symbol);
     slots -= 1;
+  }
+  return out;
+}
+
+/**
+ * Paper-close risk-off put verticals when SPY is still above 200dma.
+ * Leaves the GLD/UUP/BIL ETF long alone. Missing spyAbove200 does not flatten.
+ */
+export function decideRiskoffPutSells(
+  positions: Position[],
+  spyAbove200?: boolean | null,
+): AutoSell[] {
+  if (spyAbove200 !== true) return [];
+  const out: AutoSell[] = [];
+  for (const p of positions) {
+    if (!isOpen(p) || p.sleeveId !== "riskoff") continue;
+    if (!isVerticalPosition(p) || !p.vertical) continue;
+    if (p.vertical.right !== "P") continue;
+    out.push({
+      sleeveId: "riskoff",
+      symbol: p.symbol,
+      reason: "SPY above 200dma: flatten risk-off puts",
+    });
   }
   return out;
 }
@@ -362,9 +398,11 @@ export type AutopilotCtx = {
   featureRows: Array<{ symbol: string; above200: boolean }>;
   scanReady: boolean;
   riskOn: boolean;
+  /** From ensureRisk(). Missing spyAbove200 → no new risk-off puts (fail closed). */
+  riskChecks?: { spyAbove200?: boolean | null } | null;
   place: (buy: AutoBuy) => Promise<PlaceResult>;
   close: (sell: AutoSell) => Promise<CloseResult>;
-  /** Paper debit verticals. Call on options when RISK ON; put on riskoff when RISK OFF. Never CSP/CC. */
+  /** Paper debit verticals. Call on options when RISK ON; put on riskoff when RISK OFF and SPY below 200dma. Never CSP/CC. */
   placeVertical?: (v: AutoVertical) => Promise<PlaceResult>;
   fetchExpiries?: (symbol: string) => Promise<OptionExpiry[]>;
   fetchChain?: (symbol: string, expiry: string) => Promise<OptionLeg[]>;
@@ -390,6 +428,10 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
   if (!ctx.enabled) return { bought, sold, verticals };
 
   const riskOn = ctx.riskOn === true;
+  const spyAbove200 =
+    ctx.riskChecks && typeof ctx.riskChecks.spyAbove200 === "boolean"
+      ? ctx.riskChecks.spyAbove200
+      : undefined;
 
   const sells = decideSells(
     ctx.getPositions(),
@@ -418,6 +460,19 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
     quotes: ctx.riskoffEtfQuotes ?? [],
   });
   for (const s of etf.sells) {
+    const r = await ctx.close(s);
+    if (r.ok) {
+      ctx.log(
+        `auto paper close ${s.sleeveId} ${s.symbol} ${s.reason} (MockBroker, not Tradovate, not live)`,
+      );
+      sold.push(s);
+    } else {
+      ctx.log(`auto paper close skip ${s.symbol}: ${r.error}`);
+    }
+  }
+
+  const putSells = decideRiskoffPutSells(ctx.getPositions(), spyAbove200);
+  for (const s of putSells) {
     const r = await ctx.close(s);
     if (r.ok) {
       ctx.log(
@@ -527,7 +582,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
   }
 
   if (
-    !riskOn &&
+    riskoffPutsAllowed(riskOn, spyAbove200) &&
     ctx.placeVertical &&
     ctx.fetchExpiries &&
     ctx.fetchChain
@@ -537,6 +592,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
       ctx.getPositions(),
       ctx.getSleeves().riskoff,
       riskOn,
+      spyAbove200,
     );
     let windowLogged = false;
     for (const intent of intents) {

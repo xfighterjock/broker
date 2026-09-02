@@ -1113,6 +1113,7 @@ export function buildApp(deps: AppDeps): express.Express {
         featureRows,
         scanReady,
         riskOn: risk.riskOn,
+        riskChecks: risk.checks,
         riskoffQuotes,
         riskoffEtfReturns,
         riskoffEtfQuotes,
