@@ -173,3 +173,11 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 **nginx** — TLS reverse proxy in front of 127.0.0.1:3001. Production AUTH_MODE=nginx.
 
 **Vite** — Client bundler/dev server for the React SPA.
+
+**%D** — 3-period SMA of slow %K. Day-sleeve MES stochastic signal line.
+
+**%K** — Slow stochastic (14,3). Day-sleeve MES momentum. Long when %K crosses up through %D after %K was at or below 20; short is the mirror above 80.
+
+**RTH** — Regular trading hours, 09:30-16:00 ET. Day-sleeve VWAP and entry window (09:35-15:45) use RTH only.
+
+**VWAP** — Volume-weighted average price (session, RTH). Day-sleeve MES longs only above it, shorts only below; lose VWAP and the paper position exits.

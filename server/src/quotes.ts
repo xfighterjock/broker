@@ -1,5 +1,6 @@
 import type { DelayedQuote, SleeveCard, SleeveId } from "../../shared/types";
 import { fetchMassiveQuote } from "./massive";
+import { parseYahooFiveMinuteBars, type MinuteBar } from "./dayMomentum";
 
 export const DEFAULT_SYMBOLS: Record<SleeveId, string[]> = {
   day: ["MES=F", "ZN=F", "M6E=F", "SR3=F"],
@@ -207,4 +208,26 @@ export async function fetchDelayedQuotes(symbols: string[]): Promise<DelayedQuot
   }
   const now = Date.now();
   return mapPool(unique, QUOTE_FETCH_CONCURRENCY, (sym) => fetchOne(sym, now));
+}
+const barsCache = new Map<string, { at: number; bars: MinuteBar[] }>();
+
+export async function fetchYahooFiveMinuteBars(symbol = "MES=F"): Promise<MinuteBar[]> {
+  const now = Date.now();
+  const hit = barsCache.get(symbol);
+  if (hit && now - hit.at < QUOTE_CACHE_MS) return hit.bars;
+  const url = `${YAHOO_CHART_BASE}${encodeURIComponent(symbol)}?interval=5m&range=1d`;
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { headers: { "User-Agent": YAHOO_UA }, signal: ac.signal });
+    if (!res.ok) return [];
+    const body: unknown = await res.json();
+    const bars = parseYahooFiveMinuteBars(body);
+    barsCache.set(symbol, { at: now, bars });
+    return bars;
+  } catch {
+    return hit?.bars ?? [];
+  } finally {
+    clearTimeout(timer);
+  }
 }

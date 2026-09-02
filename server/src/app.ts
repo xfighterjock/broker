@@ -56,7 +56,7 @@ import {
 import { GateEngine } from "./gate";
 import { MockBroker } from "./mockBroker";
 import type { RedisClient } from "./redis";
-import { fetchDelayedQuotes, mapTicker, symbolsForSleeve } from "./quotes";
+import { fetchDelayedQuotes, fetchYahooFiveMinuteBars, mapTicker, symbolsForSleeve } from "./quotes";
 import { attachScanReady, getScan, getScanFeaturesCache, rankMomentum } from "./scan";
 import {
   allSleeveBooks,
@@ -1118,6 +1118,9 @@ export function buildApp(deps: AppDeps): express.Express {
         riskoffEtfReturns,
         riskoffEtfQuotes,
         verticalStopCooldown: memory.verticalStopCooldown,
+        now: new Date(),
+        gateMode: computeClock(new Date(), deps.getEvents()).mode,
+        dayBars: await fetchYahooFiveMinuteBars("MES=F").catch(() => []),
         placeVertical: async (v: AutoVertical) => {
           if (v.sleeveId === "riskoff" && v.right !== "P") {
             return { ok: false, error: "riskoff sleeve: put debit verticals only" };
@@ -1151,6 +1154,16 @@ export function buildApp(deps: AppDeps): express.Express {
           return got.ok ? got.data.legs : [];
         },
         place: async (buy: AutoBuy) => {
+          if (buy.sleeveId === "day") {
+            return placePaperOrder({
+              sleeveId: "day",
+              symbol: buy.symbol,
+              side: buy.side,
+              qty: 1,
+              stopPrice: buy.stopPrice,
+              thesis: buy.thesis,
+            });
+          }
           if (buy.sleeveId === "riskoff") {
             return placePaperOrder({
               sleeveId: "riskoff",

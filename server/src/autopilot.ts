@@ -11,6 +11,7 @@ import {
 import type {
   OptionExpiry,
   OptionLeg,
+  GateMode,
   Position,
   ScanRow,
   SleeveCard,
@@ -30,6 +31,7 @@ import {
   verticalEntryWindowOpen,
   verticalStopCooling,
 } from "./vertical";
+import { decideDayMomentum, type MinuteBar } from "./dayMomentum";
 
 export const MAX_AUTO_MOMENTUM = 5;
 export const MAX_AUTO_OWNERSHIP = 5;
@@ -38,9 +40,9 @@ export const OWNERSHIP_STOP_MUL = 0.98;
 export const AUTO_RISK_FRAC = 0.01;
 
 export type AutoBuy = {
-  sleeveId: "momentum" | "ownership" | "riskoff";
+  sleeveId: "momentum" | "ownership" | "riskoff" | "day";
   symbol: string;
-  side: "Buy";
+  side: "Buy" | "Sell";
   qty: number;
   stopPrice: number;
   thesis: string;
@@ -482,6 +484,9 @@ export type AutopilotCtx = {
   riskoffEtfQuotes?: Array<{ symbol: string; last: number }>;
   /** Underlying -> ET ymd of last 50% debit stop. Same-day skip. */
   verticalStopCooldown?: Record<string, string>;
+  now?: Date;
+  gateMode?: GateMode;
+  dayBars?: MinuteBar[];
   log: (line: string) => void;
 };
 
@@ -494,6 +499,35 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
   const sold: AutoSell[] = [];
   const verticals: AutoVertical[] = [];
   if (!ctx.enabled) return { bought, sold, verticals };
+
+  if (ctx.dayBars && ctx.gateMode) {
+    const day = decideDayMomentum({
+      now: ctx.now ?? new Date(),
+      gateMode: ctx.gateMode,
+      bars: ctx.dayBars,
+      positions: ctx.getPositions(),
+      sleeveLossCapUsd: ctx.getSleeves().day.lossCapUsd,
+      sleeveRealizedPnlUsd: ctx.getSleeves().day.paper.realizedPnlUsd,
+    });
+    for (const s of day.sells) {
+      const r = await ctx.close(s);
+      if (r.ok) {
+        ctx.log(`auto paper close ${s.sleeveId} ${s.symbol} ${s.reason} (MockBroker, not Tradovate, not live)`);
+        sold.push(s);
+      } else {
+        ctx.log(`auto paper close skip ${s.symbol}: ${r.error}`);
+      }
+    }
+    if (day.buy) {
+      const r = await ctx.place(day.buy);
+      if (r.ok) {
+        ctx.log(`auto paper ${day.buy.side} ${day.buy.sleeveId} ${day.buy.qty} ${day.buy.symbol} stop ${day.buy.stopPrice} ${day.buy.thesis} (MockBroker, not Tradovate, not live)`);
+        bought.push(day.buy);
+      } else {
+        ctx.log(`auto paper skip ${day.buy.symbol}: ${r.error}`);
+      }
+    }
+  }
 
   const riskOn = ctx.riskOn === true;
   const spyAbove200 = knownBool(ctx.riskChecks?.spyAbove200);

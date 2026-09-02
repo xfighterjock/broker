@@ -198,11 +198,11 @@ export function defaultSleeves(): Record<SleeveId, SleeveCard> {
       budgetPct: 15,
       lossCapUsd: 500,
       thesis:
-        "NFP / CPI / FOMC event gate. Flatten into the print; no directional entries from this app.",
+        "NFP / CPI / FOMC event gate plus MES 5m stochastic 14,3,3 momentum (VWAP filter). Flatten into the print.",
       macroDrivers: "Payrolls, CPI, FOMC statement/presser vs freeze card.",
-      microDrivers: "knowledge_time after print; paper bid/ask; checklist.",
+      microDrivers: "MES 5m slow stochastic 14,3,3; longs above session VWAP, shorts below; GATE windows; 15:45 flatten.",
       instruments: "MES / ZN / M6E / SR3",
-      structure: "Futures event sleeve. Clock + freeze + flatten bound here.",
+      structure: "Event clock + MES stochastic paper. Qty 1. MockBroker only.",
       killRules:
         "flatten 15:45 ET / 15:30 FOMC or -$500; GATE OFF / Flatten sleeve",
       status: "paper",

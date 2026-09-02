@@ -78,7 +78,7 @@ Five sleeves (SLEEVE_IDS). Each has its own mock book.
 
 Horizon: intraday. Budget hint 15%. Loss cap $500.
 
-Event-clock futures sleeve. Instruments on the quote strip: MES, ZN, M6E, SR3 (Yahoo =F). Thesis: NFP / CPI / FOMC gate. Flatten into the print. No directional entries from this app. GATE, freeze, flatten, and oversize cancels bind here. Autopilot does not buy this sleeve.
+Event-clock futures sleeve. Instruments on the quote strip: MES, ZN, M6E, SR3 (Yahoo =F). NFP/CPI/FOMC GATE still binds: PRE-ARM, NO-STOP BAND, and session flatten refuse new entries; flatten 15:45 ET (15:30 FOMC). Autopilot papers MES only: 5-minute slow stochastic 14,3,3, longs only above session VWAP, shorts only below, qty 1, stop at least 8 ticks or the signal bar. Yahoo 5m MES=F bars (not E*TRADE). RISK ON does not bind this book. MockBroker only.
 
 ### 2. momentum — Short-term momentum
 
