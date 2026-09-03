@@ -49,6 +49,45 @@ describe("iOS Event Gate scaffold", () => {
     expect(entitlements).toContain("aps-environment");
     expect(info).toContain("remote-notification");
     expect(info).toContain("Event Gate");
+    expect(info).toContain("NSFaceIDUsageDescription");
+  });
+
+  it("home screen is essentials and Settings is secondary; no WKWebView shell", () => {
+    const essentials = readFileSync(resolve("ios/EventGate/EssentialsView.swift"), "utf8");
+    const content = readFileSync(resolve("ios/EventGate/ContentView.swift"), "utf8");
+    const settings = readFileSync(resolve("ios/EventGate/SettingsView.swift"), "utf8");
+    const login = readFileSync(resolve("ios/EventGate/LoginView.swift"), "utf8");
+    const api = readFileSync(resolve("ios/EventGate/BrokerAPI.swift"), "utf8");
+    const format = readFileSync(resolve("ios/EventGate/EssentialsFormat.swift"), "utf8");
+    const webConfirm = readFileSync(resolve("client/src/essentials.ts"), "utf8");
+    const dumped = [
+      essentials, content, settings, login, api, format,
+      readFileSync(resolve("ios/EventGate/AuthController.swift"), "utf8"),
+      readFileSync(resolve("ios/EventGate/StatusController.swift"), "utf8"),
+    ].join("\n");
+
+    expect(content).toContain("EssentialsView()");
+    expect(content).toContain("SettingsView()");
+    expect(content).toContain("LoginView()");
+    expect(settings).toContain("Register");
+    expect(settings).toContain("Revoke");
+    expect(login).toContain("Sign in");
+    expect(api).toContain("/api/auth/login");
+    expect(api).toContain("/api/status");
+    expect(api).toContain("/api/gate/enable");
+    expect(api).toContain("/api/paper/auto");
+    expect(api).toContain("/api/flatten");
+    expect(api).toContain("Authorization");
+    expect(api).toContain("Bearer");
+    expect(api).not.toContain("basicAuthHeader");
+    expect(dumped).not.toContain("WKWebView");
+    const flatten =
+      'Flatten gated paper positions? This is the print-day / emergency veto (MockBroker, not live).';
+    expect(format).toContain(flatten);
+    expect(webConfirm).toContain(flatten);
+    expect(essentials).toContain("AUTO PAPER");
+    expect(essentials).toContain("SleeveChip");
+    expect(essentials).toContain("confirmFlatten");
   });
 
   it("gitignore blocks the real plist and Xcode userdata", () => {

@@ -2,8 +2,53 @@ import Foundation
 
 struct BrokerAPI {
     var baseURL: String
-    var username: String
-    var password: String
+    var bearerToken: String?
+
+    func login(username: String, password: String) async throws -> LoginSuccess {
+        try await post("/api/auth/login", json: [
+            "username": username,
+            "password": password,
+        ], authorized: false)
+    }
+
+    func logout() async throws {
+        let _: Ack = try await post("/api/auth/logout", json: [:] as [String: String])
+    }
+
+    func authStatus() async throws -> AuthStatusResponse {
+        try await get("/api/auth/status", authorized: false)
+    }
+
+    func gateStatus() async throws -> StatusSnapshot {
+        try await get("/api/status")
+    }
+
+    func setGate(enabled: Bool) async throws -> StatusSnapshot {
+        try await post("/api/gate/enable", json: ["enabled": enabled])
+    }
+
+    func setAutoPaper(enabled: Bool) async throws -> StatusSnapshot {
+        try await post("/api/paper/auto", json: ["enabled": enabled])
+    }
+
+    func setAutoSleeve(sleeveId: String, enabled: Bool) async throws -> StatusSnapshot {
+        try await post("/api/paper/auto", json: [
+            "sleeveId": sleeveId,
+            "enabled": enabled,
+        ])
+    }
+
+    func flatten() async throws -> StatusSnapshot {
+        try await post("/api/flatten", json: [:] as [String: String])
+    }
+
+    func startEtradeOAuth() async throws -> EtradeStartResult {
+        try await post("/api/etrade/oauth/start", json: [:] as [String: String])
+    }
+
+    func submitEtradePin(_ pin: String) async throws {
+        let _: Ack = try await post("/api/etrade/oauth/pin", json: ["pin": pin])
+    }
 
     func register(token: String, deviceLabel: String?, replaceToken: String?) async throws -> RegisterSuccess {
         var body: [String: String] = [
@@ -30,7 +75,7 @@ struct BrokerAPI {
         try await post("/api/notifications/test", json: [:] as [String: String])
     }
 
-    func status() async throws -> NotificationStatus {
+    func notificationStatus() async throws -> NotificationStatus {
         try await get("/api/notifications/status")
     }
 
@@ -39,16 +84,16 @@ struct BrokerAPI {
         let error: String?
     }
 
-    private func get<T: Decodable>(_ path: String) async throws -> T {
-        try await send(path, method: "GET", body: nil)
+    private func get<T: Decodable>(_ path: String, authorized: Bool = true) async throws -> T {
+        try await send(path, method: "GET", body: nil, authorized: authorized)
     }
 
-    private func post<T: Decodable>(_ path: String, json: [String: String]) async throws -> T {
+    private func post<T: Decodable>(_ path: String, json: Any, authorized: Bool = true) async throws -> T {
         let data = try JSONSerialization.data(withJSONObject: json, options: [])
-        return try await send(path, method: "POST", body: data)
+        return try await send(path, method: "POST", body: data, authorized: authorized)
     }
 
-    private func send<T: Decodable>(_ path: String, method: String, body: Data?) async throws -> T {
+    private func send<T: Decodable>(_ path: String, method: String, body: Data?, authorized: Bool) async throws -> T {
         let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let root = URL(string: trimmed),
               let scheme = root.scheme?.lowercased(),
@@ -57,17 +102,17 @@ struct BrokerAPI {
         else {
             throw BrokerAPIError.invalidBaseURL
         }
-        let user = username.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !user.isEmpty, !password.isEmpty else {
-            throw BrokerAPIError.missingCredentials
-        }
 
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue(basicAuthHeader(user: user, password: password), forHTTPHeaderField: "Authorization")
-        // Keep tokens under the VPS default principal, not the nginx username (`broker`).
+        // Keep FCM tokens on the VPS default principal so existing registrations stay valid.
         request.setValue(EventGateIdentity.tokenPrincipal, forHTTPHeaderField: "x-remote-user")
+        if authorized {
+            let token = bearerToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !token.isEmpty else { throw BrokerAPIError.missingCredentials }
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         if let body {
             request.httpBody = body
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -85,7 +130,7 @@ struct BrokerAPI {
             throw BrokerAPIError.transport("Non-HTTP response")
         }
         if http.statusCode == 401 {
-            throw BrokerAPIError.httpStatus(401, "nginx basic auth failed (check username/password)")
+            throw BrokerAPIError.httpStatus(401, summarizeBody(data))
         }
         if !(200...299).contains(http.statusCode) {
             throw BrokerAPIError.httpStatus(http.statusCode, summarizeBody(data))
@@ -95,11 +140,6 @@ struct BrokerAPI {
         } catch {
             throw BrokerAPIError.decoding(summarizeBody(data))
         }
-    }
-
-    private func basicAuthHeader(user: String, password: String) -> String {
-        let raw = "\(user):\(password)"
-        return "Basic \(Data(raw.utf8).base64EncodedString())"
     }
 
     private func summarizeBody(_ data: Data) -> String {

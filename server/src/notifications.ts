@@ -244,7 +244,14 @@ export class NotificationService {
 
   principalFromReq(req: Request): string {
     const headerUser = req.get("x-remote-user") || req.get("x-forwarded-user");
-    const candidate = String(headerUser || "event-gate").trim();
+    const tagged = req as Request & {
+      eventGateUser?: { username?: string };
+      session?: { username?: string };
+    };
+    const sessionUser = tagged.eventGateUser?.username || tagged.session?.username;
+    // Prefer an explicit device principal (iOS still sends event-gate) so existing
+    // FCM tokens stay on the same row; otherwise the logged-in username.
+    const candidate = String(headerUser || sessionUser || "event-gate").trim();
     return candidate.slice(0, 120) || "event-gate";
   }
 

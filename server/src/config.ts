@@ -1,9 +1,13 @@
+import { authMode as resolveAuthMode } from "./auth";
+
 export interface AppConfig {
   databaseUrl: string;
   redisUrl: string;
   port: number;
   bind: string;
   gatePassword: string | undefined;
+  /** Cookie signing secret. Production users mode requires this or GATE_PASSWORD. */
+  sessionSecret?: string;
   tradingMode: string;
   nodeEnv: string;
   cookieSecure: boolean;
@@ -22,14 +26,26 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const gatePassword = env.GATE_PASSWORD && env.GATE_PASSWORD.length > 0
     ? env.GATE_PASSWORD
     : undefined;
+  const sessionSecret = env.SESSION_SECRET && env.SESSION_SECRET.length > 0
+    ? env.SESSION_SECRET
+    : undefined;
+  const authMode = resolveAuthMode(env);
 
-  if (nodeEnv === "production" && !gatePassword) {
-    console.error("[EventGate] GATE_PASSWORD is unset. Refusing to start in production.");
-    process.exit(1);
-  }
-  if (!gatePassword) {
+  if (nodeEnv === "production") {
+    if (authMode === "users") {
+      if (!sessionSecret && !gatePassword) {
+        console.error(
+          "[EventGate] SESSION_SECRET (or GATE_PASSWORD as cookie-signing fallback) is required in production.",
+        );
+        process.exit(1);
+      }
+    } else if (!gatePassword) {
+      console.error("[EventGate] GATE_PASSWORD is unset. Refusing to start in production.");
+      process.exit(1);
+    }
+  } else if (authMode !== "users" && !gatePassword) {
     console.warn(
-      "[EventGate] GATE_PASSWORD is unset. UI is open. Do not expose this process on a public interface.",
+      "[EventGate] GATE_PASSWORD is unset. Cookie-mode UI is open. Do not expose this process on a public interface.",
     );
   }
 
@@ -45,10 +61,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port: Number(env.PORT || 3001),
     bind: env.BIND || "127.0.0.1",
     gatePassword,
+    sessionSecret,
     tradingMode,
     nodeEnv,
     cookieSecure: env.COOKIE_SECURE === "1" || nodeEnv === "production",
-    authMode: (env.AUTH_MODE || (nodeEnv === "production" ? "nginx" : "cookie")).toLowerCase(),
+    authMode,
     tradovateBaseUrl: env.TRADOVATE_BASE_URL,
     pushFcmEnabled: env.PUSH_FCM_ENABLED === "1",
     pushFcmProjectId: env.PUSH_FCM_PROJECT_ID?.trim() || undefined,

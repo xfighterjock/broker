@@ -15,6 +15,13 @@
 		01C000000000000000000006 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01B000000000000000000006 /* KeychainStore.swift */; };
 		01C000000000000000000007 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01B000000000000000000007 /* AppSettings.swift */; };
 		01C000000000000000000008 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01B000000000000000000008 /* Models.swift */; };
+		01C00000000000000000000D /* EssentialsFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01B00000000000000000000D /* EssentialsFormat.swift */; };
+		01C00000000000000000000E /* AuthController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01B00000000000000000000E /* AuthController.swift */; };
+		01C00000000000000000000F /* StatusController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01B00000000000000000000F /* StatusController.swift */; };
+		01C000000000000000000010 /* EssentialsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01B000000000000000000010 /* EssentialsView.swift */; };
+		01C000000000000000000011 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01B000000000000000000011 /* SettingsView.swift */; };
+		01C000000000000000000012 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01B000000000000000000012 /* LoginView.swift */; };
+		01C000000000000000000013 /* EtradePinView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01B000000000000000000013 /* EtradePinView.swift */; };
 		01C00000000000000000000B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 01B00000000000000000000B /* Assets.xcassets */; };
 		01C00000000000000000000C /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = 01B00000000000000000000C /* GoogleService-Info.plist */; };
 		01C0000000000000000000D1 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = 01D000000000000000000002 /* FirebaseCore */; };
@@ -31,6 +38,13 @@
 		01B000000000000000000006 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		01B000000000000000000007 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		01B000000000000000000008 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		01B00000000000000000000D /* EssentialsFormat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EssentialsFormat.swift; sourceTree = "<group>"; };
+		01B00000000000000000000E /* AuthController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthController.swift; sourceTree = "<group>"; };
+		01B00000000000000000000F /* StatusController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusController.swift; sourceTree = "<group>"; };
+		01B000000000000000000010 /* EssentialsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EssentialsView.swift; sourceTree = "<group>"; };
+		01B000000000000000000011 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		01B000000000000000000012 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
+		01B000000000000000000013 /* EtradePinView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EtradePinView.swift; sourceTree = "<group>"; };
 		01B000000000000000000009 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		01B00000000000000000000A /* EventGate.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = EventGate.entitlements; sourceTree = "<group>"; };
 		01B00000000000000000000B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -77,6 +91,13 @@
 				01B000000000000000000006 /* KeychainStore.swift */,
 				01B000000000000000000007 /* AppSettings.swift */,
 				01B000000000000000000008 /* Models.swift */,
+				01B00000000000000000000D /* EssentialsFormat.swift */,
+				01B00000000000000000000E /* AuthController.swift */,
+				01B00000000000000000000F /* StatusController.swift */,
+				01B000000000000000000010 /* EssentialsView.swift */,
+				01B000000000000000000011 /* SettingsView.swift */,
+				01B000000000000000000012 /* LoginView.swift */,
+				01B000000000000000000013 /* EtradePinView.swift */,
 				01B00000000000000000000B /* Assets.xcassets */,
 				01B00000000000000000000A /* EventGate.entitlements */,
 				01B000000000000000000009 /* Info.plist */,
@@ -170,6 +191,13 @@
 				01C000000000000000000006 /* KeychainStore.swift in Sources */,
 				01C000000000000000000007 /* AppSettings.swift in Sources */,
 				01C000000000000000000008 /* Models.swift in Sources */,
+				01C00000000000000000000D /* EssentialsFormat.swift in Sources */,
+				01C00000000000000000000E /* AuthController.swift in Sources */,
+				01C00000000000000000000F /* StatusController.swift in Sources */,
+				01C000000000000000000010 /* EssentialsView.swift in Sources */,
+				01C000000000000000000011 /* SettingsView.swift in Sources */,
+				01C000000000000000000012 /* LoginView.swift in Sources */,
+				01C000000000000000000013 /* EtradePinView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

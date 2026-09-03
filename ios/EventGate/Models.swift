@@ -69,7 +69,7 @@ enum BrokerAPIError: LocalizedError {
         case .invalidBaseURL:
             return "Base URL is not a valid http(s) address."
         case .missingCredentials:
-            return "Enter nginx basic-auth username and password first."
+            return "Sign in with your Event Gate username and password first."
         case .missingToken:
             return "No FCM token yet. Allow notifications and run on a physical iPhone."
         case .httpStatus(let code, let body):
@@ -80,6 +80,82 @@ enum BrokerAPIError: LocalizedError {
             return detail
         }
     }
+}
+
+struct LoginSuccess: Decodable {
+    let ok: Bool
+    let username: String?
+    let token: String?
+    let expiresAt: String?
+    let authRequired: Bool?
+}
+
+struct AuthStatusResponse: Decodable {
+    let authRequired: Bool
+    let authed: Bool
+    let mode: String?
+    let username: String?
+}
+
+struct EtradeStartResult: Decodable {
+    let ok: Bool?
+    let authorizeUrl: String?
+    let error: String?
+}
+
+struct CalendarEventSnap: Decodable {
+    let id: String?
+    let type: String?
+    let flattenEt: String?
+}
+
+struct ClockSnapshot: Decodable {
+    let nowEt: String?
+    let mode: String?
+    let countdownLabel: String?
+    let flattenEt: String?
+    let focusEvent: CalendarEventSnap?
+}
+
+struct RiskChecks: Decodable {
+    let spyAbove200: Bool?
+    let acwiAbove200: Bool?
+    let hygAbove200: Bool?
+    let uup20dPct: Double?
+    let dollarVeto: Bool?
+}
+
+struct SleeveBook: Decodable {
+    let equityUsd: Double?
+    let pnlUsd: Double?
+    let totalPnlUsd: Double?
+    let dailyPnlUsd: Double?
+}
+
+struct BrokerPosition: Decodable {
+    let id: String?
+    let symbol: String?
+    let qty: Double?
+    let side: String?
+    let sleeveId: String?
+}
+
+struct BrokerSnapshot: Decodable {
+    let name: String
+    let mode: String
+    let positions: [BrokerPosition]?
+}
+
+struct StatusSnapshot: Decodable {
+    let clock: ClockSnapshot?
+    let gateEnabled: Bool
+    let autoPaper: Bool?
+    let autoPaperBySleeve: [String: Bool]?
+    let riskOn: Bool
+    let riskChecks: RiskChecks?
+    let etradeAuth: String?
+    let broker: BrokerSnapshot
+    let sleeveBooks: [String: SleeveBook]?
 }
 
 enum TokenRedaction {

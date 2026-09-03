@@ -42,7 +42,6 @@ final class AppSettings: ObservableObject {
 
     var hasCredentials: Bool {
         !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !password.isEmpty
     }
 
     func lastRegisteredToken() -> String? {

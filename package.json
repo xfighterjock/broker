@@ -14,6 +14,7 @@
   "scripts": {
     "test": "vitest run",
     "migrate": "tsx server/src/migrate.ts",
+    "user:create": "tsx server/src/createUserCli.ts",
     "dev:client": "npm run dev -w @broker/client",
     "build": "npm run build -w @broker/server && npm run build -w @broker/client",
     "dev": "concurrently -k -n server,client -c cyan,magenta \"npm run dev:server\" \"npm run dev:client\"",

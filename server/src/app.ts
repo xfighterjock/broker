@@ -42,11 +42,26 @@ import {
   type AutoVertical,
 } from "./autopilot";
 import {
+  authMode,
   authRequired,
+  bearerAuthMiddleware,
+  bearerTokenFromReq,
   gatePassword,
   isAuthed,
   requireAuth,
+  sessionUsername,
+  usersAuthMode,
 } from "./auth";
+import {
+  createUserDirectory,
+  hashSessionToken,
+  issueSession,
+  loginAllowed,
+  noteLoginFailure,
+  noteLoginSuccess,
+  verifyPasswordAgainstUser,
+  type UserDirectory,
+} from "./users";
 import type { AppConfig } from "./config";
 import type { DbPool } from "./db";
 import {
@@ -159,6 +174,7 @@ export interface AppDeps {
   liveRefused: boolean;
   stubNote: string | null;
   notifications?: NotificationService;
+  users?: UserDirectory;
 }
 
 function freezeFromRow(row: Awaited<ReturnType<typeof latestFreeze>>): {
@@ -203,6 +219,8 @@ export function buildApp(deps: AppDeps): express.Express {
   app.disable("x-powered-by");
   app.use(express.json({ limit: "512kb" }));
   app.use(cookieParser());
+  const users = deps.users ?? createUserDirectory(deps.pool);
+  app.use(bearerAuthMiddleware(users));
   const notifications = deps.notifications ?? new NotificationService(deps.pool, deps.cfg);
   attachNotificationService(notifications);
   let lastEtradeAuth: ReturnType<typeof etradeAuthState> | null = null;
@@ -1383,8 +1401,8 @@ export function buildApp(deps: AppDeps): express.Express {
   });
 
   // Public, unauthenticated, GET-only, read-only. Minimal market risk state ONLY —
-  // never P/L, orders, positions, auth state, secrets, or write methods. nginx also
-  // exempts this exact path from basic auth (deploy/nginx/event-gate.conf); this
+  // never P/L, orders, positions, auth state, secrets, or write methods. nginx does
+  // not require a session on this exact path (deploy/nginx/event-gate.conf); this
   // in-app bypass is defense in depth so the route stays open even off that front door.
   app.get("/api/public/risk", async (_req, res) => {
     res.set("Cache-Control", "no-store, no-cache, must-revalidate");
@@ -1399,10 +1417,62 @@ export function buildApp(deps: AppDeps): express.Express {
   });
 
   app.get("/api/auth/status", (req, res) => {
-    res.json({ authRequired: authRequired(), authed: isAuthed(req) });
+    res.json({
+      authRequired: authRequired(),
+      authed: isAuthed(req),
+      mode: authMode(),
+      username: sessionUsername(req) ?? null,
+    });
   });
 
-  app.post("/api/auth/login", (req, res) => {
+  app.post("/api/auth/login", async (req, res) => {
+    if (usersAuthMode()) {
+      const usernameRaw = String(req.body?.username ?? "");
+      const password = String(req.body?.password ?? "");
+      if (!usernameRaw.trim()) {
+        res.status(400).json({ error: "username required" });
+        return;
+      }
+      if (!loginAllowed(usernameRaw)) {
+        res.status(429).json({ error: "invalid credentials" });
+        return;
+      }
+      try {
+        const user = await users.findByUsername(usernameRaw);
+        const ok = await verifyPasswordAgainstUser(user, password);
+        if (!ok || !user) {
+          noteLoginFailure(usernameRaw);
+          res.status(401).json({ error: "invalid credentials" });
+          return;
+        }
+        const issued = await issueSession(users, user, req.get("user-agent") ?? undefined);
+        noteLoginSuccess(user.username);
+        const body = {
+          ok: true as const,
+          username: user.username,
+          token: issued.token,
+          expiresAt: issued.expiresAt.toISOString(),
+        };
+        if (!req.session) {
+          res.json(body);
+          return;
+        }
+        req.session.authed = true;
+        req.session.userId = user.id;
+        req.session.username = user.username;
+        req.session.save((err) => {
+          if (err) {
+            res.status(500).json({ error: "session save failed" });
+            return;
+          }
+          res.json(body);
+        });
+      } catch {
+        res.status(500).json({ error: "login failed" });
+      }
+      return;
+    }
+
     const password = String(req.body?.password ?? "");
     const expected = gatePassword();
     if (!expected) {
@@ -1411,6 +1481,10 @@ export function buildApp(deps: AppDeps): express.Express {
     }
     if (password !== expected) {
       res.status(401).json({ error: "bad password" });
+      return;
+    }
+    if (!req.session) {
+      res.json({ ok: true });
       return;
     }
     req.session.authed = true;
@@ -1423,11 +1497,24 @@ export function buildApp(deps: AppDeps): express.Express {
     });
   });
 
-  app.post("/api/auth/logout", (req, res) => {
-    req.session.destroy(() => {
+  app.post("/api/auth/logout", async (req, res) => {
+    const token = bearerTokenFromReq(req);
+    if (token) {
+      try {
+        await users.revokeSession(hashSessionToken(token));
+      } catch {
+        /* still clear the cookie */
+      }
+    }
+    const done = () => {
       res.clearCookie("eg.sid", { path: "/" });
       res.json({ ok: true });
-    });
+    };
+    if (!req.session) {
+      done();
+      return;
+    }
+    req.session.destroy(() => done());
   });
 
   app.use("/api", (req, res, next) => {

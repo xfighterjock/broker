@@ -1,6 +1,8 @@
-# Event Gate iOS (FCM)
+# Event Gate iOS (essentials + FCM)
 
-Minimal native client so Richard’s iPhone can receive Event Gate pushes. Not a trading UI.
+Native phone client for Event Gate. Home screen mirrors web `/m` (MobileEssentials): clock/mode, GATE, RISK ON/OFF, AUTO PAPER master + D/M/O/Ow/R chips, Flatten (same confirm copy), sleeve P/L, optional E*TRADE PIN. Settings holds credentials/session tools and FCM register/revoke/test.
+
+Web `/m` remains for browsers. This app talks to the same JSON APIs with a users-table session (Bearer in Keychain). It does not wrap the SPA in WKWebView.
 
 This folder was authored on Linux (no Xcode). Open and build it on a Mac. The Simulator will not receive real APNs / FCM device pushes.
 
@@ -50,6 +52,7 @@ The target already has:
 
 - Push Notifications (`aps-environment` = `development` in `EventGate.entitlements`)
 - Background Modes → Remote notifications (`UIBackgroundModes`)
+- Face ID usage string (`NSFaceIDUsageDescription`)
 
 Xcode may rewrite `aps-environment` to `production` for a Release / App Store profile. That is expected.
 
@@ -58,21 +61,31 @@ Xcode may rewrite `aps-environment` to `production` for a Release / App Store pr
 1. Plug in the phone, trust the computer, select the device (not a Simulator).
 2. Build and run Event Gate.
 3. Allow notifications when prompted.
-4. Enter nginx basic auth: username `broker`, password from the VPS htpasswd (Keychain only; never paste into git or chat).
+4. Sign in with the users-table username/password (not nginx htpasswd, not `GATE_PASSWORD`). Session token stays in the Keychain.
 5. Base URL defaults to `https://broker.logikmancer.com`.
-6. When an FCM token appears (redacted `abcd…wxyz`), tap **Register** if auto-register did not already fire.
-7. Tap **Refresh status** — expect `enabled` / `configured` and at least one active token.
-8. Tap **Send test**. A banner should arrive on the phone. Backend test payload is title `Event Gate test notification`, `deepLinkRoute` `/status`.
-9. Token refresh re-registers with `replaceToken`. **Revoke** opts this device out.
+6. Home screen is essentials. Settings (gear) has Face ID / Touch ID unlock, FCM Register / Revoke / Test, and Sign out.
+7. When an FCM token appears (redacted `abcd…wxyz`), tap **Register** if auto-register did not already fire after login.
+8. Tap **Refresh status** — expect `enabled` / `configured` and at least one active token.
+9. Tap **Send test**. A banner should arrive on the phone. Backend test payload is title `Event Gate test notification`, `deepLinkRoute` `/status` (opens essentials).
+10. Token refresh re-registers with `replaceToken`. **Revoke** opts this device out.
 
 Simulator notes: `registerForRemoteNotifications` fails; you will not get a real APNs token or a deliverable FCM push. Use a device.
 
 ## 5. Backend contract
 
-Auth: production `AUTH_MODE=nginx`. Public hostname requires nginx basic auth. Token principal is `x-remote-user` / `x-forwarded-user` or `event-gate`. This app sends `x-remote-user: event-gate` so tokens land on the same principal the VPS test hook uses (not the nginx user `broker`).
+Production `AUTH_MODE=users`. nginx terminates TLS and does **not** require htpasswd on `/api` or the SPA. Login is `POST /api/auth/login` `{ username, password }`. Token principal for FCM is still `x-remote-user: event-gate` so existing tokens stay on that principal.
 
 | Method | Path | Body |
 | --- | --- | --- |
+| POST | `/api/auth/login` | `{ username, password }` → `{ token }` |
+| POST | `/api/auth/logout` | (revokes bearer) |
+| GET | `/api/auth/status` | — |
+| GET | `/api/status` | essentials snapshot |
+| POST | `/api/gate/enable` | `{ enabled }` |
+| POST | `/api/paper/auto` | `{ enabled }` or `{ sleeveId, enabled }` |
+| POST | `/api/flatten` | `{}` |
+| POST | `/api/etrade/oauth/start` | `{}` |
+| POST | `/api/etrade/oauth/pin` | `{ pin }` |
 | POST | `/api/notifications/tokens/register` | `{ platform: "ios", token, deviceLabel?, replaceToken? }` |
 | POST | `/api/notifications/tokens/revoke` | `{ platform: "ios", token }` |
 | POST | `/api/notifications/test` | (empty) |
@@ -90,4 +103,4 @@ Without that `.p8`, FCM cannot hand the notification to APNs. Register may succe
 
 ## Out of scope
 
-Trading UI, Android, new server alert producers, committing secrets (plist API key, service-account JSON, nginx password, E\*TRADE material, raw FCM tokens).
+Desktop blotter, charts, directional order entry, Android, wrapping the SPA in WKWebView, committing secrets (plist API key, service-account JSON, user passwords, nginx password, E\*TRADE material, raw FCM tokens).

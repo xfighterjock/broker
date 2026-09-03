@@ -22,6 +22,8 @@
 	<string>1</string>
 	<key>FirebaseAppDelegateProxyEnabled</key>
 	<false/>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Unlock Event Gate with Face ID to reuse your saved session. Face ID is not your Event Gate password.</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>

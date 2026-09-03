@@ -6,6 +6,7 @@ import { seedEvents } from "../../shared/clock";
 import type { CalendarEvent } from "../../shared/types";
 import { buildApp, stopAutoPaperLoop } from "./app";
 import { authRequired, buildSessionMiddleware, gatePassword } from "./auth";
+import { createUserDirectory, maybeBootstrapAdmin } from "./users";
 import { loadConfig } from "./config";
 import { maybeLoadAppDotenv } from "./massive";
 import { createPool, loadEvents, recentGateLog, runMigrations } from "./db";
@@ -27,6 +28,17 @@ async function main(): Promise<void> {
     await pool.query("SELECT 1");
     await runMigrations(pool);
     console.log("[EventGate] postgres connected, migrations applied");
+    try {
+      const boot = await maybeBootstrapAdmin(createUserDirectory(pool));
+      if (boot.created && boot.username) {
+        console.log(`[EventGate] bootstrapped first user ${boot.username}`);
+      }
+    } catch (err) {
+      console.warn(
+        "[EventGate] user bootstrap skipped",
+        err instanceof Error ? err.message : err,
+      );
+    }
   } catch (err) {
     console.warn(
       "[EventGate] postgres unavailable — running with seed events and in-memory freeze/log.",
@@ -146,7 +158,7 @@ async function main(): Promise<void> {
     stubNote,
   });
 
-  const sessionSecret = gatePassword() || "dev-only-not-for-prod";
+  const sessionSecret = cfg.sessionSecret || gatePassword() || "dev-only-not-for-prod";
   const sessionMw = redis
     ? buildSessionMiddleware(redis.client, sessionSecret, cfg.cookieSecure)
     : session({
@@ -209,7 +221,12 @@ async function main(): Promise<void> {
   server.listen(cfg.port, cfg.bind, () => {
     console.log(`[EventGate] listening on ${cfg.bind}:${cfg.port}`);
     console.log(`[EventGate] trading mode ${cfg.tradingMode}`);
-    console.log(`[EventGate] GATE_PASSWORD ${authRequired() ? "set" : "UNSET"}`);
+    console.log(`[EventGate] AUTH_MODE ${cfg.authMode}`);
+    if (cfg.authMode === "users") {
+      console.log("[EventGate] app login is users table (session cookie + bearer). GATE_PASSWORD is not the login.");
+    } else {
+      console.log(`[EventGate] GATE_PASSWORD ${authRequired() ? "set" : "UNSET"}`);
+    }
     startEtradeAccessTokenKeepAlive();
   });
 

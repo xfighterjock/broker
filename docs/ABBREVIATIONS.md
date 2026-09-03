@@ -16,11 +16,15 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **APNs** — Apple Push Notification service. iOS devices receive remote notifications through APNs while Firebase maps delivery through FCM tokens. Firebase Console still needs an APNs Authentication Key (`.p8`) uploaded for the Event Gate iOS app; that key is not in git.
 
+**argon2id** — Password hash for the `users` table. Never stored in plaintext.
+
 **ATM** — At the money. Auto debit verticals pick the strike closest to last (pickAtmCallDebit / pickAtmPutDebit).
 
-**AUTH_MODE** — Auth front door. Production nginx; local cookie session eg.sid. GET /api/public/risk is exempt in-app too, independent of AUTH_MODE.
+**AUTH_MODE** — Auth front door. Production `users` (users table + cookie/bearer). Local default `cookie` (GATE_PASSWORD). `nginx` is remapped to `users` in production. GET /api/public/risk is exempt in-app too.
 
 **AUTO PAPER** — Autopilot. Independent enable per sleeve (`autoPaperBySleeve`: day, momentum, options, ownership, riskoff). Snapshot `autoPaper` is true if ANY sleeve is on (badge / old clients). POST /api/paper/auto `{ enabled }` sets all; `{ sleeveId, enabled }` sets one. Redis `paper:auto` is JSON; legacy `0`/`1` migrates on first boot. Default all on when the key is missing. Never CSP/CC/naked. GATE still binds day.
+
+**bearer** — Opaque session token from POST /api/auth/login. iOS stores it in the Keychain and sends `Authorization: Bearer`. SPA uses cookie `eg.sid` instead.
 
 **BIL** — SPDR Bloomberg 1-3 Month T-Bill ETF. Cash/T-bill leg of the risk-off 63d relative-strength overlay. Held when neither GLD nor UUP beats it.
 
@@ -44,9 +48,11 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **ETF** — Exchange-traded fund. Risk-off overlay is one of GLD/UUP/BIL; gate names are SPY/ACWI/HYG/UUP.
 
+**Face ID** — iOS LocalAuthentication unlock of a Keychain session. Optional. Not a remote password. Touch ID is the same path.
+
 **FedWatch** — CME FedWatch snapshot field on the freeze card (NFP/CPI/FOMC briefing).
 
-**FCM** — Firebase Cloud Messaging. Event Gate push provider (HTTP v1 via Firebase Admin SDK on the VPS; Firebase iOS SDK in `ios/`). Disabled by default until `PUSH_FCM_ENABLED=1` and credentials are configured. The iOS client registers tokens; it does not hold the Admin service-account JSON.
+**FCM** — Firebase Cloud Messaging. Event Gate push provider (HTTP v1 via Firebase Admin SDK on the VPS; Firebase iOS SDK in `ios/`). Disabled by default until `PUSH_FCM_ENABLED=1` and credentials are configured. The iOS client registers tokens with a users-table bearer; it does not hold the Admin service-account JSON.
 
 **Flatten** — Close gated day-sleeve names (POST /api/flatten) or a sleeve position. Print-day veto with GATE OFF. Does not flatten other sleeves from the event clock.
 
@@ -56,7 +62,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **FOMC_STATEMENT** — FOMC statement calendar type.
 
-**GATE** — Event-clock risk gate on futures roots. Modes: idle, PRE-ARM, NO-STOP BAND, SESSION FLATTEN. Enable via POST /api/gate/enable.
+**GATE** — Event-clock risk gate on futures roots. Modes: idle, PRE-ARM, NO-STOP BAND, SESSION FLATTEN. Enable via POST /api/gate/enable. Not the login password (GATE_PASSWORD is cookie-mode / signing only).
 
 **GATED_ROOTS** — MES, MNQ, ES, NQ, ZN, ZF, ZT, ZB, SR3, 6E, M6E. Longest-first match so MES wins over ES, M6E over 6E, MNQ over NQ.
 
@@ -68,11 +74,11 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **IEF** — iShares 7-10 Year Treasury Bond ETF. Not a live risk-off expression (refused / not coded).
 
-**iOS Event Gate** — Native SwiftUI app in ios/ (bundle com.logikmancer.mybroker). Registers/revokes FCM tokens and can send a test push. Not a trading UI.
+**iOS Event Gate** — Native SwiftUI app in ios/ (bundle com.logikmancer.mybroker). Phone Event Gate client: essentials (GATE, RISK, AUTO PAPER chips, Flatten, sleeve P/L, E*TRADE PIN) plus FCM. Users-table login + optional Face ID / Touch ID unlock of the Keychain session. Web `/m` remains for browsers.
 
 **IWM** — iShares Russell 2000 ETF. Options quote strip; optional third equity-index put on riskoff when SPY is below 200dma and IWM is quoted.
 
-**Keychain** — iOS credential store. Event Gate iOS keeps nginx basic-auth username/password (and the last registered FCM token for `replaceToken`) here only — never UserDefaults, never git.
+**Keychain** — iOS credential store. Event Gate iOS keeps the session bearer, login username, and last registered FCM token (`replaceToken`) here only — never UserDefaults, never git.
 
 **knowledge_time** — Timestamp after the print used on the freeze checklist (knowledge_time after print).
 
@@ -108,7 +114,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **P/L** — Profit and loss. Sleeve books expose realized, unrealized, dailyPnlUsd, totalPnlUsd (equity minus $100k).
 
-**PIN** — E*TRADE verifier after Authorize. Typed in Event Gate (desktop header or /m). Needed after midnight ET. Never stored in git or chat.
+**PIN** — E*TRADE verifier after Authorize. Typed in Event Gate (desktop header, web /m, or the iOS essentials home). Needed after midnight ET. Never stored in git or chat.
 
 **push dedupe key** — Stable alert key used to suppress repeat deliveries in a configured window (default 30 minutes).
 
@@ -188,7 +194,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **Postgres** — Database for calendar events, freeze snapshots, iOS FCM device tokens, and push-alert dedupe.
 
-**nginx** — TLS reverse proxy in front of 127.0.0.1:3001. Production AUTH_MODE=nginx. Exempts GET /api/public/risk from basic auth; every other path stays protected.
+**nginx** — TLS reverse proxy in front of 127.0.0.1:3001. No htpasswd on /api or the SPA; app auth is the users table. GET /api/public/risk stays unauthenticated.
 
 **Vite** — Client bundler/dev server for the React SPA.
 

@@ -20,10 +20,12 @@ final class PushController: ObservableObject {
 
     private weak var application: UIApplication?
     private var settings: AppSettings?
+    private var auth: AuthController?
     private var pendingToken: String?
 
-    func bind(settings: AppSettings) {
+    func bind(settings: AppSettings, auth: AuthController) {
         self.settings = settings
+        self.auth = auth
         if let pending = pendingToken {
             pendingToken = nil
             applyFCMToken(pending, settings: settings)
@@ -118,7 +120,7 @@ final class PushController: ObservableObject {
 
     func refreshStatus() async {
         await run("Refresh status") { _, api, _ in
-            lastStatus = try await api.status()
+            lastStatus = try await api.notificationStatus()
             lastMessage = "Status: provider=\(lastStatus?.provider ?? "?") enabled=\(lastStatus?.enabled ?? false) configured=\(lastStatus?.configured ?? false) tokens active=\(lastStatus?.tokens.active ?? 0)"
         }
     }
@@ -128,7 +130,7 @@ final class PushController: ObservableObject {
         fcmToken = token
         tokenPreview = TokenRedaction.redact(token)
         lastMessage = "FCM token \(tokenPreview)"
-        guard autoRegister, settings.hasCredentials else { return }
+        guard autoRegister, auth?.hasSession == true else { return }
         let rotated = previous.map { $0 != token } ?? (settings.lastRegisteredToken().map { $0 != token } ?? false)
         Task {
             await run("Register") { settings, api, token in
@@ -153,6 +155,9 @@ final class PushController: ObservableObject {
             guard let settings else {
                 throw BrokerAPIError.transport("Settings not bound")
             }
+            guard let auth, auth.hasSession else {
+                throw BrokerAPIError.missingCredentials
+            }
             let needsToken = label != "Refresh status" && label != "Send test"
             let token: String
             if needsToken {
@@ -161,7 +166,7 @@ final class PushController: ObservableObject {
             } else {
                 token = fcmToken ?? ""
             }
-            let api = BrokerAPI(baseURL: settings.baseURL, username: settings.username, password: settings.password)
+            let api = BrokerAPI(baseURL: settings.baseURL, bearerToken: auth.sessionToken)
             try await work(settings, api, token)
         } catch {
             lastMessage = "\(label) failed: \(error.localizedDescription)"

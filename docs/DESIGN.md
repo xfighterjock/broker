@@ -12,14 +12,25 @@ Paper risk-gate plus briefing dashboard. Five independent mock $100k sleeves. BU
 
 ## Runtime
 
-- Client: Vite + React SPA (client/). Desktop layout; phones (narrow viewport or /m) get essentials (GATE, RISK, AUTO PAPER per sleeve, Flatten, sleeve P/L). Native iOS Event Gate (ios/) is FCM token registration only — not a trading UI.
+- Client: Vite + React SPA (client/). Desktop layout; phones (narrow viewport or /m) get essentials (GATE, RISK, AUTO PAPER + D/M/O/Ow/R chips, Flatten, sleeve P/L). Native iOS Event Gate (ios/, bundle com.logikmancer.mybroker) is the phone Event Gate client: same essentials plus FCM. Web /m remains for browsers. No WKWebView wrapper.
 - Server: Node 20 Express (server/), bind 127.0.0.1:3001.
 - Shared: clock, constants, types (shared/).
-- Store: Postgres (events, freeze snapshots, iOS FCM tokens, alert dedupe) + Redis (gate, sleeves, blotter, mock book, session marks, scan cache, per-sleeve AUTO PAPER).
-- Front door: nginx TLS at broker.logikmancer.com. Production AUTH_MODE=nginx; local default is cookie eg.sid. GET /api/public/risk is the sole exception: nginx exempts that exact path from basic auth (deploy/nginx/event-gate.conf) and the Express /api auth middleware exempts it too, so it is reachable with no credentials from anywhere. It returns only {riskOn, riskChecks, asOf} (no-store) — never P/L, orders, positions, auth state, or secrets. GET /api/status stays behind auth and is not exposed publicly. Notification token/test endpoints are not public.
+- Store: Postgres (events, freeze snapshots, users + user_sessions, iOS FCM tokens, alert dedupe) + Redis (gate, sleeves, blotter, mock book, session marks, scan cache, per-sleeve AUTO PAPER).
+- Front door: nginx TLS at broker.logikmancer.com. Production AUTH_MODE=users (users table + cookie eg.sid and/or opaque bearer). Local default is cookie + GATE_PASSWORD. AUTH_MODE=nginx is remapped to users in production — htpasswd is no longer the app login (deploy/nginx/event-gate.conf has no auth_basic). GET /api/public/risk stays unauthenticated: nginx does not require a session and Express exempts that exact path. It returns only {riskOn, riskChecks, asOf} (no-store) — never P/L, orders, positions, auth state, or secrets. GET /api/status and notification endpoints stay behind app auth.
 - Unit: systemd event-gate on the VPS. Mac checkout is the deploy source.
-- No Docker. Production needs postgres, redis, and GATE_PASSWORD.
-- Push notifications: FCM is fail-closed until `PUSH_FCM_ENABLED=1` plus Firebase Admin credentials on the VPS. The iOS app in `ios/` registers/revokes tokens and can request a test push. The real `GoogleService-Info.plist` (API_KEY) is not in git.
+- No Docker. Production needs postgres, redis, AUTH_MODE=users, a cookie-signing secret (SESSION_SECRET, or GATE_PASSWORD as fallback), and at least one row in `users`. GATE_PASSWORD is not the users-table login and is not GATE ON/OFF (that is POST /api/gate/enable).
+- Push notifications: FCM is fail-closed until `PUSH_FCM_ENABLED=1` plus Firebase Admin credentials on the VPS. The iOS app registers/revokes tokens (Bearer session, still `x-remote-user: event-gate`) and can request a test push. The real `GoogleService-Info.plist` (API_KEY) is not in git.
+
+## Users and login
+
+Postgres `users` (username unique, argon2id `password_hash`, optional `disabled_at`) and `user_sessions` (sha256 of an opaque bearer, 30-day expiry). Migration `003_users.sql`.
+
+- POST `/api/auth/login` `{ username, password }` (AUTH_MODE=users) sets cookie `eg.sid` and returns `{ ok, username, token, expiresAt }`. SPA uses the cookie; iOS stores the bearer in the Keychain and sends `Authorization: Bearer`.
+- POST `/api/auth/logout` destroys the cookie and revokes the presented bearer.
+- GET `/api/auth/status` returns `{ authRequired, authed, mode, username }`.
+- AUTH_MODE=cookie still accepts the shared GATE_PASSWORD (local / tests). That path is not production.
+- First user: set `BOOTSTRAP_ADMIN_USER` / `BOOTSTRAP_ADMIN_PASSWORD` in the VPS `.env` (gitignored) and restart once while `users` is empty — then unset those vars. Or `npm run user:create -- <username>` (password from stdin or `EVENTGATE_NEW_USER_PASSWORD`). Never commit passwords.
+- iOS: Face ID / Touch ID (LocalAuthentication) only unlocks a Keychain session already issued by login. Settings can disable biometrics. Failure falls back to username/password.
 
 ## Event clock and GATE
 
@@ -150,7 +161,7 @@ Quote strip: SPY, QQQ, HYG, GLD, UUP, BIL.
 
 - Provider abstraction: `server/src/notifications.ts` with an FCM provider using Firebase Admin SDK (HTTP v1 under the hood). Config requires `PUSH_FCM_ENABLED=1`, `PUSH_FCM_PROJECT_ID`, and credentials from ADC or a root-owned file path. Without config, sends return structured `disabled` or `not_configured` and do not crash the app.
 - Persistence: Postgres tables `notification_device_tokens` and `notification_alert_dedupe` (migration `002_notifications.sql`).
-- Auth: token registration/revocation and test-send endpoints are under `/api`, so existing auth protections apply (nginx basic auth + app auth policy). Public hostname uses nginx basic auth (user `broker`). Token principal is `x-remote-user` / `x-forwarded-user` or defaults to `event-gate`.
+- Auth: token registration/revocation and test-send endpoints are under `/api`, so users-table session/bearer applies. Token principal is `x-remote-user` / `x-forwarded-user`, else the logged-in username, else `event-gate`. iOS still sends `x-remote-user: event-gate`.
 - Token model: iOS platform, optional `device_label`, created/updated/last_seen timestamps, enabled/revoked state, token rotation via `replaceToken`, token hash for indexing/lookup.
 - Alert payload type: `risk_flip | service_fault | auth_needed | paper_guard` with title/body, eventType, occurredAt, dedupeKey, and deepLinkRoute only. No account IDs, positions, secrets, or order controls.
 - Dedupe/rate-limit: restart-safe dedupe key store in Postgres; default one delivery per key per 30 minutes (`PUSH_ALERT_DEDUPE_WINDOW_MINUTES`).
@@ -158,10 +169,10 @@ Quote strip: SPY, QQQ, HYG, GLD, UUP, BIL.
 - Status visibility: `/api/notifications/status` and `/api/status.notifications` expose provider flags and token counts only (no token values, no credential path).
 - Native iOS client (`ios/EventGate`, display name Event Gate, bundle `com.logikmancer.mybroker`):
   1) `FirebaseApp.configure()`, notification permission, `UNUserNotificationCenter`, `registerForRemoteNotifications`, `MessagingDelegate`, FCM token. SPM: FirebaseCore + FirebaseMessaging.
-  2) Settings: base URL default `https://broker.logikmancer.com`; nginx username/password in Keychain only. After token + credentials, `POST /api/notifications/tokens/register` with Basic auth and `{ platform: "ios", token, deviceLabel? }`. App sends `x-remote-user: event-gate` so tokens match the VPS default principal (not the nginx user).
+  2) Login: username/password against `/api/auth/login`. Bearer in Keychain. Home screen is essentials (clock/mode, GATE, RISK, AUTO PAPER + D/M/O/Ow/R, Flatten with `FLATTEN_CONFIRM`, sleeve P/L, E*TRADE PIN). Settings (secondary) holds base URL, biometric unlock, and FCM Register/Revoke/Test. After token + session, `POST /api/notifications/tokens/register` with `Authorization: Bearer` and `{ platform: "ios", token, deviceLabel? }`. App still sends `x-remote-user: event-gate` so tokens match the VPS default principal.
   3) On FCM refresh, register again with `replaceToken` when a previous token exists.
   4) Revoke calls `POST /api/notifications/tokens/revoke`. Buttons also send a test push and refresh status. UI shows a redacted token preview and permission state.
-  5) Push `deepLinkRoute` is displayed (example `/status`); this client is not a trading UI.
+  5) Push `deepLinkRoute` (`/status`, `/m`) opens essentials. Not a desktop blotter.
   6) Entitlements: Push Notifications + remote-notification background mode. Open `ios/EventGate.xcodeproj` on a Mac; Richard picks the Apple Team. Simulator will not get real APNs. Copy `~/Downloads/GoogleService-Info.plist` to `ios/EventGate/GoogleService-Info.plist` before building. Example plist is `ios/GoogleService-Info.plist.example` (`API_KEY=REPLACE_ME`). `project.yml` can regenerate the xcodeproj via XcodeGen.
   7) Firebase Console still needs an APNs Authentication Key (`.p8`) uploaded for the iOS app. That key is not in this repo and must be created in Apple Developer / uploaded by Richard.
 - Hook for server-side producers: call `sendEventGateAlert(principal, payload)` (or `NotificationService.sendAlert`) with a typed `EventGateAlertPayload` from VPS-owned risk-flip / operational guards. `auth_needed` is already wired for an E*TRADE `ok|error → needs_pin` transition (dedupe key `auth_needed:etrade:needs_pin`). Do not wire speculative trading alerts here.

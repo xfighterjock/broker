@@ -322,6 +322,8 @@ function OwnershipOverlayNote({ positions }: { positions: StatusSnapshot["broker
 export default function App() {
   const [state, setState] = useState<StatusSnapshot | null>(null);
   const [authNeeded, setAuthNeeded] = useState(false);
+  const [authMode, setAuthMode] = useState<string>("cookie");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [freeze, setFreeze] = useState<FreezeCard>(emptyFreeze());
   const [err, setErr] = useState<string | null>(null);
@@ -362,6 +364,7 @@ export default function App() {
       try {
         const st = await api("/api/auth/status");
         if (cancel) return;
+        if (typeof st.mode === "string") setAuthMode(st.mode);
         if (st.authRequired && !st.authed) {
           setAuthNeeded(true);
           return;
@@ -422,7 +425,11 @@ export default function App() {
   async function login(e: FormEvent) {
     e.preventDefault();
     try {
-      await api("/api/auth/login", { method: "POST", body: JSON.stringify({ password }) });
+      const body =
+        authMode === "users"
+          ? { username, password }
+          : { password };
+      await api("/api/auth/login", { method: "POST", body: JSON.stringify(body) });
       setPassword("");
       setAuthNeeded(false);
       await refresh();
@@ -461,14 +468,40 @@ export default function App() {
   }, [tab]);
 
   if (authNeeded) {
+    const usersLogin = authMode === "users";
     return (
       <div className="login">
         <form className="panel" onSubmit={login}>
           <h2>Event Gate</h2>
           <div className="body">
-            <p className="hint">Shared password required. Paper only. No directional orders from this app.</p>
-            <label>GATE_PASSWORD</label>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
+            <p className="hint">
+              {usersLogin
+                ? "Username and password (users table). Paper only. No directional orders from this app."
+                : "Shared password required. Paper only. No directional orders from this app."}
+            </p>
+            {usersLogin ? (
+              <>
+                <label>Username</label>
+                <input
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  autoComplete="username"
+                  autoFocus
+                />
+                <label>Password</label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="current-password"
+                />
+              </>
+            ) : (
+              <>
+                <label>GATE_PASSWORD</label>
+                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
+              </>
+            )}
             {err && <div className="err">{err}</div>}
             <button type="submit" className="good">Enter</button>
           </div>

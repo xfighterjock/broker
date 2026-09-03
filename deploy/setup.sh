@@ -93,7 +93,7 @@ fi
 
 if [ ! -f "$DEPLOY_PATH/.env" ] && [ -f "$DEPLOY_PATH/.env.example" ]; then
   cp "$DEPLOY_PATH/.env.example" "$DEPLOY_PATH/.env"
-  echo "[event-gate] wrote $DEPLOY_PATH/.env from .env.example — set GATE_PASSWORD and NODE_ENV=production"
+  echo "[event-gate] wrote $DEPLOY_PATH/.env from .env.example — set NODE_ENV=production AUTH_MODE=users SESSION_SECRET and bootstrap the first user (see docs/DESIGN.md)"
 fi
 
 echo "[event-gate] setup complete"

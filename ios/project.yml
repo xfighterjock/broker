@@ -53,6 +53,7 @@ targets:
         CFBundleDisplayName: Event Gate
         UIBackgroundModes: [remote-notification]
         FirebaseAppDelegateProxyEnabled: false
+        NSFaceIDUsageDescription: Unlock Event Gate with Face ID to reuse your saved session. Face ID is not your Event Gate password.
         UILaunchScreen: {}
     dependencies:
       - package: firebase-ios-sdk
