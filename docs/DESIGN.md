@@ -68,7 +68,7 @@ E*TRADE: in-process access-token renew every 30 minutes weekdays 09:30-16:00 ET.
 - Blotter + sleeve cards in Redis. Session marks (NY calendar date) split daily vs total P/L.
 - Autopilot (AUTO_PAPER_INTERVAL_MS = 5 min) when AUTO PAPER is on. Default on. Never CSP/CC/naked from auto. Day sleeve auto-papers MES (stochastic + VWAP); other sleeves as below.
 - Vertical guards (shared/constants.ts): no new verticals at/after 15:50 ET weekdays (OPTIONS_VERTICAL_CUTOFF_MINUTES); net debit at most half the width (OPTIONS_DEBIT_MAX_WIDTH_FRAC); same-underlying cooldown the rest of the ET day after a 50% debit stop (OPTIONS_DEBIT_STOP_FRAC). Target 30-45 DTE; exit at 21 DTE; profit take 50% of debit. Size near 1% of sleeve equity (OPTIONS_DEBIT_TARGET_FRAC), hard cap 2% (OPTIONS_DEBIT_CAP_FRAC). Multiplier 100.
-- Stops on mock last. Paper only.
+- Stops on mock last. Last ≤ 0 is ignored (missing/junk prints must not flatten). One mark-to-market pass at a time so a stop cannot book twice. Paper only.
 
 ## Sleeve methodologies
 

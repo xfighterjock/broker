@@ -21,6 +21,7 @@ import * as tradovate from "../server/src/tradovateBroker";
 import {
   detectStopHits,
   lastCrossesStop,
+  lastFromQuotes,
   stopOnCorrectSide,
   validatePaperOrder,
 } from "../server/src/paper";
@@ -344,8 +345,10 @@ describe("flatten on stop cross", () => {
   it("detectStopHits fires when delayed last crosses the working stop", () => {
     expect(lastCrossesStop("Long", 400, 399)).toBe(true);
     expect(lastCrossesStop("Long", 400, 401)).toBe(false);
+    expect(lastCrossesStop("Long", 400, 0)).toBe(false);
     expect(lastCrossesStop("Short", 600, 601)).toBe(true);
     expect(lastCrossesStop("Short", 600, 599)).toBe(false);
+    expect(lastCrossesStop("Short", 600, 0)).toBe(false);
     const hits = detectStopHits(
       [
         {
@@ -392,6 +395,46 @@ describe("flatten on stop cross", () => {
     expect(hits[0].last).toBe(399);
     expect(hits[0].realizedPnl).toBe(399 - 500);
   });
+
+  it("detectStopHits ignores last <= 0 so a missing quote cannot flatten a long", () => {
+    const pos = {
+      id: "pos-uup",
+      symbol: "UUP",
+      root: null,
+      qty: 709,
+      side: "Long" as const,
+      avgPrice: 28.17,
+      unrealizedPnl: 0,
+      gated: false,
+      sleeveId: "riskoff" as const,
+    };
+    const stop = {
+      id: "ord-uup",
+      symbol: "UUP",
+      root: null,
+      type: "StopMarket" as const,
+      side: "Sell" as const,
+      qty: 709,
+      stopPrice: 25.9164,
+      state: "Working" as const,
+      gated: false,
+      sleeveId: "riskoff" as const,
+    };
+    const quote = {
+      symbol: "UUP",
+      last: 0,
+      prevClose: 28.17,
+      change: null,
+      changePct: null,
+      asOf: null,
+      exchange: "NYSE",
+      delayed: true,
+      source: "massive" as const,
+    };
+    expect(detectStopHits([pos], [stop], [quote])).toHaveLength(0);
+    expect(lastFromQuotes([quote], "UUP")).toBeNull();
+  });
+
 
   it("GET /api/quotes flattens the mock position when last crosses the stop", async () => {
     const { app, broker } = makeTestApp();

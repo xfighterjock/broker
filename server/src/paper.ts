@@ -77,6 +77,7 @@ export function stopOnCorrectSide(side: Side, last: number, stopPrice: number): 
 }
 
 export function lastCrossesStop(posSide: PositionSide, stopPrice: number, last: number): boolean {
+  if (!(last > 0) || !Number.isFinite(last) || !Number.isFinite(stopPrice)) return false;
   if (posSide === "Long") return last <= stopPrice;
   if (posSide === "Short") return last >= stopPrice;
   return false;
@@ -99,7 +100,7 @@ export function lastFromQuotes(quotes: DelayedQuote[], symbol: string): number |
   const raw = symbol.trim().toUpperCase();
   for (const q of quotes) {
     const qs = q.symbol.toUpperCase();
-    if (q.last === null || !Number.isFinite(q.last)) continue;
+    if (q.last === null || !Number.isFinite(q.last) || q.last <= 0) continue;
     if (qs === mapped || qs === raw || qs === `${raw}=F` || mapped === `${qs}`) return q.last;
   }
   return null;
@@ -259,7 +260,7 @@ export function detectStopHits(
     if (p.side === "Flat" || p.qty <= 0) continue;
     if (isVerticalPosition(p) || isOverlayPosition(p)) continue;
     const last = lastFromQuotes(quotes, p.symbol);
-    if (last === null) continue;
+    if (last === null || last <= 0) continue;
     const stop = orders.find(
       (o) =>
         live.has(o.state) &&

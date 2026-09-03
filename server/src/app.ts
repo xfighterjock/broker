@@ -483,7 +483,16 @@ export function buildApp(deps: AppDeps): express.Express {
     );
   }
 
+  let quietRunning: Promise<number> | null = null;
   async function markPaperQuiet(): Promise<number> {
+    if (quietRunning) return quietRunning;
+    quietRunning = markPaperQuietInner().finally(() => {
+      quietRunning = null;
+    });
+    return quietRunning;
+  }
+
+  async function markPaperQuietInner(): Promise<number> {
     const positions = deps.broker
       .getPositionsSync()
       .filter((p) => p.side !== "Flat" && p.qty > 0);
@@ -497,6 +506,14 @@ export function buildApp(deps: AppDeps): express.Express {
     const quotes = await fetchDelayedQuotes(symbols);
     const hits = detectStopHits(positions, orders, quotes);
     for (const hit of hits) {
+      if (!(hit.last > 0)) continue;
+      const livePos = deps.broker.getPositionsSync().find(
+        (p) =>
+          p.id === hit.position.id &&
+          p.side !== "Flat" &&
+          p.qty > 0,
+      );
+      if (!livePos) continue;
       const sleeveId = hit.position.sleeveId ?? hit.stop.sleeveId ?? "momentum";
       await deps.broker.cancelOrders([hit.stop.id], "paper stop hit");
       await deps.broker.flattenSymbols([hit.position.symbol], "paper stop hit");
