@@ -96,6 +96,19 @@ describe("iOS Event Gate scaffold", () => {
     expect(gi).toMatch(/xcuserdata/);
   });
 
+  it("AppIcon set references the 1024 PNG", () => {
+    const icon = resolve("ios/EventGate/Assets.xcassets/AppIcon.appiconset/AppIcon.png");
+    const contents = readFileSync(
+      resolve("ios/EventGate/Assets.xcassets/AppIcon.appiconset/Contents.json"),
+      "utf8",
+    );
+    expect(existsSync(icon)).toBe(true);
+    expect(statSync(icon).size).toBeGreaterThan(10_000);
+    expect(contents).toContain('"filename" : "AppIcon.png"');
+    expect(contents).toContain('"size" : "1024x1024"');
+    expect(contents).not.toMatch(/"idiom"\s*:\s*"(iphone|ipad|ios-marketing)"/);
+  });
+
   it("iOS sources do not embed secrets or service-account JSON", () => {
     const files = walkFiles(resolve("ios")).filter(
       (p) =>
