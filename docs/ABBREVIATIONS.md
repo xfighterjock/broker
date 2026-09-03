@@ -14,7 +14,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **ACWI** — iShares MSCI ACWI ETF (global equities). One of three 200dma legs on the RISK ON badge.
 
-**APNs** — Apple Push Notification service. iOS devices receive remote notifications through APNs while Firebase maps delivery through FCM tokens.
+**APNs** — Apple Push Notification service. iOS devices receive remote notifications through APNs while Firebase maps delivery through FCM tokens. Firebase Console still needs an APNs Authentication Key (`.p8`) uploaded for the Event Gate iOS app; that key is not in git.
 
 **ATM** — At the money. Auto debit verticals pick the strike closest to last (pickAtmCallDebit / pickAtmPutDebit).
 
@@ -23,6 +23,8 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 **AUTO PAPER** — Autopilot switch. When on, mock longs and verticals fire from scan/risk rules. Default on. Never CSP/CC/naked. Day sleeve stays manual.
 
 **BIL** — SPDR Bloomberg 1-3 Month T-Bill ETF. Cash/T-bill leg of the risk-off 63d relative-strength overlay. Held when neither GLD nor UUP beats it.
+
+**BUNDLE_ID** — iOS application id. Event Gate iOS must stay `com.logikmancer.mybroker` to match the existing Firebase iOS app.
 
 **CC** — Covered call. Manual overlay on the options sleeve, tagged to an ownership or SPCX thesis. Not sold by autopilot. Never naked.
 
@@ -44,7 +46,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **FedWatch** — CME FedWatch snapshot field on the freeze card (NFP/CPI/FOMC briefing).
 
-**FCM** — Firebase Cloud Messaging. Event Gate backend push provider for iOS notifications (HTTP v1 via Firebase Admin SDK). Disabled by default until VPS credentials are configured.
+**FCM** — Firebase Cloud Messaging. Event Gate push provider (HTTP v1 via Firebase Admin SDK on the VPS; Firebase iOS SDK in `ios/`). Disabled by default until `PUSH_FCM_ENABLED=1` and credentials are configured. The iOS client registers tokens; it does not hold the Admin service-account JSON.
 
 **Flatten** — Close gated day-sleeve names (POST /api/flatten) or a sleeve position. Print-day veto with GATE OFF. Does not flatten other sleeves from the event clock.
 
@@ -66,7 +68,11 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **IEF** — iShares 7-10 Year Treasury Bond ETF. Not a live risk-off expression (refused / not coded).
 
+**iOS Event Gate** — Native SwiftUI app in ios/ (bundle com.logikmancer.mybroker). Registers/revokes FCM tokens and can send a test push. Not a trading UI.
+
 **IWM** — iShares Russell 2000 ETF. Options quote strip; optional third equity-index put on riskoff when SPY is below 200dma and IWM is quoted.
+
+**Keychain** — iOS credential store. Event Gate iOS keeps nginx basic-auth username/password (and the last registered FCM token for `replaceToken`) here only — never UserDefaults, never git.
 
 **knowledge_time** — Timestamp after the print used on the freeze checklist (knowledge_time after print).
 
@@ -130,7 +136,9 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **SOFR** — Secured Overnight Financing Rate. Underlyer of SR3 (three-month SOFR futures).
 
-**SPA** — Single-page app. Event Gate client is Vite + React.
+**SPA** — Single-page app. Event Gate web client is Vite + React.
+
+**SPM** — Swift Package Manager. Event Gate iOS pulls FirebaseCore and FirebaseMessaging from firebase-ios-sdk.
 
 **SPCX** — SPAC and New Issue ETF. Overlay thesisSleeve may be tagged spcx (manual CSP/CC). Not auto-traded.
 
@@ -159,6 +167,8 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 **VXX** — iPath Series B S&P 500 VIX Short-Term Futures ETN. Not a live risk-off expression.
 
 **WS** — WebSocket /ws for live status and log.
+
+**XcodeGen** — Optional Mac tool. `ios/project.yml` can regenerate `ios/EventGate.xcodeproj`. The checked-in xcodeproj is enough to open on a Mac without installing XcodeGen.
 
 **Yahoo** — Yahoo Finance chart API for futures =F quotes (and fallbacks). Equities prefer Massive.
 

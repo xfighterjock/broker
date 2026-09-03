@@ -17,3 +17,8 @@ notes.txt
 .env.etrade
 .env.etrade.*
 .env.*
+
+# iOS / Xcode — never commit the real Firebase plist (API_KEY) or user signing state
+ios/**/GoogleService-Info.plist
+**/xcuserdata/
+*.xcuserstate
