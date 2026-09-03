@@ -15,10 +15,11 @@ Paper risk-gate plus briefing dashboard. Five independent mock $100k sleeves. BU
 - Client: Vite + React SPA (client/). Desktop layout; phones (narrow viewport or /m) get essentials (GATE, RISK, AUTO PAPER, Flatten, sleeve P/L).
 - Server: Node 20 Express (server/), bind 127.0.0.1:3001.
 - Shared: clock, constants, types (shared/).
-- Store: Postgres (events, freeze snapshots) + Redis (gate, sleeves, blotter, mock book, session marks, scan cache).
-- Front door: nginx TLS at broker.logikmancer.com. Production AUTH_MODE=nginx; local default is cookie eg.sid. GET /api/public/risk is the sole exception: nginx exempts that exact path from basic auth (deploy/nginx/event-gate.conf) and the Express /api auth middleware exempts it too, so it is reachable with no credentials from anywhere. It returns only {riskOn, riskChecks, asOf} (no-store) — never P/L, orders, positions, auth state, or secrets. GET /api/status stays behind auth and is not exposed publicly.
+- Store: Postgres (events, freeze snapshots, iOS FCM tokens, alert dedupe) + Redis (gate, sleeves, blotter, mock book, session marks, scan cache).
+- Front door: nginx TLS at broker.logikmancer.com. Production AUTH_MODE=nginx; local default is cookie eg.sid. GET /api/public/risk is the sole exception: nginx exempts that exact path from basic auth (deploy/nginx/event-gate.conf) and the Express /api auth middleware exempts it too, so it is reachable with no credentials from anywhere. It returns only {riskOn, riskChecks, asOf} (no-store) — never P/L, orders, positions, auth state, or secrets. GET /api/status stays behind auth and is not exposed publicly. Notification token/test endpoints are not public.
 - Unit: systemd event-gate on the VPS. Mac checkout is the deploy source.
 - No Docker. Production needs postgres, redis, and GATE_PASSWORD.
+- Push notifications: backend-only FCM infrastructure exists for iOS tokens, but is disabled by default and fail-closed until explicit Firebase config is provided on the VPS.
 
 ## Event clock and GATE
 
@@ -142,3 +143,22 @@ Quote strip: SPY, QQQ, HYG, GLD, UUP, BIL.
 - Inverse/vol ETFs (SH, SDS, VXX, SJB) and duration (IEF/TLT) as risk-off expressions — not coded. TLT appears only on momentum/ownership quote strips.
 - Day-sleeve directional entries from Event Gate.
 - Scan-universe dump in these docs (500 names). Only methodology tickers are listed in ABBREVIATIONS.md.
+
+## iOS push notification backend slice (FCM)
+
+- Provider abstraction: `server/src/notifications.ts` with an FCM provider using Firebase Admin SDK (HTTP v1 under the hood). Config requires `PUSH_FCM_ENABLED=1`, `PUSH_FCM_PROJECT_ID`, and credentials from ADC or a root-owned file path. Without config, sends return structured `disabled` or `not_configured` and do not crash the app.
+- Persistence: Postgres tables `notification_device_tokens` and `notification_alert_dedupe` (migration `002_notifications.sql`).
+- Auth: token registration/revocation and test-send endpoints are under `/api`, so existing auth protections apply (nginx basic auth + app auth policy).
+- Token model: iOS platform, optional `device_label`, created/updated/last_seen timestamps, enabled/revoked state, token rotation via `replaceToken`, token hash for indexing/lookup.
+- Alert payload type: `risk_flip | service_fault | auth_needed | paper_guard` with title/body, eventType, occurredAt, dedupeKey, and deepLinkRoute only. No account IDs, positions, secrets, or order controls.
+- Dedupe/rate-limit: restart-safe dedupe key store in Postgres; default one delivery per key per 30 minutes (`PUSH_ALERT_DEDUPE_WINDOW_MINUTES`).
+- Test endpoint: `POST /api/notifications/test` sends a harmless "Event Gate test notification" only when FCM is enabled and configured; otherwise returns clear disabled/not-configured status.
+- Status visibility: `/api/notifications/status` and `/api/status.notifications` expose provider flags and token counts only (no token values, no credential path).
+- Integration contract for a future iOS app:
+  1) iOS app gets an FCM registration token via Firebase iOS SDK/APNs setup.
+  2) After Event Gate login, app calls `POST /api/notifications/tokens/register` with `{ platform: "ios", token, deviceLabel? }`.
+  3) On token refresh, app calls register again with `replaceToken` when available.
+  4) On logout/device opt-out, app calls `POST /api/notifications/tokens/revoke`.
+  5) Push `deepLinkRoute` should route the app to Event Gate screens (example `/status`).
+- Hook for server-side producers: call `sendEventGateAlert(principal, payload)` (or `NotificationService.sendAlert`) with a typed `EventGateAlertPayload` from VPS-owned risk-flip / operational guards. `auth_needed` is already wired for an E*TRADE `ok|error → needs_pin` transition (dedupe key `auth_needed:etrade:needs_pin`). Do not wire speculative trading alerts here.
+- Credentials: ADC (`PUSH_FCM_CREDENTIAL_SOURCE=adc`) or a root-owned JSON file path. Never accept service-account secrets through the UI. Never persist them in Redis/Postgres. No Firebase project IDs, keys, or tokens are committed. Feature stays disabled until `PUSH_FCM_ENABLED=1` and project/credentials are set on the VPS.

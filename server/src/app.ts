@@ -122,6 +122,12 @@ import {
   verticalUnrealized,
 } from "./vertical";
 import type { StatusHub } from "./wsHub";
+import {
+  NotificationService,
+  attachNotificationService,
+  createEventGateAlert,
+  sendEventGateAlert,
+} from "./notifications";
 
 let autoPaperTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -146,6 +152,7 @@ export interface AppDeps {
   brokerMode: "mock" | "demo";
   liveRefused: boolean;
   stubNote: string | null;
+  notifications?: NotificationService;
 }
 
 function freezeFromRow(row: Awaited<ReturnType<typeof latestFreeze>>): {
@@ -190,6 +197,9 @@ export function buildApp(deps: AppDeps): express.Express {
   app.disable("x-powered-by");
   app.use(express.json({ limit: "512kb" }));
   app.use(cookieParser());
+  const notifications = deps.notifications ?? new NotificationService(deps.pool, deps.cfg);
+  attachNotificationService(notifications);
+  let lastEtradeAuth: ReturnType<typeof etradeAuthState> | null = null;
 
   const memory = {
     freeze: emptyFreeze(),
@@ -1247,6 +1257,21 @@ export function buildApp(deps: AppDeps): express.Express {
     await ensureAutoPaper();
     await ensureVerticalStopCooldown();
     const risk = await ensureRisk();
+    const etradeAuth = etradeAuthState();
+    if (lastEtradeAuth && lastEtradeAuth !== "needs_pin" && etradeAuth === "needs_pin") {
+      void sendEventGateAlert(
+        "event-gate",
+        createEventGateAlert({
+          title: "Event Gate: E*TRADE PIN needed",
+          body: "Authorize E*TRADE from Event Gate. Paper trading only.",
+          eventType: "auth_needed",
+          occurredAt: new Date().toISOString(),
+          dedupeKey: "auth_needed:etrade:needs_pin",
+          deepLinkRoute: "/status",
+        }),
+      );
+    }
+    lastEtradeAuth = etradeAuth;
     let freeze = memory.freeze;
     let knowledgeTime = memory.knowledgeTime;
     if (deps.pool) {
@@ -1290,7 +1315,7 @@ export function buildApp(deps: AppDeps): express.Express {
       qtyCap: MAX_QTY,
       gatedRoots: GATED_ROOTS,
       authRequired: authRequired(),
-      etradeAuth: etradeAuthState(),
+      etradeAuth,
       broker: {
         name: deps.brokerName,
         mode: deps.brokerMode,
@@ -1308,6 +1333,7 @@ export function buildApp(deps: AppDeps): express.Express {
       sleeveBooks: await sleeveBooksWithSession(),
       riskOn: risk.riskOn,
       riskChecks: risk.checks,
+      notifications: await notifications.status(),
     };
   }
 
@@ -1323,8 +1349,17 @@ export function buildApp(deps: AppDeps): express.Express {
     deps.hub.broadcast({ type: "status", payload: snap });
   }
 
-  app.get("/api/health", (_req, res) => {
-    res.json({ ok: true, authRequired: authRequired() });
+  app.get("/api/health", async (_req, res) => {
+    const n = await notifications.status();
+    res.json({
+      ok: true,
+      authRequired: authRequired(),
+      notifications: {
+        provider: n.provider,
+        enabled: n.enabled,
+        configured: n.configured,
+      },
+    });
   });
 
   // Public, unauthenticated, GET-only, read-only. Minimal market risk state ONLY —
@@ -1784,6 +1819,46 @@ export function buildApp(deps: AppDeps): express.Express {
     await publishStatus();
     res.json({ ok: true });
   });
+
+  app.get("/api/notifications/status", async (_req, res) => {
+    res.json(await notifications.status());
+  });
+
+  app.post("/api/notifications/tokens/register", async (req, res) => {
+    const principal = notifications.principalFromReq(req);
+    const registered = await notifications.registerToken({
+      principal,
+      platform: String(req.body?.platform ?? "ios"),
+      token: String(req.body?.token ?? ""),
+      deviceLabel: typeof req.body?.deviceLabel === "string" ? req.body.deviceLabel : undefined,
+      replaceToken: typeof req.body?.replaceToken === "string" ? req.body.replaceToken : undefined,
+    });
+    if (!registered.ok) {
+      res.status(400).json({ ok: false, error: registered.error });
+      return;
+    }
+    res.json({ ok: true, tokenPreview: registered.tokenPreview });
+  });
+
+  app.post("/api/notifications/tokens/revoke", async (req, res) => {
+    const principal = notifications.principalFromReq(req);
+    const revoked = await notifications.revokeToken({
+      principal,
+      platform: String(req.body?.platform ?? "ios"),
+      token: String(req.body?.token ?? ""),
+    });
+    if (!revoked.ok) {
+      res.status(400).json({ ok: false, error: revoked.error });
+      return;
+    }
+    res.json({ ok: true });
+  });
+
+  app.post("/api/notifications/test", async (req, res) => {
+    const principal = notifications.principalFromReq(req);
+    res.json(await notifications.sendTest(principal));
+  });
+
 
   app.post("/api/paper/vertical", async (req, res) => {
     const placed = await placePaperVertical(req.body);

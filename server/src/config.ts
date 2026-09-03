@@ -9,6 +9,12 @@ export interface AppConfig {
   cookieSecure: boolean;
   authMode: string;
   tradovateBaseUrl: string | undefined;
+  /** Explicit opt-in. Missing/false keeps FCM disabled (fail closed). */
+  pushFcmEnabled?: boolean;
+  pushFcmProjectId?: string;
+  pushFcmCredentialSource?: "adc" | "file";
+  pushFcmCredentialPath?: string;
+  pushDedupeWindowMinutes?: number;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -44,5 +50,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     cookieSecure: env.COOKIE_SECURE === "1" || nodeEnv === "production",
     authMode: (env.AUTH_MODE || (nodeEnv === "production" ? "nginx" : "cookie")).toLowerCase(),
     tradovateBaseUrl: env.TRADOVATE_BASE_URL,
+    pushFcmEnabled: env.PUSH_FCM_ENABLED === "1",
+    pushFcmProjectId: env.PUSH_FCM_PROJECT_ID?.trim() || undefined,
+    pushFcmCredentialSource: env.PUSH_FCM_CREDENTIAL_SOURCE === "file" ? "file" : "adc",
+    pushFcmCredentialPath: env.PUSH_FCM_CREDENTIAL_PATH?.trim() || undefined,
+    pushDedupeWindowMinutes: Math.max(1, Number(env.PUSH_ALERT_DEDUPE_WINDOW_MINUTES || 30)),
   };
 }
