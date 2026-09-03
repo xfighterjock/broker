@@ -14,6 +14,8 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **ACWI** — iShares MSCI ACWI ETF (global equities). One of three 200dma legs on the RISK ON badge.
 
+**APNs** — Apple Push Notification service. iOS devices receive remote notifications through APNs while Firebase maps delivery through FCM tokens.
+
 **ATM** — At the money. Auto debit verticals pick the strike closest to last (pickAtmCallDebit / pickAtmPutDebit).
 
 **AUTH_MODE** — Auth front door. Production nginx; local cookie session eg.sid. GET /api/public/risk is exempt in-app too, independent of AUTH_MODE.
@@ -41,6 +43,8 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 **ETF** — Exchange-traded fund. Risk-off overlay is one of GLD/UUP/BIL; gate names are SPY/ACWI/HYG/UUP.
 
 **FedWatch** — CME FedWatch snapshot field on the freeze card (NFP/CPI/FOMC briefing).
+
+**FCM** — Firebase Cloud Messaging. Event Gate backend push provider for iOS notifications (HTTP v1 via Firebase Admin SDK). Disabled by default until VPS credentials are configured.
 
 **Flatten** — Close gated day-sleeve names (POST /api/flatten) or a sleeve position. Print-day veto with GATE OFF. Does not flatten other sleeves from the event clock.
 
@@ -99,6 +103,8 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 **P/L** — Profit and loss. Sleeve books expose realized, unrealized, dailyPnlUsd, totalPnlUsd (equity minus $100k).
 
 **PIN** — E*TRADE verifier after Authorize. Typed in Event Gate (desktop header or /m). Needed after midnight ET. Never stored in git or chat.
+
+**push dedupe key** — Stable alert key used to suppress repeat deliveries in a configured window (default 30 minutes).
 
 **PRE-ARM** — Gate mode T-15m to T-2m. Cancels Market / StopMarket / StopLimit / MIT on gated roots.
 
@@ -170,7 +176,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **NinjaTrader** — Futures platform. README notes a live NT API add-on is not required for mock. This repo is not an NT order router.
 
-**Postgres** — Database for calendar events and freeze snapshots.
+**Postgres** — Database for calendar events, freeze snapshots, iOS FCM device tokens, and push-alert dedupe.
 
 **nginx** — TLS reverse proxy in front of 127.0.0.1:3001. Production AUTH_MODE=nginx. Exempts GET /api/public/risk from basic auth; every other path stays protected.
 

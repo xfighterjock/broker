@@ -13,6 +13,7 @@ await esbuild.build({
   format: "cjs",
   outfile: path.join(root, "dist/server.js"),
   sourcemap: true,
+  external: ["firebase-admin", "firebase-admin/app", "firebase-admin/messaging"],
 });
 
 await esbuild.build({

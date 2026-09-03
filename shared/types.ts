@@ -443,6 +443,13 @@ export interface StatusSnapshot {
     uup20dPct: number | null;
     dollarVeto: boolean;
   };
+  notifications?: {
+    provider: "fcm";
+    enabled: boolean;
+    configured: boolean;
+    dedupeWindowMinutes: number;
+    tokens: { total: number; active: number; revoked: number };
+  };
 }
 
 export type OptionRight = "C" | "P";
