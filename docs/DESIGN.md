@@ -12,10 +12,10 @@ Paper risk-gate plus briefing dashboard. Five independent mock $100k sleeves. BU
 
 ## Runtime
 
-- Client: Vite + React SPA (client/). Desktop layout; phones (narrow viewport or /m) get essentials (GATE, RISK, AUTO PAPER + D/M/O/Ow/R chips, Flatten, sleeve P/L). Native iOS Event Gate (ios/, bundle com.logikmancer.mybroker) is the phone Event Gate client: same essentials plus FCM. Web /m remains for browsers. No WKWebView wrapper.
+- Client: Vite + React SPA (client/). Desktop layout; phones (narrow viewport or /m) get essentials (GATE, RISK, AUTO PAPER + D/M/O/Ow/R chips, Flatten, sleeve P/L). Native iOS Event Gate (ios/, bundle com.logikmancer.mybroker) is the phone Event Gate client: same essentials plus FCM. Web /m remains for browsers. No WKWebView wrapper. While unlocked, iOS polls GET /api/status every 3 seconds (`StatusController.pollInterval`).
 - Server: Node 20 Express (server/), bind 127.0.0.1:3001.
 - Shared: clock, constants, types (shared/).
-- Store: Postgres (events, freeze snapshots, users + user_sessions, iOS FCM tokens, alert dedupe) + Redis (gate, sleeves, blotter, mock book, session marks, scan cache, per-sleeve AUTO PAPER).
+- Store: Postgres (events, freeze snapshots, users + user_sessions, iOS FCM tokens, alert dedupe) + Redis (gate, sleeves, blotter, mock book, session marks, scan cache, per-sleeve AUTO PAPER, SPA cookie sessions).
 - Front door: nginx TLS at broker.logikmancer.com. Production AUTH_MODE=users (users table + cookie eg.sid and/or opaque bearer). Local default is cookie + GATE_PASSWORD. AUTH_MODE=nginx is remapped to users in production — htpasswd is no longer the app login (deploy/nginx/event-gate.conf has no auth_basic). GET /api/public/risk stays unauthenticated: nginx does not require a session and Express exempts that exact path. It returns only {riskOn, riskChecks, asOf} (no-store) — never P/L, orders, positions, auth state, or secrets. GET /api/status and notification endpoints stay behind app auth.
 - Unit: systemd event-gate on the VPS. Mac checkout is the deploy source.
 - No Docker. Production needs postgres, redis, AUTH_MODE=users, a cookie-signing secret (SESSION_SECRET, or GATE_PASSWORD as fallback), and at least one row in `users`. GATE_PASSWORD is not the users-table login and is not GATE ON/OFF (that is POST /api/gate/enable).
@@ -25,11 +25,17 @@ Paper risk-gate plus briefing dashboard. Five independent mock $100k sleeves. BU
 
 Postgres `users` (username unique, argon2id `password_hash`, optional `disabled_at`) and `user_sessions` (sha256 of an opaque bearer, 30-day expiry). Migration `003_users.sql`.
 
+Two session stores after a users-table login (`server/src/auth.ts`, `server/src/users.ts`):
+
+- SPA cookie `eg.sid` lives in Redis (`eg:sess:` prefix via connect-redis). Cookie `maxAge` is 7 days (`7 * 24 * 3600 * 1000` in `buildSessionMiddleware`). Cookie name and Redis prefix differ on purpose.
+- iOS opaque bearer lives in Postgres `user_sessions` (sha256 of the token). `SESSION_TTL_MS` is 30 days.
+
 - POST `/api/auth/login` `{ username, password }` (AUTH_MODE=users) sets cookie `eg.sid` and returns `{ ok, username, token, expiresAt }`. SPA uses the cookie; iOS stores the bearer in the Keychain and sends `Authorization: Bearer`.
 - POST `/api/auth/logout` destroys the cookie and revokes the presented bearer.
 - GET `/api/auth/status` returns `{ authRequired, authed, mode, username }`.
 - AUTH_MODE=cookie still accepts the shared GATE_PASSWORD (local / tests). That path is not production.
 - First user: set `BOOTSTRAP_ADMIN_USER` / `BOOTSTRAP_ADMIN_PASSWORD` in the VPS `.env` (gitignored) and restart once while `users` is empty — then unset those vars. Or `npm run user:create -- <username>` (password from stdin or `EVENTGATE_NEW_USER_PASSWORD`). Never commit passwords.
+- Auth rules (`server/src/users.ts`): usernames are stored lowercase and must match `^[a-z0-9._-]{2,32}$` at create. Passwords are 8–200 characters at create. Failed POST `/api/auth/login` attempts are rate-limited per username (`LOGIN_MAX_FAILURES` = 8 in `LOGIN_WINDOW_MS` = 15 minutes; in-process map).
 - iOS: Face ID / Touch ID (LocalAuthentication) only unlocks a Keychain session already issued by login. Settings can disable biometrics. Failure falls back to username/password.
 
 ## Event clock and GATE
@@ -169,7 +175,7 @@ Quote strip: SPY, QQQ, HYG, GLD, UUP, BIL.
 - Status visibility: `/api/notifications/status` and `/api/status.notifications` expose provider flags and token counts only (no token values, no credential path).
 - Native iOS client (`ios/EventGate`, display name Event Gate, bundle `com.logikmancer.mybroker`):
   1) `FirebaseApp.configure()`, notification permission, `UNUserNotificationCenter`, `registerForRemoteNotifications`, `MessagingDelegate`, FCM token. SPM: FirebaseCore + FirebaseMessaging.
-  2) Login: username/password against `/api/auth/login`. Bearer in Keychain. Home screen is essentials (clock/mode, GATE, RISK, AUTO PAPER + D/M/O/Ow/R, Flatten with `FLATTEN_CONFIRM`, sleeve P/L, E*TRADE PIN). Settings (secondary) holds base URL, biometric unlock, and FCM Register/Revoke/Test. After token + session, `POST /api/notifications/tokens/register` with `Authorization: Bearer` and `{ platform: "ios", token, deviceLabel? }`. App still sends `x-remote-user: event-gate` so tokens match the VPS default principal.
+  2) Login: username/password against `/api/auth/login`. Bearer in Keychain. Home screen is essentials (clock/mode, GATE, RISK, AUTO PAPER + D/M/O/Ow/R, Flatten with `FLATTEN_CONFIRM`, sleeve P/L, E*TRADE PIN). While unlocked, `StatusController` polls GET `/api/status` every 3 seconds (`pollInterval`) and stops when locked. Settings (secondary) holds base URL, biometric unlock, and FCM Register/Revoke/Test. After token + session, `POST /api/notifications/tokens/register` with `Authorization: Bearer` and `{ platform: "ios", token, deviceLabel? }`. App still sends `x-remote-user: event-gate` so tokens match the VPS default principal.
   3) On FCM refresh, register again with `replaceToken` when a previous token exists.
   4) Revoke calls `POST /api/notifications/tokens/revoke`. Buttons also send a test push and refresh status. UI shows a redacted token preview and permission state.
   5) Push `deepLinkRoute` (`/status`, `/m`) opens essentials. Not a desktop blotter.

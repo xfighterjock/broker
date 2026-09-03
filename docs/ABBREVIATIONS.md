@@ -24,7 +24,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **AUTO PAPER** — Autopilot. Independent enable per sleeve (`autoPaperBySleeve`: day, momentum, options, ownership, riskoff). Snapshot `autoPaper` is true if ANY sleeve is on (badge / old clients). POST /api/paper/auto `{ enabled }` sets all; `{ sleeveId, enabled }` sets one. Redis `paper:auto` is JSON; legacy `0`/`1` migrates on first boot. Default all on when the key is missing. Never CSP/CC/naked. GATE still binds day.
 
-**bearer** — Opaque session token from POST /api/auth/login. iOS stores it in the Keychain and sends `Authorization: Bearer`. SPA uses cookie `eg.sid` instead.
+**bearer** — Opaque session token from POST /api/auth/login. Stored as sha256 in Postgres `user_sessions` (`SESSION_TTL_MS` 30 days). iOS keeps the raw token in the Keychain and sends `Authorization: Bearer`. SPA uses cookie `eg.sid` instead.
 
 **BIL** — SPDR Bloomberg 1-3 Month T-Bill ETF. Cash/T-bill leg of the risk-off 63d relative-strength overlay. Held when neither GLD nor UUP beats it.
 
@@ -122,7 +122,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **QQQ** — Invesco QQQ Trust (Nasdaq-100). Options quote strip; risk-off equity-index put when SPY is below 200dma; momentum/ownership quote strip.
 
-**Redis** — Cache/store for gate flags, mock book, sleeves, blotter, session marks, scan, AUTO PAPER (per-sleeve JSON on `paper:auto`).
+**Redis** — Cache/store for gate flags, mock book, sleeves, blotter, session marks, scan, AUTO PAPER (per-sleeve JSON on `paper:auto`), and SPA cookie sessions (cookie name `eg.sid`, Redis prefix `eg:sess:`).
 
 **RISK OFF** — Badge when RISK ON is false. Pauses new momentum longs and options call-debits; ownership pauses new adds. May run the riskoff sleeve. Does not bind the day book.
 
@@ -133,6 +133,8 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 **SDS** — ProShares UltraShort S&P 500. Not a live risk-off expression.
 
 **SESSION FLATTEN** — Gate mode around flatten ET +/- 5m (and daily-loss). Flattens gated day-sleeve names.
+
+**SESSION_SECRET** — Cookie-signing secret for `eg.sid`. Production AUTH_MODE=users requires this or GATE_PASSWORD as fallback. Not the users-table login.
 
 **SH** — ProShares Short S&P 500. Not a live risk-off expression.
 
@@ -192,7 +194,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **NinjaTrader** — Futures platform. README notes a live NT API add-on is not required for mock. This repo is not an NT order router.
 
-**Postgres** — Database for calendar events, freeze snapshots, iOS FCM device tokens, and push-alert dedupe.
+**Postgres** — Database for calendar events, freeze snapshots, `users` + `user_sessions`, iOS FCM device tokens, and push-alert dedupe.
 
 **nginx** — TLS reverse proxy in front of 127.0.0.1:3001. No htpasswd on /api or the SPA; app auth is the users table. GET /api/public/risk stays unauthenticated.
 
