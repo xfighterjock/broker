@@ -6,6 +6,9 @@ import {
   OPTIONS_DTE_TARGET_MAX,
   OPTIONS_DTE_TARGET_MIN,
   RISKOFF_HYG_SYMBOL,
+  RISKOFF_HYG_MIN_OPEN_INTEREST,
+  RISKOFF_HYG_MAX_ROUNDTRIP_SLIPPAGE_FRAC,
+  RISKOFF_HYG_MAX_AUTO_QTY,
   RISKOFF_SYMBOLS,
 } from "../../shared/constants";
 import type {
@@ -204,6 +207,8 @@ export type AutoVertical = {
   longStrike: number;
   shortStrike: number;
   thesis: string;
+  /** HYG riskoff auto only: hard-capped contract count (RISKOFF_HYG_MAX_AUTO_QTY). Undefined lets validateDebitVertical auto-size at 1%, unchanged for SPY/QQQ/IWM riskoff, options calls, and manual entries. */
+  qty?: number;
 };
 
 function openVerticalUnderlyers(positions: Position[], sleeveId: SleeveId): Set<string> {
@@ -415,6 +420,76 @@ export function pickAtmPutDebit(
   const short = puts[atmIdx - 1];
   if (!(long.strike > short.strike)) return null;
   return { long, short };
+}
+
+export type HygLiquidityCheck = { ok: true } | { ok: false; reason: string };
+
+/**
+ * HYG-only, auto-only liquidity/slippage gate for the credit-leg put debit.
+ * Both legs need real open interest (RISKOFF_HYG_MIN_OPEN_INTEREST), and the
+ * immediate round-trip (sell the long at its bid, buy back the short at its
+ * ask) must not already give back more than
+ * RISKOFF_HYG_MAX_ROUNDTRIP_SLIPPAGE_FRAC of the entry debit — i.e. the
+ * immediate close must be at least 75% of the entry debit. See the
+ * RISKOFF_HYG_* constants doc comment (shared/constants.ts) for the incident
+ * this is guarding against. Only called from the HYG branch of the riskoff
+ * auto put-vertical loop below; SPY/QQQ/IWM riskoff, options-sleeve calls,
+ * and manual POST /api/paper/vertical never call this.
+ */
+export function checkHygAutoLiquidity(
+  long: OptionLeg,
+  short: OptionLeg,
+  qty: number = RISKOFF_HYG_MAX_AUTO_QTY,
+): HygLiquidityCheck {
+  const longOi = long.openInterest;
+  const shortOi = short.openInterest;
+  if (longOi === null || !(longOi >= RISKOFF_HYG_MIN_OPEN_INTEREST)) {
+    return {
+      ok: false,
+      reason: `HYG long leg open interest ${longOi ?? "n/a"} below ${RISKOFF_HYG_MIN_OPEN_INTEREST}`,
+    };
+  }
+  if (shortOi === null || !(shortOi >= RISKOFF_HYG_MIN_OPEN_INTEREST)) {
+    return {
+      ok: false,
+      reason: `HYG short leg open interest ${shortOi ?? "n/a"} below ${RISKOFF_HYG_MIN_OPEN_INTEREST}`,
+    };
+  }
+  const longAsk = long.ask;
+  const shortBid = short.bid;
+  const longBid = long.bid;
+  const shortAsk = short.ask;
+  if (
+    longAsk === null ||
+    shortBid === null ||
+    longBid === null ||
+    shortAsk === null ||
+    !Number.isFinite(longAsk) ||
+    !Number.isFinite(shortBid) ||
+    !Number.isFinite(longBid) ||
+    !Number.isFinite(shortAsk)
+  ) {
+    return { ok: false, reason: "HYG legs missing bid/ask" };
+  }
+  const entryDebit = longAsk - shortBid;
+  if (!(entryDebit > 0)) {
+    return { ok: false, reason: "HYG entry debit <= 0" };
+  }
+  const immediateClose = longBid - shortAsk;
+  const minAcceptable = entryDebit * (1 - RISKOFF_HYG_MAX_ROUNDTRIP_SLIPPAGE_FRAC);
+  if (immediateClose < minAcceptable) {
+    return {
+      ok: false,
+      reason: `HYG round-trip close ${immediateClose.toFixed(2)} < ${minAcceptable.toFixed(2)} (75% of entry debit ${entryDebit.toFixed(2)})`,
+    };
+  }
+  if (long.bidSize !== null && long.bidSize < qty) {
+    return { ok: false, reason: `HYG long bidSize ${long.bidSize} below final qty ${qty}` };
+  }
+  if (short.askSize !== null && short.askSize < qty) {
+    return { ok: false, reason: `HYG short askSize ${short.askSize} below final qty ${qty}` };
+  }
+  return { ok: true };
 }
 
 /** Long closer ATM, short the next further OTM call. Skip if <2 call strikes. */
@@ -726,6 +801,15 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
           ctx.log(`auto paper vertical skip ${intent.symbol}: refuses calls`);
           continue;
         }
+        let qty: number | undefined;
+        if (intent.symbol === RISKOFF_HYG_SYMBOL) {
+          qty = RISKOFF_HYG_MAX_AUTO_QTY;
+          const gate = checkHygAutoLiquidity(pair.long, pair.short, qty);
+          if (!gate.ok) {
+            ctx.log(`auto paper vertical skip ${intent.symbol}: ${gate.reason}`);
+            continue;
+          }
+        }
         const v: AutoVertical = {
           sleeveId: "riskoff",
           symbol: intent.symbol,
@@ -734,6 +818,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
           longStrike: pair.long.strike,
           shortStrike: pair.short.strike,
           thesis: intent.thesis,
+          qty,
         };
         const r = await ctx.placeVertical(v);
         if (r.ok) {

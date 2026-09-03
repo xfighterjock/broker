@@ -108,6 +108,11 @@ export function getRiskSnapshot(): RiskSnapshot {
   return cached?.snap ?? riskOffFallback();
 }
 
+/** Epoch ms the cached risk snapshot was computed, or null if nothing has resolved yet. */
+export function getRiskAsOf(): number | null {
+  return cached?.at ?? null;
+}
+
 async function runRisk(): Promise<RiskSnapshot> {
   const [spyBars, acwiBars, hygBars, uupBars] = await Promise.all([
     fetchMassiveDailyBars("SPY"),

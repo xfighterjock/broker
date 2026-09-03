@@ -16,7 +16,7 @@ Paper risk-gate plus briefing dashboard. Five independent mock $100k sleeves. BU
 - Server: Node 20 Express (server/), bind 127.0.0.1:3001.
 - Shared: clock, constants, types (shared/).
 - Store: Postgres (events, freeze snapshots) + Redis (gate, sleeves, blotter, mock book, session marks, scan cache).
-- Front door: nginx TLS at broker.logikmancer.com. Production AUTH_MODE=nginx; local default is cookie eg.sid.
+- Front door: nginx TLS at broker.logikmancer.com. Production AUTH_MODE=nginx; local default is cookie eg.sid. GET /api/public/risk is the sole exception: nginx exempts that exact path from basic auth (deploy/nginx/event-gate.conf) and the Express /api auth middleware exempts it too, so it is reachable with no credentials from anywhere. It returns only {riskOn, riskChecks, asOf} (no-store) — never P/L, orders, positions, auth state, or secrets. GET /api/status stays behind auth and is not exposed publicly.
 - Unit: systemd event-gate on the VPS. Mac checkout is the deploy source.
 - No Docker. Production needs postgres, redis, and GATE_PASSWORD.
 
@@ -39,6 +39,7 @@ Binds the day sleeve only. Does not flatten momentum, options, ownership, or ris
 ## RISK ON / RISK OFF (badge)
 
 Independent of the riskoff sleeve. Does not bind the day book, event clock, GATE, or flatten (server/src/risk.ts). Cached 15 minutes.
+Exposed read-only and unauthenticated at GET /api/public/risk ({riskOn, riskChecks, asOf} only) so external watchers (e.g. Grok's risk-on/off routine) can poll it directly without Mac access or credentials — see Runtime.
 
 RISK ON iff all of:
 
@@ -69,6 +70,7 @@ E*TRADE: in-process access-token renew every 30 minutes weekdays 09:30-16:00 ET.
 - Autopilot (AUTO_PAPER_INTERVAL_MS = 5 min) when AUTO PAPER is on. Default on. Never CSP/CC/naked from auto. Day sleeve auto-papers MES (stochastic + VWAP); other sleeves as below.
 - Vertical guards (shared/constants.ts): no new verticals at/after 15:50 ET weekdays (OPTIONS_VERTICAL_CUTOFF_MINUTES); net debit at most half the width (OPTIONS_DEBIT_MAX_WIDTH_FRAC); same-underlying cooldown the rest of the ET day after a 50% debit stop (OPTIONS_DEBIT_STOP_FRAC). Target 30-45 DTE; exit at 21 DTE; profit take 50% of debit. Size near 1% of sleeve equity (OPTIONS_DEBIT_TARGET_FRAC), hard cap 2% (OPTIONS_DEBIT_CAP_FRAC). Multiplier 100.
 - Stops on mock last. Last ≤ 0 is ignored (missing/junk prints must not flatten). One mark-to-market pass at a time so a stop cannot book twice. Paper only.
+- Vertical exit fill price is the immediate close natural credit (long bid - short ask), the same number the position marks against; it is not close + entry debit (a 2026-09-03 bug briefly double-counted the debit, e.g. recording .27 instead of .07).
 
 ## Sleeve methodologies
 
@@ -123,6 +125,8 @@ Horizon: days-months. Budget hint 10%. Loss cap $1000. Auto cap MAX_AUTO_RISKOFF
 Runs while AUTO PAPER is on and the global badge is RISK OFF. Two put programs plus one ETF long. Puts need a two-sided E*TRADE bid/ask (no invented prices).
 
 HYG credit-leg put (riskoffHygPutAllowed): RISK OFF and hygAbove200 === false. Missing HYG check fail-closed (no new HYG put). ATM put debit, 30-45 DTE, HYG first inside the cap. Thesis: auto put debit HYG credit-leg. Flatten that vertical when HYG is back above 200dma or RISK ON. Missing check does not flatten.
+
+HYG liquidity/size gate (checkHygAutoLiquidity, HYG auto entry only — never SPY/QQQ/IWM riskoff, options-sleeve calls, or manual POST /api/paper/vertical): both legs need open interest >= RISKOFF_HYG_MIN_OPEN_INTEREST (100); the immediate round-trip (long bid - short ask) must be at least 75% of the entry debit (long ask - short bid), i.e. round-trip slippage <= RISKOFF_HYG_MAX_ROUNDTRIP_SLIPPAGE_FRAC (25%); qty is hard-capped at RISKOFF_HYG_MAX_AUTO_QTY (3) regardless of the 1% target sizing that would otherwise apply. Added 2026-09-03 after a live HYG 79/78.5P auto entry (OI 7/0) was sized to 50 contracts on a $0.20 debit and hit its 50% debit stop within ~40 minutes.
 
 SPY/QQQ/IWM equity-index puts (riskoffEquityPutsAllowed): RISK OFF and spyAbove200 === false. Missing SPY check fail-closed. Order after HYG: SPY, QQQ, then IWM if quoted. Flatten leftover equity-index puts when SPY is back above 200dma. Missing check does not flatten.
 

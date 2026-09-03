@@ -88,7 +88,7 @@ import {
   renewAccessToken,
   startEtradePinHandshake,
 } from "./etrade";
-import { ensureRisk, kickRisk } from "./risk";
+import { ensureRisk, getRiskAsOf, kickRisk } from "./risk";
 import { fetchRiskoffEtfReturns } from "./riskoffEtf";
 import {
   applyOverlayMarks,
@@ -607,7 +607,8 @@ export function buildApp(deps: AppDeps): express.Express {
         symbol: pos.symbol,
         side: "Sell",
         qty: v.qty,
-        price: hit.closeValue / (v.qty * 100) + v.netDebitPerShare,
+        // Immediate close natural credit only (e.g. .07), not close + entry debit (was double-counting the debit, e.g. .27 instead of .07).
+        price: hit.closeValue / (v.qty * 100),
         notes: `vertical exit ${hit.reason}`,
         realizedPnl: hit.realizedPnl,
       });
@@ -1153,6 +1154,7 @@ export function buildApp(deps: AppDeps): express.Express {
             longStrike: v.longStrike,
             shortStrike: v.shortStrike,
             thesis: v.thesis,
+            qty: v.qty,
           });
         },
         fetchExpiries: async (symbol: string) => {
@@ -1325,6 +1327,22 @@ export function buildApp(deps: AppDeps): express.Express {
     res.json({ ok: true, authRequired: authRequired() });
   });
 
+  // Public, unauthenticated, GET-only, read-only. Minimal market risk state ONLY —
+  // never P/L, orders, positions, auth state, secrets, or write methods. nginx also
+  // exempts this exact path from basic auth (deploy/nginx/event-gate.conf); this
+  // in-app bypass is defense in depth so the route stays open even off that front door.
+  app.get("/api/public/risk", async (_req, res) => {
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate");
+    res.set("Pragma", "no-cache");
+    const risk = await ensureRisk();
+    const asOfMs = getRiskAsOf();
+    res.json({
+      riskOn: risk.riskOn,
+      riskChecks: risk.checks,
+      asOf: asOfMs === null ? null : new Date(asOfMs).toISOString(),
+    });
+  });
+
   app.get("/api/auth/status", (req, res) => {
     res.json({ authRequired: authRequired(), authed: isAuthed(req) });
   });
@@ -1360,6 +1378,7 @@ export function buildApp(deps: AppDeps): express.Express {
   app.use("/api", (req, res, next) => {
     if (
       req.path === "/health" ||
+      req.path === "/public/risk" ||
       req.path === "/auth/status" ||
       req.path === "/auth/login" ||
       req.path === "/auth/logout"

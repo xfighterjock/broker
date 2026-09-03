@@ -16,7 +16,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **ATM** — At the money. Auto debit verticals pick the strike closest to last (pickAtmCallDebit / pickAtmPutDebit).
 
-**AUTH_MODE** — Auth front door. Production nginx; local cookie session eg.sid.
+**AUTH_MODE** — Auth front door. Production nginx; local cookie session eg.sid. GET /api/public/risk is exempt in-app too, independent of AUTH_MODE.
 
 **AUTO PAPER** — Autopilot switch. When on, mock longs and verticals fire from scan/risk rules. Default on. Never CSP/CC/naked. Day sleeve stays manual.
 
@@ -58,7 +58,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **GLD** — SPDR Gold Shares. Risk-off 63d RS overlay vs UUP vs BIL.
 
-**HYG** — iShares iBoxx $ High Yield Corporate Bond ETF. RISK ON 200dma leg. Credit-leg ATM put debit on the riskoff sleeve when HYG is below 200dma.
+**HYG** — iShares iBoxx $ High Yield Corporate Bond ETF. RISK ON 200dma leg. Credit-leg ATM put debit on the riskoff sleeve when HYG is below 200dma; the HYG auto entry alone also requires OI >= 100 on each leg, a round-trip within 25% of the entry debit, and a hard 3-contract cap (RISKOFF_HYG_MIN_OPEN_INTEREST, RISKOFF_HYG_MAX_ROUNDTRIP_SLIPPAGE_FRAC, RISKOFF_HYG_MAX_AUTO_QTY).
 
 **IEF** — iShares 7-10 Year Treasury Bond ETF. Not a live risk-off expression (refused / not coded).
 
@@ -91,6 +91,8 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 **NY** — New York session date (America/New_York calendar YYYY-MM-DD) used for sleeve session marks and same-day vertical stop cooldown.
 
 **OAuth** — E*TRADE 1.0a handshake. In-app Authorize + PIN; in-process renew during the cash session.
+
+**OI** — Open interest. Options-chain leg field. HYG auto put-debit entries refuse either leg below RISKOFF_HYG_MIN_OPEN_INTEREST (100); no OI floor on manual entries or SPY/QQQ/IWM/options auto verticals.
 
 **OTM** — Out of the money. Put debit shorts a lower strike; call debit shorts a higher strike.
 
@@ -170,7 +172,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **Postgres** — Database for calendar events and freeze snapshots.
 
-**nginx** — TLS reverse proxy in front of 127.0.0.1:3001. Production AUTH_MODE=nginx.
+**nginx** — TLS reverse proxy in front of 127.0.0.1:3001. Production AUTH_MODE=nginx. Exempts GET /api/public/risk from basic auth; every other path stays protected.
 
 **Vite** — Client bundler/dev server for the React SPA.
 

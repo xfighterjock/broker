@@ -92,6 +92,22 @@ export type RiskoffSymbol = (typeof RISKOFF_SYMBOLS)[number];
 /** Credit-leg put debit when HYG is below 200dma. Not an inverse ETF. */
 export const RISKOFF_HYG_SYMBOL = "HYG";
 /**
+ * HYG credit-leg auto put debit is uniquely cheap and thin: a small net debit
+ * makes OPTIONS_DEBIT_TARGET_FRAC (1% sizing) produce huge contract counts,
+ * and the two-strike chain around it is often barely quoted. Incident
+ * 2026-09-03: HYG 79/78.5P, open interest 7/0, auto-sized to 50 contracts on
+ * a 0.20 net debit, 50% debit stop fired within 40 minutes for a large loss
+ * (see docs/DESIGN.md). These three constants gate the HYG riskoff AUTO
+ * entry only — SPY/QQQ/IWM riskoff puts, options-sleeve call debits, and
+ * manual POST /api/paper/vertical are unaffected.
+ */
+/** Both HYG put legs need at least this much open interest, or the auto entry is refused. */
+export const RISKOFF_HYG_MIN_OPEN_INTEREST = 100;
+/** Refuse the HYG auto entry if the immediate round-trip (sell long at bid, buy back short at ask) would already give back more than this fraction of the entry debit — i.e. refuse when immediate close < 75% of entry debit. */
+export const RISKOFF_HYG_MAX_ROUNDTRIP_SLIPPAGE_FRAC = 0.25;
+/** Hard cap on HYG auto put-debit contracts. Overrides OPTIONS_DEBIT_TARGET_FRAC 1% sizing, which is what produced 50 contracts on a 0.20 debit. */
+export const RISKOFF_HYG_MAX_AUTO_QTY = 3;
+/**
  * Second risk-off expression: one ETF long (GLD or UUP or BIL). Paper only.
  * Classic gold-vs-dollar relative strength vs T-bills.
  */
