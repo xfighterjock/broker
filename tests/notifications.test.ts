@@ -53,7 +53,7 @@ class FakePool {
   dedupe = new Map<string, Date>();
 
   async query<T = unknown>(sql: string, params: unknown[] = []): Promise<{ rows: T[]; rowCount: number }> {
-    if (sql.includes("WHERE user_id = $1 AND platform = $2 AND token_hash = $7")) {
+    if (sql.includes("SET token = $1, token_hash = $2") && sql.includes("token_hash = $7")) {
       const [token, tokenHash, _now, _label, userId, platform, replaceHash] = params as string[];
       const existing = this.tokens.get(replaceHash);
       if (existing && existing.user_id === userId && existing.platform === platform) {
