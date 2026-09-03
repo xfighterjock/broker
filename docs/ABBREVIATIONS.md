@@ -32,6 +32,8 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **CC** — Covered call. Manual overlay on the options sleeve, tagged to an ownership or SPCX thesis. Not sold by autopilot. Never naked.
 
+**COOKIE_SECURE** — Env flag (`1` or production) that sets express-session `cookie.secure`. Requires Express `trust proxy` behind nginx TLS so `eg.sid` is actually set.
+
 **CPI** — Consumer Price Index print. Seed calendar event; freeze card; flatten 15:45 ET. Day-sleeve event clock only.
 
 **CSP** — Cash-secured put. Manual overlay on the options sleeve. Reserves strike x 100 x qty. Never naked. Not sold by autopilot.
@@ -41,6 +43,8 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 **dma** — Daily moving average. See 20dma / 200dma.
 
 **E\*TRADE** — Broker API used for live option chains and OAuth only. Never orders. Production base api.etrade.com.
+
+**eg.sid** — SPA session cookie (Redis prefix `eg:sess:`). Production `cookie.secure` comes from COOKIE_SECURE / `NODE_ENV=production`. Express `trust proxy` 1 is required so nginx `X-Forwarded-Proto` lets the cookie emit.
 
 **ES** — CME E-mini S&P 500 futures. Gated root. Yahoo ES=F. On the momentum quote strip.
 
@@ -134,7 +138,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **SESSION FLATTEN** — Gate mode around flatten ET +/- 5m (and daily-loss). Flattens gated day-sleeve names.
 
-**SESSION_SECRET** — Cookie-signing secret for `eg.sid`. Production AUTH_MODE=users requires this or GATE_PASSWORD as fallback. Not the users-table login.
+**SESSION_SECRET** — Cookie-signing secret for `eg.sid`. Production AUTH_MODE=users requires this or GATE_PASSWORD as fallback. Not the users-table login. Secure emission also needs COOKIE_SECURE / production plus Express `trust proxy`.
 
 **SH** — ProShares Short S&P 500. Not a live risk-off expression.
 
@@ -166,6 +170,8 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **Tradovate** — Futures broker. Demo stub only (demo.tradovateapi.com). Order/position calls are not wired; gate uses MockBroker. Live host URLs throw.
 
+**trust proxy** — Express setting (`root.set("trust proxy", 1)` in `server/src/index.ts`). Trusts one nginx hop so `req.secure` follows `X-Forwarded-Proto` and Secure `eg.sid` can be set.
+
 **UUP** — Invesco DB US Dollar Index Bullish Fund. RISK ON dollar veto if 20-session return is missing or greater than +3%. Also a 63d RS candidate on the risk-off ETF overlay.
 
 **uPnL** — Unrealized profit and loss on open mock positions. Marks from delayed last (or vertical/overlay MTM).
@@ -196,7 +202,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **Postgres** — Database for calendar events, freeze snapshots, `users` + `user_sessions`, iOS FCM device tokens, and push-alert dedupe.
 
-**nginx** — TLS reverse proxy in front of 127.0.0.1:3001. No htpasswd on /api or the SPA; app auth is the users table. GET /api/public/risk stays unauthenticated.
+**nginx** — TLS reverse proxy in front of 127.0.0.1:3001. Sets `X-Forwarded-Proto`; Express `trust proxy` 1 is required so Secure `eg.sid` can emit. No htpasswd on /api or the SPA; app auth is the users table. GET /api/public/risk stays unauthenticated.
 
 **Vite** — Client bundler/dev server for the React SPA.
 
