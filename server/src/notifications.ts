@@ -1,7 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
-import { applicationDefault, cert, getApps, initializeApp, type App } from "firebase-admin/app";
-import { getMessaging } from "firebase-admin/messaging";
+import type { App } from "firebase-admin/app";
 import type { Request } from "express";
 import type { AppConfig } from "./config";
 import type { DbPool } from "./db";
@@ -186,7 +185,8 @@ function makeFcmProvider(cfg: AppConfig): NotificationProvider {
     configured: true,
     async send(token, payload) {
       try {
-        const app = getOrInitFirebaseApp(projectId, credentialSource, credentialPath);
+        const app = await getOrInitFirebaseApp(projectId, credentialSource, credentialPath);
+        const { getMessaging } = await import("firebase-admin/messaging");
         await getMessaging(app).send({
           token,
           notification: { title: payload.title, body: payload.body },
@@ -210,11 +210,13 @@ function makeFcmProvider(cfg: AppConfig): NotificationProvider {
   };
 }
 
-function getOrInitFirebaseApp(
+async function getOrInitFirebaseApp(
   projectId: string,
   credentialSource: "adc" | "file",
   credentialPath: string | undefined,
-): App {
+): Promise<App> {
+  // Dynamic import so a missing firebase-admin install cannot crash the app while push is disabled.
+  const { applicationDefault, cert, getApps, initializeApp } = await import("firebase-admin/app");
   const existing = getApps().find((app) => app.name === FCM_APP_NAME);
   if (existing) return existing;
   if (credentialSource === "file") {
