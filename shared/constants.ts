@@ -135,6 +135,7 @@ export const RISKOFF_QUOTE_STRIP = [
   "IEF",
   "XLU",
   "XLP",
+  "DBMF",
   "LQD",
   "JNK",
   "SJB",
@@ -143,9 +144,9 @@ export type RiskoffQuoteSymbol = (typeof RISKOFF_QUOTE_STRIP)[number];
 /**
  * Second risk-off expression: one ETF long vs BIL. Paper only.
  * Preference order for an exact RS tie: GLD > UUP > duration (TLT, IEF)
- * > defensives (XLU, XLP). BIL is the cash/T-bill benchmark, last.
+ * > defensives (XLU, XLP) > trend (DBMF). BIL is the cash/T-bill benchmark, last.
  */
-export const RISKOFF_ETF_SYMBOLS = ["GLD", "UUP", "TLT", "IEF", "XLU", "XLP", "BIL"] as const;
+export const RISKOFF_ETF_SYMBOLS = ["GLD", "UUP", "TLT", "IEF", "XLU", "XLP", "DBMF", "BIL"] as const;
 export type RiskoffEtfSymbol = (typeof RISKOFF_ETF_SYMBOLS)[number];
 export const RISKOFF_ETF_CASH_SYMBOL: RiskoffEtfSymbol = "BIL";
 export const RISKOFF_ETF_CANDIDATES = RISKOFF_ETF_SYMBOLS.filter(
