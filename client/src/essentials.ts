@@ -1,9 +1,11 @@
 import type {
+  AutoPaperBySleeve,
   Position,
   SleeveBook,
   SleeveId,
   StatusSnapshot,
 } from "../../shared/types";
+import { anyAutoPaperOn, defaultAutoPaperBySleeve } from "../../shared/types";
 
 /** Phone / small-tablet cutoff. Desktop layout stays as-is above this. */
 export const ESSENTIALS_MAX_WIDTH_PX = 767;
@@ -18,6 +20,32 @@ export const SLEEVE_TAB_LABELS: { id: SleeveId; label: string }[] = [
   { id: "ownership", label: "Ownership" },
   { id: "riskoff", label: "Risk-off" },
 ];
+
+/** Compact AUTO PAPER chip initials (desktop header + mobile essentials). */
+export const AUTO_SLEEVE_CHIPS: { id: SleeveId; initial: string; label: string }[] = [
+  { id: "day", initial: "D", label: "Day" },
+  { id: "momentum", initial: "M", label: "Momentum" },
+  { id: "options", initial: "O", label: "Options" },
+  { id: "ownership", initial: "Ow", label: "Ownership" },
+  { id: "riskoff", initial: "R", label: "Risk-off" },
+];
+
+/** Prefer per-sleeve flags; fall back to the derived/global boolean for old snapshots. */
+export function autoPaperFlags(
+  s: Pick<StatusSnapshot, "autoPaper" | "autoPaperBySleeve">,
+): AutoPaperBySleeve {
+  const raw = s.autoPaperBySleeve;
+  if (raw && typeof raw === "object") {
+    return { ...defaultAutoPaperBySleeve(false), ...raw };
+  }
+  return defaultAutoPaperBySleeve(s.autoPaper !== false);
+}
+
+export function autoPaperAnyOn(
+  s: Pick<StatusSnapshot, "autoPaper" | "autoPaperBySleeve">,
+): boolean {
+  return anyAutoPaperOn(autoPaperFlags(s));
+}
 
 export function pathWantsEssentials(pathname: string): boolean {
   const path = pathname.split("?")[0].split("#")[0];

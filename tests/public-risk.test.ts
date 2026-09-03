@@ -45,6 +45,7 @@ const SENSITIVE_MARKERS = [
   "etradeAuth",
   "activeSleeve",
   "autoPaper",
+  "autoPaperBySleeve",
   "SIMULATION",
 ];
 

@@ -20,7 +20,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **AUTH_MODE** — Auth front door. Production nginx; local cookie session eg.sid. GET /api/public/risk is exempt in-app too, independent of AUTH_MODE.
 
-**AUTO PAPER** — Autopilot switch. When on, mock longs and verticals fire from scan/risk rules. Default on. Never CSP/CC/naked. Day sleeve stays manual.
+**AUTO PAPER** — Autopilot. Independent enable per sleeve (`autoPaperBySleeve`: day, momentum, options, ownership, riskoff). Snapshot `autoPaper` is true if ANY sleeve is on (badge / old clients). POST /api/paper/auto `{ enabled }` sets all; `{ sleeveId, enabled }` sets one. Redis `paper:auto` is JSON; legacy `0`/`1` migrates on first boot. Default all on when the key is missing. Never CSP/CC/naked. GATE still binds day.
 
 **BIL** — SPDR Bloomberg 1-3 Month T-Bill ETF. Cash/T-bill leg of the risk-off 63d relative-strength overlay. Held when neither GLD nor UUP beats it.
 
@@ -116,7 +116,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **QQQ** — Invesco QQQ Trust (Nasdaq-100). Options quote strip; risk-off equity-index put when SPY is below 200dma; momentum/ownership quote strip.
 
-**Redis** — Cache/store for gate flags, mock book, sleeves, blotter, session marks, scan, AUTO PAPER.
+**Redis** — Cache/store for gate flags, mock book, sleeves, blotter, session marks, scan, AUTO PAPER (per-sleeve JSON on `paper:auto`).
 
 **RISK OFF** — Badge when RISK ON is false. Pauses new momentum longs and options call-debits; ownership pauses new adds. May run the riskoff sleeve. Does not bind the day book.
 

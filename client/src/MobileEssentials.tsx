@@ -1,6 +1,9 @@
 import { useEffect, useState, type ReactNode } from "react";
-import type { StatusSnapshot } from "../../shared/types";
+import type { SleeveId, StatusSnapshot } from "../../shared/types";
+import { AutoPaperChips } from "./AutoPaperChips";
 import {
+  autoPaperAnyOn,
+  autoPaperFlags,
   ESSENTIALS_MEDIA_QUERY,
   FLATTEN_CONFIRM,
   essentialsViewActive,
@@ -41,6 +44,7 @@ export function MobileEssentials({
   err,
   onToggleGate,
   onToggleAutoPaper,
+  onToggleAutoSleeve,
   onFlatten,
   pin,
 }: {
@@ -48,12 +52,13 @@ export function MobileEssentials({
   err?: string | null;
   onToggleGate: () => void;
   onToggleAutoPaper: () => void;
+  onToggleAutoSleeve: (sleeveId: SleeveId, enabled: boolean) => void;
   onFlatten: () => void;
   pin?: ReactNode;
 }) {
   const clock = state.clock;
   const mode = clock?.mode ?? "idle";
-  const autoOn = state.autoPaper !== false;
+  const autoOn = autoPaperAnyOn(state);
   const rows = sleevePnlRows(state.sleeveBooks, state.broker.positions);
 
   function flatten() {
@@ -120,6 +125,11 @@ export function MobileEssentials({
             AUTO PAPER {autoOn ? "ON" : "OFF"}
           </span>
         </label>
+        <AutoPaperChips
+          flags={autoPaperFlags(state)}
+          variant="essentials"
+          onToggle={onToggleAutoSleeve}
+        />
         <button type="button" className="essentials-flatten danger" onClick={flatten}>
           Flatten
         </button>

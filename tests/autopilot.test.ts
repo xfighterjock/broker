@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { zonedTimeToUtc } from "../shared/clock";
 import { DEFAULT_SLEEVE_EQUITY_USD } from "../shared/constants";
-import { defaultSleeves, type Position, type ScanRow, type SleeveCard } from "../shared/types";
+import {
+  defaultAutoPaperBySleeve,
+  defaultSleeves,
+  type Position,
+  type ScanRow,
+  type SleeveCard,
+} from "../shared/types";
 import {
   decideBuys,
   decideSells,
@@ -11,6 +18,7 @@ import {
 } from "../server/src/autopilot";
 import { sleeveBook } from "../server/src/paper";
 import { setPaperNow } from "../server/src/vertical";
+import type { MinuteBar } from "../server/src/dayMomentum";
 
 afterEach(() => {
   setPaperNow(null);
@@ -253,6 +261,21 @@ describe("decideSells kill rules", () => {
   });
 });
 
+function rthBar(hour: number, minute: number, close: number): MinuteBar {
+  const ts = zonedTimeToUtc(2026, 9, 2, hour, minute, 0).getTime();
+  return { ts, open: close, high: 100, low: 80, close, volume: 1000 };
+}
+
+function mesBuyBars(): MinuteBar[] {
+  const out: MinuteBar[] = [];
+  for (let i = 0; i < 22; i++) {
+    const total = 9 * 60 + 30 + i * 5;
+    out.push(rthBar(Math.floor(total / 60), total % 60, 81));
+  }
+  out[21] = { ...out[21], close: 99, high: 100, low: 80 };
+  return out;
+}
+
 describe("runAutopilot toggle", () => {
   it("places nothing when auto paper is off", async () => {
     const place = vi.fn(async (_b: AutoBuy) => ({ ok: true as const }));
@@ -430,6 +453,124 @@ describe("runAutopilot toggle", () => {
     expect(verts).toEqual(["options:C:AAPL"]);
     expect(result.verticals.every((v) => v.right === "C" && v.sleeveId === "options")).toBe(true);
     expect(result.bought.every((b) => b.side === "Buy")).toBe(true);
+  });
+
+  it("skips day MES while other sleeves still run", async () => {
+    const noon = zonedTimeToUtc(2026, 9, 2, 11, 20, 0);
+    const placed: string[] = [];
+    const sleeveAuto = { ...defaultAutoPaperBySleeve(true), day: false, options: false };
+    const result = await runAutopilot({
+      enabled: true,
+      sleeveAuto,
+      getPositions: () => [],
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [row({ symbol: "DELL", last: 120 })],
+      featureRows: [],
+      scanReady: true,
+      riskOn: true,
+      gateMode: "idle",
+      now: noon,
+      dayBars: mesBuyBars(),
+      place: async (b) => {
+        placed.push(`${b.sleeveId}:${b.symbol}`);
+        return { ok: true };
+      },
+      close: async () => ({ ok: true }),
+      log: () => {},
+    });
+    expect(placed.some((p) => p.startsWith("day:"))).toBe(false);
+    expect(placed).toContain("momentum:DELL");
+    expect(result.bought.every((b) => b.sleeveId !== "day")).toBe(true);
+  });
+
+  it("skips momentum/ownership longs when those sleeves are off", async () => {
+    const placed: string[] = [];
+    const result = await runAutopilot({
+      enabled: true,
+      sleeveAuto: {
+        ...defaultAutoPaperBySleeve(false),
+        day: false,
+        momentum: false,
+        ownership: false,
+        options: false,
+        riskoff: true,
+      },
+      getPositions: () => [],
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [row({ symbol: "DELL", last: 120 })],
+      featureRows: [{ symbol: "JPM", above200: false }],
+      scanReady: true,
+      riskOn: true,
+      place: async (b) => {
+        placed.push(`${b.sleeveId}:${b.symbol}`);
+        return { ok: true };
+      },
+      close: async () => ({ ok: true }),
+      log: () => {},
+    });
+    expect(placed).toEqual([]);
+    expect(result.bought).toEqual([]);
+    expect(result.sold).toEqual([]);
+  });
+
+  it("does not rotate riskoff when that sleeve is off, even if day is on", async () => {
+    const noon = zonedTimeToUtc(2026, 9, 2, 11, 20, 0);
+    const placed: string[] = [];
+    const closed: string[] = [];
+    const verts: string[] = [];
+    await runAutopilot({
+      enabled: true,
+      sleeveAuto: { ...defaultAutoPaperBySleeve(false), day: true },
+      getPositions: () => [
+        {
+          id: "gld",
+          symbol: "GLD",
+          root: null,
+          qty: 10,
+          side: "Long",
+          avgPrice: 180,
+          unrealizedPnl: 0,
+          gated: false,
+          sleeveId: "riskoff",
+        },
+      ],
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [row({ symbol: "DELL", last: 120 })],
+      featureRows: [],
+      scanReady: true,
+      riskOn: false,
+      riskChecks: { spyAbove200: false, hygAbove200: false },
+      riskoffQuotes: [{ symbol: "SPY", last: 500 }],
+      riskoffEtfReturns: { GLD: 0.1, UUP: 0.2, BIL: 0.01 },
+      riskoffEtfQuotes: [
+        { symbol: "GLD", last: 180 },
+        { symbol: "UUP", last: 28 },
+        { symbol: "BIL", last: 91 },
+      ],
+      gateMode: "idle",
+      now: noon,
+      dayBars: mesBuyBars(),
+      place: async (b) => {
+        placed.push(`${b.sleeveId}:${b.symbol}`);
+        return { ok: true };
+      },
+      close: async (s) => {
+        closed.push(`${s.sleeveId}:${s.symbol}`);
+        return { ok: true };
+      },
+      placeVertical: async (v) => {
+        verts.push(`${v.sleeveId}:${v.symbol}`);
+        return { ok: true };
+      },
+      fetchExpiries: async () => [
+        { year: 2026, month: 10, day: 9, expiry: "2026-10-09", expiryType: "MONTHLY" },
+      ],
+      fetchChain: async () => [],
+      log: () => {},
+    });
+    expect(placed.every((p) => p.startsWith("day:"))).toBe(true);
+    expect(closed.some((c) => c.startsWith("riskoff:"))).toBe(false);
+    expect(verts).toEqual([]);
   });
 });
 

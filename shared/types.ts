@@ -1,4 +1,4 @@
-import type { OrderType } from "./constants";
+import { SLEEVE_IDS, type OrderType } from "./constants";
 
 export type GateMode = "idle" | "PRE-ARM" | "NO-STOP BAND" | "SESSION FLATTEN";
 
@@ -37,6 +37,104 @@ export type OrderState =
 export type Side = "Buy" | "Sell";
 export type PositionSide = "Long" | "Short" | "Flat";
 export type SleeveId = "day" | "momentum" | "options" | "ownership" | "riskoff";
+
+/** Independent AUTO PAPER flag per sleeve. */
+export type AutoPaperBySleeve = Record<SleeveId, boolean>;
+
+export function defaultAutoPaperBySleeve(allOn: boolean): AutoPaperBySleeve {
+  return {
+    day: allOn,
+    momentum: allOn,
+    options: allOn,
+    ownership: allOn,
+    riskoff: allOn,
+  };
+}
+
+/** Snapshot `autoPaper` is true if ANY sleeve is on (badge / old clients). */
+export function anyAutoPaperOn(flags: AutoPaperBySleeve): boolean {
+  return SLEEVE_IDS.some((id) => flags[id] === true);
+}
+
+/**
+ * Redis `paper:auto` was a global `0`/`1`. JSON is the current shape.
+ * Missing/unknown → null (caller keeps its in-memory default).
+ * Legacy `0` → all off; `1` → all on. Partial JSON leaves omitted sleeves off
+ * so a half-written key cannot silently re-enable day into a print.
+ */
+export function parseAutoPaperRedis(raw: string | null | undefined): AutoPaperBySleeve | null {
+  if (raw == null || raw === "") return null;
+  if (raw === "0") return defaultAutoPaperBySleeve(false);
+  if (raw === "1") return defaultAutoPaperBySleeve(true);
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const obj = parsed as Record<string, unknown>;
+    const out = defaultAutoPaperBySleeve(false);
+    let seen = false;
+    for (const id of SLEEVE_IDS) {
+      if (!(id in obj)) continue;
+      if (typeof obj[id] !== "boolean") return null;
+      out[id] = obj[id];
+      seen = true;
+    }
+    return seen ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+export function serializeAutoPaperBySleeve(flags: AutoPaperBySleeve): string {
+  const out = {} as AutoPaperBySleeve;
+  for (const id of SLEEVE_IDS) out[id] = flags[id] === true;
+  return JSON.stringify(out);
+}
+
+export type AutoPaperPatch =
+  | { kind: "all"; enabled: boolean }
+  | { kind: "one"; sleeveId: SleeveId; enabled: boolean }
+  | { kind: "batch"; sleeves: Partial<AutoPaperBySleeve> };
+
+/**
+ * POST /api/paper/auto body.
+ * `{ sleeves }` wins, then `{ sleeveId, enabled }`, then `{ enabled }` (all sleeves).
+ * Empty/`{}` matches the old global path: `Boolean(enabled)` → all off.
+ */
+export function parseAutoPaperBody(body: unknown): AutoPaperPatch | { error: string } {
+  const src = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  if (src.sleeves && typeof src.sleeves === "object" && !Array.isArray(src.sleeves)) {
+    const raw = src.sleeves as Record<string, unknown>;
+    const sleeves: Partial<AutoPaperBySleeve> = {};
+    let any = false;
+    for (const id of SLEEVE_IDS) {
+      if (!(id in raw)) continue;
+      if (typeof raw[id] !== "boolean") {
+        return { error: `sleeves.${id} must be boolean` };
+      }
+      sleeves[id] = raw[id];
+      any = true;
+    }
+    if (!any) return { error: "sleeves must include at least one known sleeveId" };
+    return { kind: "batch", sleeves };
+  }
+  if (typeof src.sleeveId === "string") {
+    if (!(SLEEVE_IDS as readonly string[]).includes(src.sleeveId)) {
+      return { error: "unknown sleeveId" };
+    }
+    if (!("enabled" in src)) return { error: "enabled is required with sleeveId" };
+    return { kind: "one", sleeveId: src.sleeveId as SleeveId, enabled: Boolean(src.enabled) };
+  }
+  return { kind: "all", enabled: Boolean(src.enabled) };
+}
+
+export function applyAutoPaperPatch(
+  current: AutoPaperBySleeve,
+  patch: AutoPaperPatch,
+): AutoPaperBySleeve {
+  if (patch.kind === "all") return defaultAutoPaperBySleeve(patch.enabled);
+  if (patch.kind === "one") return { ...current, [patch.sleeveId]: patch.enabled };
+  return { ...current, ...patch.sleeves };
+}
 
 export interface WorkingOrder {
   id: string;
@@ -432,7 +530,13 @@ export interface StatusSnapshot {
   sleeves: Record<SleeveId, SleeveCard>;
   activeSleeve: SleeveId;
   paperBlotter: PaperFill[];
+  /**
+   * True if ANY sleeve AUTO flag is on. Backward-compatible badge / old clients.
+   * Not a sixth switch — derived from `autoPaperBySleeve`.
+   */
   autoPaper: boolean;
+  /** Independent AUTO PAPER per sleeve. */
+  autoPaperBySleeve: AutoPaperBySleeve;
   sleeveBooks: Record<SleeveId, SleeveBook>;
   /** Global risk-on/off. Not a toggle. Does not bind day sleeve / clock / flatten / GATE. */
   riskOn: boolean;

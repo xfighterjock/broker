@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  defaultAutoPaperBySleeve,
   defaultSleeves,
   emptyChecklist,
   emptyFreeze,
@@ -9,6 +10,9 @@ import {
   type StatusSnapshot,
 } from "../shared/types";
 import {
+  AUTO_SLEEVE_CHIPS,
+  autoPaperAnyOn,
+  autoPaperFlags,
   ESSENTIALS_MAX_WIDTH_PX,
   essentialsViewActive,
   formatPnlPct,
@@ -84,6 +88,7 @@ function snapshot(over: Partial<StatusSnapshot> = {}): StatusSnapshot {
     activeSleeve: "day",
     paperBlotter: [],
     autoPaper: true,
+    autoPaperBySleeve: defaultAutoPaperBySleeve(true),
     sleeveBooks,
     riskOn: true,
     riskChecks: {
@@ -158,6 +163,41 @@ describe("risk why line", () => {
     expect(line).toMatch(/HYG below 200dma/);
     expect(line).toMatch(/dollar veto/);
     expect(line).not.toMatch(/ACWI below/);
+  });
+});
+
+describe("AUTO PAPER flags", () => {
+  it("exposes D/M/O/Ow/R chips for all five sleeves", () => {
+    expect(AUTO_SLEEVE_CHIPS.map((c) => c.id)).toEqual([
+      "day",
+      "momentum",
+      "options",
+      "ownership",
+      "riskoff",
+    ]);
+    expect(AUTO_SLEEVE_CHIPS.map((c) => c.initial)).toEqual(["D", "M", "O", "Ow", "R"]);
+  });
+
+  it("treats autoPaper as any-on and falls back when per-sleeve is missing", () => {
+    const mixed = snapshot({
+      autoPaper: true,
+      autoPaperBySleeve: {
+        day: false,
+        momentum: true,
+        options: false,
+        ownership: false,
+        riskoff: true,
+      },
+    });
+    expect(autoPaperAnyOn(mixed)).toBe(true);
+    expect(autoPaperFlags(mixed).day).toBe(false);
+    expect(autoPaperFlags(mixed).riskoff).toBe(true);
+    const legacyOn = snapshot({ autoPaper: true });
+    delete (legacyOn as { autoPaperBySleeve?: unknown }).autoPaperBySleeve;
+    expect(autoPaperFlags(legacyOn).day).toBe(true);
+    const legacyOff = snapshot({ autoPaper: false });
+    delete (legacyOff as { autoPaperBySleeve?: unknown }).autoPaperBySleeve;
+    expect(autoPaperAnyOn(legacyOff)).toBe(false);
   });
 });
 

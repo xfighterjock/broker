@@ -5,6 +5,7 @@ import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  defaultAutoPaperBySleeve,
   defaultSleeves,
   emptyChecklist,
   emptyFreeze,
@@ -27,7 +28,7 @@ function book(daily: number, total: number): SleeveBook {
 }
 
 function snapshot(over: Partial<StatusSnapshot> = {}): StatusSnapshot {
-  return {
+  const out: StatusSnapshot = {
     trader: "Richard",
     tz: "America/New_York",
     clock: {
@@ -76,6 +77,7 @@ function snapshot(over: Partial<StatusSnapshot> = {}): StatusSnapshot {
     activeSleeve: "day",
     paperBlotter: [],
     autoPaper: true,
+    autoPaperBySleeve: defaultAutoPaperBySleeve(true),
     sleeveBooks: {
       day: book(12.5, -3),
       momentum: book(0, 0),
@@ -93,6 +95,10 @@ function snapshot(over: Partial<StatusSnapshot> = {}): StatusSnapshot {
     },
     ...over,
   };
+  if (!over.autoPaperBySleeve && typeof over.autoPaper === "boolean") {
+    out.autoPaperBySleeve = defaultAutoPaperBySleeve(over.autoPaper);
+  }
+  return out;
 }
 
 const mounted: { root: Root; node: HTMLDivElement }[] = [];
@@ -130,6 +136,7 @@ describe("MobileEssentials", () => {
         state={snapshot()}
         onToggleGate={() => {}}
         onToggleAutoPaper={() => {}}
+        onToggleAutoSleeve={() => {}}
         onFlatten={() => {}}
       />,
     );
@@ -142,13 +149,15 @@ describe("MobileEssentials", () => {
     expect(node.textContent).toMatch(/SPY\/ACWI\/HYG above 200dma/);
     expect(node.textContent).toMatch(/GATE ON/);
     expect(node.textContent).toMatch(/AUTO PAPER ON/);
+    expect(node.querySelectorAll(".essentials-auto-chip")).toHaveLength(5);
+    expect(node.querySelector(".essentials-auto-chip[data-sleeve=day]")?.textContent).toBe("D");
     expect(node.textContent).toMatch(/Flatten/);
-    expect(node.querySelector("[data-sleeve=day]")?.textContent).toMatch(/d \+\$12\.50/);
-    expect(node.querySelector("[data-sleeve=day]")?.textContent).toMatch(/tot -\$3\.00/);
-    expect(node.querySelector("[data-sleeve=momentum]")?.textContent).toMatch(/Momentum/);
-    expect(node.querySelector("[data-sleeve=options]")?.textContent).toMatch(/tot \+\$40\.00/);
-    expect(node.querySelector("[data-sleeve=ownership]")?.textContent).toMatch(/Ownership/);
-    expect(node.querySelector("[data-sleeve=riskoff]")?.textContent).toMatch(/d -\$8\.00/);
+    expect(node.querySelector(".essentials-sleeves [data-sleeve=day]")?.textContent).toMatch(/d \+\$12\.50/);
+    expect(node.querySelector(".essentials-sleeves [data-sleeve=day]")?.textContent).toMatch(/tot -\$3\.00/);
+    expect(node.querySelector(".essentials-sleeves [data-sleeve=momentum]")?.textContent).toMatch(/Momentum/);
+    expect(node.querySelector(".essentials-sleeves [data-sleeve=options]")?.textContent).toMatch(/tot \+\$40\.00/);
+    expect(node.querySelector(".essentials-sleeves [data-sleeve=ownership]")?.textContent).toMatch(/Ownership/);
+    expect(node.querySelector(".essentials-sleeves [data-sleeve=riskoff]")?.textContent).toMatch(/d -\$8\.00/);
     expect(node.querySelector(".essentials-risk-badge")?.textContent).toBe("RISK ON");
     expect(node.querySelector(".grid")).toBeNull();
     expect(node.querySelector(".tabs")).toBeNull();
@@ -169,6 +178,7 @@ describe("MobileEssentials", () => {
         })}
         onToggleGate={() => {}}
         onToggleAutoPaper={() => {}}
+        onToggleAutoSleeve={() => {}}
         onFlatten={() => {}}
       />,
     );
@@ -180,11 +190,13 @@ describe("MobileEssentials", () => {
   it("wires GATE and AUTO PAPER to the same handlers the desktop uses", () => {
     const onToggleGate = vi.fn();
     const onToggleAutoPaper = vi.fn();
+    const onToggleAutoSleeve = vi.fn();
     const node = render(
       <MobileEssentials
         state={snapshot({ gateEnabled: false, autoPaper: false })}
         onToggleGate={onToggleGate}
         onToggleAutoPaper={onToggleAutoPaper}
+        onToggleAutoSleeve={onToggleAutoSleeve}
         onFlatten={() => {}}
       />,
     );
@@ -199,6 +211,14 @@ describe("MobileEssentials", () => {
     });
     expect(onToggleGate).toHaveBeenCalledTimes(1);
     expect(onToggleAutoPaper).toHaveBeenCalledTimes(1);
+    const dayChip = node.querySelector(
+      ".essentials-auto-chip[data-sleeve=day]",
+    ) as HTMLButtonElement;
+    expect(dayChip?.textContent).toBe("D");
+    act(() => {
+      dayChip.click();
+    });
+    expect(onToggleAutoSleeve).toHaveBeenCalledWith("day", true);
   });
 
   it("confirms before Flatten and skips the handler on cancel", () => {
@@ -208,6 +228,7 @@ describe("MobileEssentials", () => {
         state={snapshot()}
         onToggleGate={() => {}}
         onToggleAutoPaper={() => {}}
+        onToggleAutoSleeve={() => {}}
         onFlatten={onFlatten}
       />,
     );
@@ -231,6 +252,7 @@ describe("MobileEssentials", () => {
         state={snapshot({ etradeAuth: "needs_pin" })}
         onToggleGate={() => {}}
         onToggleAutoPaper={() => {}}
+        onToggleAutoSleeve={() => {}}
         onFlatten={() => {}}
         pin={
           <div className="etrade-pin etrade-pin-essentials" data-etrade-auth="needs_pin">

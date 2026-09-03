@@ -17,12 +17,15 @@ import {
 } from "../../shared/types";
 import { api } from "./api";
 import {
+  autoPaperAnyOn,
+  autoPaperFlags,
   formatPnlPct,
   formatPnlUsd,
   gateModeClass as modeClass,
   riskBadgeTitle,
   SLEEVE_TAB_LABELS as TAB_LABELS,
 } from "./essentials";
+import { AutoPaperChips } from "./AutoPaperChips";
 import { EtradePinBar } from "./EtradePin";
 import { MobileEssentials, useEssentialsView } from "./MobileEssentials";
 import { PaperBanner, PaperTradeRow, type PaperPrefill } from "./PaperTrade";
@@ -484,7 +487,8 @@ export default function App() {
         state={state}
         err={err}
         onToggleGate={() => post("/api/gate/enable", { enabled: !state.gateEnabled })}
-        onToggleAutoPaper={() => post("/api/paper/auto", { enabled: state.autoPaper === false })}
+        onToggleAutoPaper={() => post("/api/paper/auto", { enabled: !autoPaperAnyOn(state) })}
+        onToggleAutoSleeve={(id, enabled) => post("/api/paper/auto", { sleeveId: id, enabled })}
         onFlatten={() => post("/api/flatten")}
         pin={
           <EtradePinBar
@@ -525,17 +529,27 @@ export default function App() {
             GATE {state.gateEnabled ? "ON" : "OFF"}
           </span>
         </label>
-        <label className="toggle" title="Auto paper from S&P scan. Mock only. Stops in the book. Day sleeve not auto.">
-          <input
-            type="checkbox"
-            checked={state.autoPaper !== false}
-            onChange={() => post("/api/paper/auto", { enabled: state.autoPaper === false })}
+        <div
+          className="auto-paper-group"
+          title="Per-sleeve AUTO PAPER. Master toggle sets all five. Mock only. GATE still binds day."
+        >
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={autoPaperAnyOn(state)}
+              onChange={() => post("/api/paper/auto", { enabled: !autoPaperAnyOn(state) })}
+            />
+            <span className="switch" />
+            <span className={`badge ${autoPaperAnyOn(state) ? "on" : "off"}`}>
+              AUTO PAPER {autoPaperAnyOn(state) ? "ON" : "OFF"}
+            </span>
+          </label>
+          <AutoPaperChips
+            flags={autoPaperFlags(state)}
+            variant="header"
+            onToggle={(id, enabled) => post("/api/paper/auto", { sleeveId: id, enabled })}
           />
-          <span className="switch" />
-          <span className={`badge ${state.autoPaper !== false ? "on" : "off"}`}>
-            AUTO PAPER {state.autoPaper !== false ? "ON" : "OFF"}
-          </span>
-        </label>
+        </div>
         <span
           className={`badge ${state.riskOn ? "risk-on" : "risk-off"}`}
           title={riskBadgeTitle(state)}
@@ -581,7 +595,7 @@ export default function App() {
         })}
       </nav>
       <div className="hint auto-hint">
-        Auto paper from S&amp;P scan. Mock only. Stops in the book. Day sleeve not auto. RISK ON/OFF is automated (SPY/ACWI/HYG 200dma, UUP 20d) and does not bind the day book. Each sleeve starts at mock $100,000.
+        Auto paper is per sleeve (D / M / O / Ow / R). Master AUTO PAPER is on if any sleeve is on. Mock only. Stops in the book. GATE still binds day (pre-arm / no-stop / flatten). RISK ON/OFF is automated (SPY/ACWI/HYG 200dma, UUP 20d) and does not bind the day book. Each sleeve starts at mock $100,000.
       </div>
 
       {tab === "day" && (

@@ -61,6 +61,7 @@ export const REDIS_KEYS = {
   blotter: "sleeves:blotter",
   scanUniverse: "scan:universe",
   scanFeatures: "scan:features",
+  /** JSON `{ day, momentum, options, ownership, riskoff }`. Legacy `0`/`1` migrates on first boot. */
   autoPaper: "paper:auto",
   sessionMarks: "sleeves:session_marks",
   verticalStopCooldown: "paper:vertical_stop_cooldown",

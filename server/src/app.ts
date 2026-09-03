@@ -13,11 +13,17 @@ import {
 } from "../../shared/constants";
 import { computeClock } from "../../shared/clock";
 import {
+  anyAutoPaperOn,
+  applyAutoPaperPatch,
   applyPaperPatch,
   applySleevePatch,
+  defaultAutoPaperBySleeve,
   defaultSleeves,
   emptyChecklist,
   emptyFreeze,
+  parseAutoPaperBody,
+  parseAutoPaperRedis,
+  serializeAutoPaperBySleeve,
   type CalendarEvent,
   type Checklist,
   type FreezeCard,
@@ -211,6 +217,7 @@ export function buildApp(deps: AppDeps): express.Express {
     sleevesHydrated: false,
     blotter: [] as PaperFill[],
     blotterHydrated: false,
+    autoPaperBySleeve: defaultAutoPaperBySleeve(true),
     autoPaper: true,
     autoPaperHydrated: false,
     sessionMarks: {
@@ -314,23 +321,34 @@ export function buildApp(deps: AppDeps): express.Express {
     }
   }
 
+  function syncAutoPaperDerived(): void {
+    memory.autoPaper = anyAutoPaperOn(memory.autoPaperBySleeve);
+  }
+
   async function ensureAutoPaper(): Promise<void> {
     if (memory.autoPaperHydrated) return;
     memory.autoPaperHydrated = true;
     if (!deps.redis) return;
     try {
       const raw = await deps.redis.get(REDIS_KEYS.autoPaper);
-      if (raw === "0") memory.autoPaper = false;
-      else if (raw === "1") memory.autoPaper = true;
+      const parsed = parseAutoPaperRedis(raw);
+      if (!parsed) return;
+      memory.autoPaperBySleeve = parsed;
+      syncAutoPaperDerived();
+      // Rewrite legacy global 0/1 as structured JSON on first boot.
+      if (raw === "0" || raw === "1") await persistAutoPaper();
     } catch {
-      /* default enabled */
+      /* default enabled (all on) when Redis is missing or unreadable */
     }
   }
 
   async function persistAutoPaper(): Promise<void> {
     if (!deps.redis) return;
     try {
-      await deps.redis.set(REDIS_KEYS.autoPaper, memory.autoPaper ? "1" : "0");
+      await deps.redis.set(
+        REDIS_KEYS.autoPaper,
+        serializeAutoPaperBySleeve(memory.autoPaperBySleeve),
+      );
     } catch {
       /* ignore */
     }
@@ -1104,7 +1122,7 @@ export function buildApp(deps: AppDeps): express.Express {
       await ensureAutoPaper();
       await ensureSleeves();
       await ensureVerticalStopCooldown();
-      if (!memory.autoPaper) return;
+      if (!anyAutoPaperOn(memory.autoPaperBySleeve)) return;
       const mockErr = assertMockOnly();
       if (mockErr) {
         deps.engine.log(`auto paper idle: ${mockErr}`);
@@ -1134,7 +1152,8 @@ export function buildApp(deps: AppDeps): express.Express {
         .filter((q) => q.last !== null && Number.isFinite(q.last) && q.last > 0)
         .map((q) => ({ symbol: q.symbol, last: q.last as number }));
       await runAutopilot({
-        enabled: memory.autoPaper,
+        enabled: anyAutoPaperOn(memory.autoPaperBySleeve),
+        sleeveAuto: memory.autoPaperBySleeve,
         getPositions: () => deps.broker.getPositionsSync(),
         getSleeves: () => memory.sleeves,
         momentumRows,
@@ -1330,6 +1349,7 @@ export function buildApp(deps: AppDeps): express.Express {
       activeSleeve: memory.activeSleeve,
       paperBlotter: memory.blotter.slice(-200),
       autoPaper: memory.autoPaper,
+      autoPaperBySleeve: { ...memory.autoPaperBySleeve },
       sleeveBooks: await sleeveBooksWithSession(),
       riskOn: risk.riskOn,
       riskChecks: risk.checks,
@@ -1937,15 +1957,29 @@ export function buildApp(deps: AppDeps): express.Express {
 
   app.post("/api/paper/auto", async (req, res) => {
     await ensureAutoPaper();
-    const enabled = Boolean(req.body?.enabled);
-    memory.autoPaper = enabled;
+    const parsed = parseAutoPaperBody(req.body);
+    if ("error" in parsed) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+    memory.autoPaperBySleeve = applyAutoPaperPatch(memory.autoPaperBySleeve, parsed);
+    syncAutoPaperDerived();
     await persistAutoPaper();
-    deps.engine.log(
-      enabled
-        ? "auto paper enabled (mock only, day sleeve not auto)"
-        : "auto paper disabled",
-    );
-    if (enabled) await runWiredAutopilot();
+    if (parsed.kind === "all") {
+      deps.engine.log(
+        parsed.enabled ? "auto paper enabled (mock only)" : "auto paper disabled",
+      );
+    } else if (parsed.kind === "one") {
+      deps.engine.log(
+        `auto paper ${parsed.sleeveId} ${parsed.enabled ? "enabled" : "disabled"} (mock only)`,
+      );
+    } else {
+      const bits = (Object.keys(parsed.sleeves) as SleeveId[])
+        .map((id) => `${id}=${parsed.sleeves[id] ? "on" : "off"}`)
+        .join(" ");
+      deps.engine.log(`auto paper sleeves updated ${bits} (mock only)`);
+    }
+    if (memory.autoPaper) await runWiredAutopilot();
     await publishStatus();
     res.json(await snapshot());
   });

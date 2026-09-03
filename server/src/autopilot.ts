@@ -536,6 +536,11 @@ export type CloseResult = { ok: true } | { ok: false; error: string };
 
 export type AutopilotCtx = {
   enabled: boolean;
+  /**
+   * Per-sleeve AUTO PAPER. Missing key = on when `enabled` is true
+   * (legacy tests / callers that only pass the global flag).
+   */
+  sleeveAuto?: Partial<Record<SleeveId, boolean>>;
   getPositions: () => Position[];
   getSleeves: () => Record<SleeveId, SleeveCard>;
   /** Ranked pullback-after-strength scan. Momentum and ownership entries share this gate. */
@@ -565,6 +570,12 @@ export type AutopilotCtx = {
   log: (line: string) => void;
 };
 
+function sleeveAutoOn(ctx: AutopilotCtx, id: SleeveId): boolean {
+  if (!ctx.enabled) return false;
+  if (!ctx.sleeveAuto) return true;
+  return ctx.sleeveAuto[id] !== false;
+}
+
 export async function runAutopilot(ctx: AutopilotCtx): Promise<{
   bought: AutoBuy[];
   sold: AutoSell[];
@@ -575,7 +586,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
   const verticals: AutoVertical[] = [];
   if (!ctx.enabled) return { bought, sold, verticals };
 
-  if (ctx.dayBars && ctx.gateMode) {
+  if (sleeveAutoOn(ctx, "day") && ctx.dayBars && ctx.gateMode) {
     const day = decideDayMomentum({
       now: ctx.now ?? new Date(),
       gateMode: ctx.gateMode,
@@ -615,7 +626,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
     ctx.featureRows,
     ctx.getSleeves(),
     ctx.scanReady,
-  );
+  ).filter((s) => sleeveAutoOn(ctx, s.sleeveId));
   for (const s of sells) {
     const r = await ctx.close(s);
     if (r.ok) {
@@ -628,13 +639,15 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
     }
   }
 
-  const etf = decideRiskoffEtf({
-    riskOn,
-    positions: ctx.getPositions(),
-    sleeve: ctx.getSleeves().riskoff,
-    returns: ctx.riskoffEtfReturns ?? null,
-    quotes: ctx.riskoffEtfQuotes ?? [],
-  });
+  const etf = sleeveAutoOn(ctx, "riskoff")
+    ? decideRiskoffEtf({
+        riskOn,
+        positions: ctx.getPositions(),
+        sleeve: ctx.getSleeves().riskoff,
+        returns: ctx.riskoffEtfReturns ?? null,
+        quotes: ctx.riskoffEtfQuotes ?? [],
+      })
+    : { sells: [] as AutoSell[], buy: null as AutoBuy | null };
   for (const s of etf.sells) {
     const r = await ctx.close(s);
     if (r.ok) {
@@ -647,7 +660,9 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
     }
   }
 
-  const putSells = decideRiskoffPutSells(ctx.getPositions(), riskOn, putChecks);
+  const putSells = sleeveAutoOn(ctx, "riskoff")
+    ? decideRiskoffPutSells(ctx.getPositions(), riskOn, putChecks)
+    : [];
   for (const s of putSells) {
     const r = await ctx.close(s);
     if (r.ok) {
@@ -661,11 +676,12 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
   }
 
   if (!ctx.scanReady) {
-    await placeRiskoffEtfBuy(ctx, etf.buy, bought);
+    if (sleeveAutoOn(ctx, "riskoff")) await placeRiskoffEtfBuy(ctx, etf.buy, bought);
     return { bought, sold, verticals };
   }
 
   for (const sleeveId of ["momentum", "ownership"] as const) {
+    if (!sleeveAutoOn(ctx, sleeveId)) continue;
     const buys = decideBuys(
       ctx.momentumRows,
       ctx.getPositions(),
@@ -687,6 +703,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
     }
   }
   if (
+    sleeveAutoOn(ctx, "options") &&
     riskOn &&
     ctx.placeVertical &&
     ctx.fetchExpiries &&
@@ -758,6 +775,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
   }
 
   if (
+    sleeveAutoOn(ctx, "riskoff") &&
     riskoffPutsAllowed(riskOn, putChecks) &&
     ctx.placeVertical &&
     ctx.fetchExpiries &&
@@ -839,7 +857,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
     }
   }
 
-  await placeRiskoffEtfBuy(ctx, etf.buy, bought);
+  if (sleeveAutoOn(ctx, "riskoff")) await placeRiskoffEtfBuy(ctx, etf.buy, bought);
   return { bought, sold, verticals };
 }
 
