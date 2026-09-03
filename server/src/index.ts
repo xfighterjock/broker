@@ -177,6 +177,10 @@ async function main(): Promise<void> {
 
   const root = express();
   root.disable("x-powered-by");
+  // nginx terminates TLS and sets X-Forwarded-Proto. Without trust proxy,
+  // req.secure is false on this HTTP bind and express-session skips Set-Cookie
+  // when cookie.secure is true (COOKIE_SECURE=1 / production).
+  root.set("trust proxy", 1);
   root.use(sessionMw);
   root.use(api);
 
