@@ -10,7 +10,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **20dma** — 20-day simple moving average. Momentum pullback filter uses last vs this SMA (dist20).
 
-**200dma** — 200-day simple moving average. RISK ON requires SPY, ACWI, and HYG last above it. Momentum/ownership filters and below-200 exits use it too.
+**200dma** — 200-day simple moving average. RISK ON requires SPY, ACWI, and HYG last above it. Momentum/ownership filters and below-200 exits use it too. Risk-off credit-leg puts (HYG/LQD/JNK) each use that name's own 200dma — not spyAbove200 for LQD/JNK.
 
 **ACWI** — iShares MSCI ACWI ETF (global equities). One of three 200dma legs on the RISK ON badge.
 
@@ -70,7 +70,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **GLD** — SPDR Gold Shares. First-preference candidate on the risk-off 63d RS overlay vs BIL.
 
-**HYG** — iShares iBoxx $ High Yield Corporate Bond ETF. RISK ON 200dma leg. Credit-leg ATM put debit on the riskoff sleeve when HYG is below 200dma; the HYG auto entry alone also requires OI >= 100 on each leg, a round-trip within 25% of the entry debit, and a hard 3-contract cap (RISKOFF_HYG_MIN_OPEN_INTEREST, RISKOFF_HYG_MAX_ROUNDTRIP_SLIPPAGE_FRAC, RISKOFF_HYG_MAX_AUTO_QTY).
+**HYG** — iShares iBoxx $ High Yield Corporate Bond ETF. RISK ON 200dma leg. First credit-leg ATM put debit on the riskoff sleeve when HYG is below its own 200dma; HYG/LQD/JNK auto entries also require OI >= 100 on each leg, a round-trip within 25% of the entry debit, and a hard 3-contract cap (RISKOFF_HYG_* / RISKOFF_CREDIT_LEG_* aliases).
 
 **IEF** — iShares 7-10 Year Treasury Bond ETF. Intermediate-duration candidate on the risk-off 63d RS overlay (after TLT in the duration bucket).
 
@@ -78,7 +78,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **IWM** — iShares Russell 2000 ETF. Options quote strip; optional third equity-index put on riskoff when SPY is below 200dma and IWM is quoted.
 
-**JNK** — SPDR Bloomberg High Yield Bond ETF. Risk-off quote-strip visibility only. No auto put debit in phase 1.
+**JNK** — SPDR Bloomberg High Yield Bond ETF. Credit-leg ATM put debit on the riskoff sleeve when RISK OFF and JNK is below its own 200dma (not spyAbove200). Same liquidity/size envelope as HYG. After HYG and LQD inside the cap of 3.
 
 **Keychain** — iOS credential store. Event Gate iOS keeps the session bearer, login username, and last registered FCM token (`replaceToken`) here only — never UserDefaults, never git.
 
@@ -86,7 +86,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **Limit** — Limit order type. Gate leaves limits alone unless oversize.
 
-**LQD** — iShares iBoxx $ Investment Grade Corporate Bond ETF. Risk-off quote-strip visibility only. No auto put debit in phase 1.
+**LQD** — iShares iBoxx $ Investment Grade Corporate Bond ETF. Credit-leg ATM put debit on the riskoff sleeve when RISK OFF and LQD is below its own 200dma (not spyAbove200). Same liquidity/size envelope as HYG. Tried after HYG (including when HYG fails liquidity) and before JNK.
 
 **M6E** — CME Micro Euro FX futures. Gated root; freeze-card liquid contract; day quote strip M6E=F.
 
@@ -112,7 +112,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **OAuth** — E*TRADE 1.0a handshake. In-app Authorize + PIN; in-process renew during the cash session.
 
-**OI** — Open interest. Options-chain leg field. HYG auto put-debit entries refuse either leg below RISKOFF_HYG_MIN_OPEN_INTEREST (100); no OI floor on manual entries or SPY/QQQ/IWM/options auto verticals.
+**OI** — Open interest. Options-chain leg field. HYG/LQD/JNK auto put-debit entries refuse either leg below RISKOFF_HYG_MIN_OPEN_INTEREST (100); no OI floor on manual entries or SPY/QQQ/IWM/options auto verticals.
 
 **OTM** — Out of the money. Put debit shorts a lower strike; call debit shorts a higher strike.
 
@@ -142,7 +142,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **SH** — ProShares Short S&P 500. Not a live risk-off expression.
 
-**SJB** — ProShares Short High Yield. Risk-off quote-strip visibility only — not a traded inverse (HYG put is the credit-leg instead).
+**SJB** — ProShares Short High Yield. Risk-off quote-strip visibility only — not a traded inverse (HYG/LQD/JNK puts are the credit-leg instead).
 
 **SMA** — Simple moving average. 20- and 200-day windows in scan/risk features.
 

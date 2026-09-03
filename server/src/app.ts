@@ -7,6 +7,7 @@ import {
   REDIS_CHANNELS,
   AUTO_PAPER_INTERVAL_MS,
   REDIS_KEYS,
+  RISKOFF_CREDIT_LEG_SYMBOLS,
   RISKOFF_ETF_SYMBOLS,
   SLEEVE_IDS,
   TRADER,
@@ -1158,7 +1159,12 @@ export function buildApp(deps: AppDeps): express.Express {
       const risk = await ensureRisk();
       let riskoffQuotes: Array<{ symbol: string; last: number }> = [];
       if (!risk.riskOn) {
-        const qs = await fetchDelayedQuotes(["SPY", "QQQ", "IWM", "HYG"]).catch(() => []);
+        const qs = await fetchDelayedQuotes([
+          "SPY",
+          "QQQ",
+          "IWM",
+          ...RISKOFF_CREDIT_LEG_SYMBOLS,
+        ]).catch(() => []);
         riskoffQuotes = qs
           .filter((q) => q.last !== null && Number.isFinite(q.last) && q.last > 0)
           .map((q) => ({ symbol: q.symbol, last: q.last as number }));
@@ -1179,7 +1185,11 @@ export function buildApp(deps: AppDeps): express.Express {
         featureRows,
         scanReady,
         riskOn: risk.riskOn,
-        riskChecks: risk.checks,
+        riskChecks: {
+          ...risk.checks,
+          lqdAbove200: risk.creditLegAbove200.lqdAbove200,
+          jnkAbove200: risk.creditLegAbove200.jnkAbove200,
+        },
         riskoffQuotes,
         riskoffEtfReturns,
         riskoffEtfQuotes,

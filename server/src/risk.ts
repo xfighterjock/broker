@@ -13,10 +13,25 @@ export type RiskChecks = {
   dollarVeto: boolean;
 };
 
+/** Autopilot-only. Not on GET /api/public/risk. Null = bars missing (fail closed). */
+export type CreditLegAbove200 = {
+  lqdAbove200: boolean | null;
+  jnkAbove200: boolean | null;
+};
+
 export type RiskSnapshot = {
   riskOn: boolean;
   checks: RiskChecks;
+  creditLegAbove200: CreditLegAbove200;
 };
+
+/** Own-200 for LQD/JNK credit-leg puts. Missing bars or short series → null. */
+export function above200FromBars(bars: DailyBar[] | null | undefined): boolean | null {
+  if (!bars) return null;
+  const feat = featuresFromBars(bars);
+  if (!feat) return null;
+  return feat.above200;
+}
 
 function retN(closes: number[], period: number): number | null {
   const n = closes.length;
@@ -45,6 +60,7 @@ export function riskOffFallback(): RiskSnapshot {
       uup20dPct: null,
       dollarVeto: true,
     },
+    creditLegAbove200: { lqdAbove200: null, jnkAbove200: null },
   };
 }
 
@@ -54,6 +70,8 @@ export function riskFromFeatures(input: {
   acwi: ScanFeatures | null;
   hyg: ScanFeatures | null;
   uup20dPct: number | null;
+  lqd?: ScanFeatures | null;
+  jnk?: ScanFeatures | null;
 }): RiskSnapshot {
   const spyAbove200 = Boolean(input.spy?.above200);
   const acwiAbove200 = Boolean(input.acwi?.above200);
@@ -68,6 +86,10 @@ export function riskFromFeatures(input: {
       hygAbove200,
       uup20dPct: input.uup20dPct,
       dollarVeto,
+    },
+    creditLegAbove200: {
+      lqdAbove200: input.lqd === undefined ? null : input.lqd ? input.lqd.above200 : null,
+      jnkAbove200: input.jnk === undefined ? null : input.jnk ? input.jnk.above200 : null,
     },
   };
 }
@@ -114,17 +136,21 @@ export function getRiskAsOf(): number | null {
 }
 
 async function runRisk(): Promise<RiskSnapshot> {
-  const [spyBars, acwiBars, hygBars, uupBars] = await Promise.all([
+  const [spyBars, acwiBars, hygBars, uupBars, lqdBars, jnkBars] = await Promise.all([
     fetchMassiveDailyBars("SPY"),
     fetchMassiveDailyBars("ACWI"),
     fetchMassiveDailyBars("HYG"),
     fetchMassiveDailyBars("UUP"),
+    fetchMassiveDailyBars("LQD"),
+    fetchMassiveDailyBars("JNK"),
   ]);
   const snap = riskFromFeatures({
     spy: spyBars ? featuresFromBars(spyBars) : null,
     acwi: acwiBars ? featuresFromBars(acwiBars) : null,
     hyg: hygBars ? featuresFromBars(hygBars) : null,
     uup20dPct: uup20dReturn(uupBars),
+    lqd: lqdBars ? featuresFromBars(lqdBars) : null,
+    jnk: jnkBars ? featuresFromBars(jnkBars) : null,
   });
   cached = { at: Date.now(), snap };
   return snap;

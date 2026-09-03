@@ -5,11 +5,14 @@ import {
   OPTIONS_DTE_EXIT,
   OPTIONS_DTE_TARGET_MAX,
   OPTIONS_DTE_TARGET_MIN,
-  RISKOFF_HYG_SYMBOL,
-  RISKOFF_HYG_MIN_OPEN_INTEREST,
-  RISKOFF_HYG_MAX_ROUNDTRIP_SLIPPAGE_FRAC,
+  RISKOFF_CREDIT_LEG_MAX_AUTO_QTY,
+  RISKOFF_CREDIT_LEG_MAX_ROUNDTRIP_SLIPPAGE_FRAC,
+  RISKOFF_CREDIT_LEG_MIN_OPEN_INTEREST,
+  RISKOFF_CREDIT_LEG_SYMBOLS,
   RISKOFF_HYG_MAX_AUTO_QTY,
+  RISKOFF_HYG_SYMBOL,
   RISKOFF_SYMBOLS,
+  type RiskoffCreditLegSymbol,
 } from "../../shared/constants";
 import type {
   OptionExpiry,
@@ -207,7 +210,7 @@ export type AutoVertical = {
   longStrike: number;
   shortStrike: number;
   thesis: string;
-  /** HYG riskoff auto only: hard-capped contract count (RISKOFF_HYG_MAX_AUTO_QTY). Undefined lets validateDebitVertical auto-size at 1%, unchanged for SPY/QQQ/IWM riskoff, options calls, and manual entries. */
+  /** Credit-leg riskoff auto only: hard-capped contract count (RISKOFF_CREDIT_LEG_MAX_AUTO_QTY). Undefined lets validateDebitVertical auto-size at 1%, unchanged for SPY/QQQ/IWM riskoff, options calls, and manual entries. */
   qty?: number;
 };
 
@@ -259,9 +262,16 @@ export function decideCallVerticalIntents(
 export type RiskoffPutChecks = {
   spyAbove200?: boolean | null;
   hygAbove200?: boolean | null;
+  lqdAbove200?: boolean | null;
+  jnkAbove200?: boolean | null;
 };
 
 const RISKOFF_EQUITY_PUTS = new Set<string>([...RISKOFF_SYMBOLS, "IWM"]);
+const RISKOFF_CREDIT_LEG_SET = new Set<string>(RISKOFF_CREDIT_LEG_SYMBOLS);
+
+export function isRiskoffCreditLeg(symbol: string): symbol is RiskoffCreditLegSymbol {
+  return RISKOFF_CREDIT_LEG_SET.has(symbol.trim().toUpperCase());
+}
 
 function knownBool(v: boolean | null | undefined): boolean | undefined {
   return typeof v === "boolean" ? v : undefined;
@@ -272,6 +282,17 @@ function verticalUnderlyer(p: Position): string {
   return (p.vertical.quoteSymbol || p.vertical.underlying || "").trim().toUpperCase();
 }
 
+function creditLegAbove200(
+  symbol: string,
+  checks?: RiskoffPutChecks | null,
+): boolean | undefined {
+  const u = symbol.trim().toUpperCase();
+  if (u === "HYG") return knownBool(checks?.hygAbove200);
+  if (u === "LQD") return knownBool(checks?.lqdAbove200);
+  if (u === "JNK") return knownBool(checks?.jnkAbove200);
+  return undefined;
+}
+
 /** True when RISK OFF and SPY is known below 200dma. Missing check fails closed. */
 export function riskoffEquityPutsAllowed(
   riskOn: boolean,
@@ -280,29 +301,39 @@ export function riskoffEquityPutsAllowed(
   return riskOn === false && spyAbove200 === false;
 }
 
+/** True when RISK OFF and that credit name is known below its own 200dma. Missing check fails closed. Do not use spyAbove200. */
+export function riskoffCreditLegPutAllowed(
+  riskOn: boolean,
+  above200?: boolean | null,
+): boolean {
+  return riskOn === false && above200 === false;
+}
+
 /** True when RISK OFF and HYG is known below 200dma. Missing check fails closed. */
 export function riskoffHygPutAllowed(
   riskOn: boolean,
   hygAbove200?: boolean | null,
 ): boolean {
-  return riskOn === false && hygAbove200 === false;
+  return riskoffCreditLegPutAllowed(riskOn, hygAbove200);
 }
 
-/** Either the equity-index puts or the HYG credit-leg put may fire. */
+/** Either the equity-index puts or a credit-leg put (HYG/LQD/JNK) may fire. */
 export function riskoffPutsAllowed(
   riskOn: boolean,
   checks?: RiskoffPutChecks | null,
 ): boolean {
-  return (
-    riskoffEquityPutsAllowed(riskOn, knownBool(checks?.spyAbove200)) ||
-    riskoffHygPutAllowed(riskOn, knownBool(checks?.hygAbove200))
-  );
+  if (riskoffEquityPutsAllowed(riskOn, knownBool(checks?.spyAbove200))) return true;
+  for (const symbol of RISKOFF_CREDIT_LEG_SYMBOLS) {
+    if (riskoffCreditLegPutAllowed(riskOn, creditLegAbove200(symbol, checks))) return true;
+  }
+  return false;
 }
 
 /**
- * Risk-off put debit intents. HYG first when credit is the broken leg;
- * SPY/QQQ/IWM only when SPY is below 200dma. Missing checks fail closed.
- * Never calls. One per name. Cap MAX_AUTO_RISKOFF_VERTICALS.
+ * Risk-off put debit intents. Credit-leg names first (HYG, then LQD, then
+ * JNK) when that name is below its own 200dma; SPY/QQQ/IWM only when SPY
+ * is below 200dma. Missing checks fail closed. Never calls. One per name.
+ * Cap MAX_AUTO_RISKOFF_VERTICALS.
  */
 export function decidePutVerticalIntents(
   quotes: Array<{ symbol: string; last: number }>,
@@ -314,10 +345,11 @@ export function decidePutVerticalIntents(
   if (sleeve.id !== "riskoff") return [];
   if (sleeve.paper.realizedPnlUsd <= -sleeve.lossCapUsd) return [];
   const spyAbove200 = knownBool(checks?.spyAbove200);
-  const hygAbove200 = knownBool(checks?.hygAbove200);
-  const wantHyg = riskoffHygPutAllowed(riskOn, hygAbove200);
   const wantEquity = riskoffEquityPutsAllowed(riskOn, spyAbove200);
-  if (!wantHyg && !wantEquity) return [];
+  const creditOrder = RISKOFF_CREDIT_LEG_SYMBOLS.filter((symbol) =>
+    riskoffCreditLegPutAllowed(riskOn, creditLegAbove200(symbol, checks)),
+  );
+  if (!creditOrder.length && !wantEquity) return [];
   const openV = openPositions.filter((p) => isOpen(p) && p.sleeveId === "riskoff" && isVerticalPosition(p));
   let slots = MAX_AUTO_RISKOFF_VERTICALS - openV.length;
   if (slots <= 0) return [];
@@ -328,8 +360,7 @@ export function decidePutVerticalIntents(
     if (!symbol || !Number.isFinite(q.last) || !(q.last > 0)) continue;
     bySym.set(symbol, { symbol, last: q.last });
   }
-  const order: string[] = [];
-  if (wantHyg) order.push(RISKOFF_HYG_SYMBOL);
+  const order: string[] = [...creditOrder];
   if (wantEquity) order.push(...RISKOFF_SYMBOLS, "IWM");
   const out: AutoVerticalIntent[] = [];
   for (const symbol of order) {
@@ -337,10 +368,9 @@ export function decidePutVerticalIntents(
     const q = bySym.get(symbol);
     if (!q) continue;
     if (taken.has(symbol)) continue;
-    const thesis =
-      symbol === RISKOFF_HYG_SYMBOL
-        ? `auto put debit ${symbol} credit-leg`
-        : `auto put debit ${symbol} risk-off`;
+    const thesis = isRiskoffCreditLeg(symbol)
+      ? `auto put debit ${symbol} credit-leg`
+      : `auto put debit ${symbol} risk-off`;
     out.push({
       sleeveId: "riskoff",
       symbol,
@@ -355,8 +385,9 @@ export function decidePutVerticalIntents(
 
 /**
  * Flatten equity-index puts when SPY is back above 200dma.
- * Flatten the HYG credit-leg put when HYG is back above 200dma or RISK ON.
- * Leaves the risk-off ETF long alone. Missing checks do not flatten that name.
+ * Flatten a credit-leg put (HYG/LQD/JNK) when that name is back above 200dma
+ * or RISK ON. Leaves the risk-off ETF long alone. Missing checks do not
+ * flatten that name.
  */
 export function decideRiskoffPutSells(
   positions: Position[],
@@ -364,25 +395,25 @@ export function decideRiskoffPutSells(
   checks?: RiskoffPutChecks | null,
 ): AutoSell[] {
   const spyAbove200 = knownBool(checks?.spyAbove200);
-  const hygAbove200 = knownBool(checks?.hygAbove200);
   const out: AutoSell[] = [];
   for (const p of positions) {
     if (!isOpen(p) || p.sleeveId !== "riskoff") continue;
     if (!isVerticalPosition(p) || !p.vertical) continue;
     if (p.vertical.right !== "P") continue;
     const u = verticalUnderlyer(p);
-    if (u === RISKOFF_HYG_SYMBOL) {
+    if (isRiskoffCreditLeg(u)) {
+      const above200 = creditLegAbove200(u, checks);
       if (riskOn === true) {
         out.push({
           sleeveId: "riskoff",
           symbol: p.symbol,
           reason: "risk on: flatten credit-leg put",
         });
-      } else if (hygAbove200 === true) {
+      } else if (above200 === true) {
         out.push({
           sleeveId: "riskoff",
           symbol: p.symbol,
-          reason: "HYG above 200dma: flatten credit-leg put",
+          reason: `${u} above 200dma: flatten credit-leg put`,
         });
       }
       continue;
@@ -423,36 +454,39 @@ export function pickAtmPutDebit(
 }
 
 export type HygLiquidityCheck = { ok: true } | { ok: false; reason: string };
+export type CreditLegLiquidityCheck = HygLiquidityCheck;
 
 /**
- * HYG-only, auto-only liquidity/slippage gate for the credit-leg put debit.
- * Both legs need real open interest (RISKOFF_HYG_MIN_OPEN_INTEREST), and the
- * immediate round-trip (sell the long at its bid, buy back the short at its
- * ask) must not already give back more than
- * RISKOFF_HYG_MAX_ROUNDTRIP_SLIPPAGE_FRAC of the entry debit — i.e. the
- * immediate close must be at least 75% of the entry debit. See the
+ * Credit-leg (HYG/LQD/JNK), auto-only liquidity/slippage gate for the put
+ * debit. Both legs need real open interest (RISKOFF_CREDIT_LEG_MIN_OPEN_INTEREST),
+ * and the immediate round-trip (sell the long at its bid, buy back the short
+ * at its ask) must not already give back more than
+ * RISKOFF_CREDIT_LEG_MAX_ROUNDTRIP_SLIPPAGE_FRAC of the entry debit — i.e.
+ * the immediate close must be at least 75% of the entry debit. See the
  * RISKOFF_HYG_* constants doc comment (shared/constants.ts) for the incident
- * this is guarding against. Only called from the HYG branch of the riskoff
- * auto put-vertical loop below; SPY/QQQ/IWM riskoff, options-sleeve calls,
- * and manual POST /api/paper/vertical never call this.
+ * this is guarding against. Only called from the credit-leg branch of the
+ * riskoff auto put-vertical loop below; SPY/QQQ/IWM riskoff, options-sleeve
+ * calls, and manual POST /api/paper/vertical never call this.
  */
-export function checkHygAutoLiquidity(
+export function checkCreditLegAutoLiquidity(
+  symbol: string,
   long: OptionLeg,
   short: OptionLeg,
-  qty: number = RISKOFF_HYG_MAX_AUTO_QTY,
-): HygLiquidityCheck {
+  qty: number = RISKOFF_CREDIT_LEG_MAX_AUTO_QTY,
+): CreditLegLiquidityCheck {
+  const name = symbol.trim().toUpperCase() || RISKOFF_HYG_SYMBOL;
   const longOi = long.openInterest;
   const shortOi = short.openInterest;
-  if (longOi === null || !(longOi >= RISKOFF_HYG_MIN_OPEN_INTEREST)) {
+  if (longOi === null || !(longOi >= RISKOFF_CREDIT_LEG_MIN_OPEN_INTEREST)) {
     return {
       ok: false,
-      reason: `HYG long leg open interest ${longOi ?? "n/a"} below ${RISKOFF_HYG_MIN_OPEN_INTEREST}`,
+      reason: `${name} long leg open interest ${longOi ?? "n/a"} below ${RISKOFF_CREDIT_LEG_MIN_OPEN_INTEREST}`,
     };
   }
-  if (shortOi === null || !(shortOi >= RISKOFF_HYG_MIN_OPEN_INTEREST)) {
+  if (shortOi === null || !(shortOi >= RISKOFF_CREDIT_LEG_MIN_OPEN_INTEREST)) {
     return {
       ok: false,
-      reason: `HYG short leg open interest ${shortOi ?? "n/a"} below ${RISKOFF_HYG_MIN_OPEN_INTEREST}`,
+      reason: `${name} short leg open interest ${shortOi ?? "n/a"} below ${RISKOFF_CREDIT_LEG_MIN_OPEN_INTEREST}`,
     };
   }
   const longAsk = long.ask;
@@ -469,27 +503,36 @@ export function checkHygAutoLiquidity(
     !Number.isFinite(longBid) ||
     !Number.isFinite(shortAsk)
   ) {
-    return { ok: false, reason: "HYG legs missing bid/ask" };
+    return { ok: false, reason: `${name} legs missing bid/ask` };
   }
   const entryDebit = longAsk - shortBid;
   if (!(entryDebit > 0)) {
-    return { ok: false, reason: "HYG entry debit <= 0" };
+    return { ok: false, reason: `${name} entry debit <= 0` };
   }
   const immediateClose = longBid - shortAsk;
-  const minAcceptable = entryDebit * (1 - RISKOFF_HYG_MAX_ROUNDTRIP_SLIPPAGE_FRAC);
+  const minAcceptable = entryDebit * (1 - RISKOFF_CREDIT_LEG_MAX_ROUNDTRIP_SLIPPAGE_FRAC);
   if (immediateClose < minAcceptable) {
     return {
       ok: false,
-      reason: `HYG round-trip close ${immediateClose.toFixed(2)} < ${minAcceptable.toFixed(2)} (75% of entry debit ${entryDebit.toFixed(2)})`,
+      reason: `${name} round-trip close ${immediateClose.toFixed(2)} < ${minAcceptable.toFixed(2)} (75% of entry debit ${entryDebit.toFixed(2)})`,
     };
   }
   if (long.bidSize !== null && long.bidSize < qty) {
-    return { ok: false, reason: `HYG long bidSize ${long.bidSize} below final qty ${qty}` };
+    return { ok: false, reason: `${name} long bidSize ${long.bidSize} below final qty ${qty}` };
   }
   if (short.askSize !== null && short.askSize < qty) {
-    return { ok: false, reason: `HYG short askSize ${short.askSize} below final qty ${qty}` };
+    return { ok: false, reason: `${name} short askSize ${short.askSize} below final qty ${qty}` };
   }
   return { ok: true };
+}
+
+/** HYG wrapper — same numbers, same reasons as checkCreditLegAutoLiquidity("HYG", …). */
+export function checkHygAutoLiquidity(
+  long: OptionLeg,
+  short: OptionLeg,
+  qty: number = RISKOFF_HYG_MAX_AUTO_QTY,
+): HygLiquidityCheck {
+  return checkCreditLegAutoLiquidity(RISKOFF_HYG_SYMBOL, long, short, qty);
 }
 
 /** Long closer ATM, short the next further OTM call. Skip if <2 call strikes. */
@@ -548,15 +591,15 @@ export type AutopilotCtx = {
   featureRows: Array<{ symbol: string; above200: boolean }>;
   scanReady: boolean;
   riskOn: boolean;
-  /** From ensureRisk(). Missing spyAbove200 / hygAbove200 fail closed for that name's puts. */
+  /** From ensureRisk(). Missing spyAbove200 / credit-leg 200 checks fail closed for that name's puts. lqd/jnk are autopilot-internal (not on GET /api/public/risk). */
   riskChecks?: RiskoffPutChecks | null;
   place: (buy: AutoBuy) => Promise<PlaceResult>;
   close: (sell: AutoSell) => Promise<CloseResult>;
-  /** Paper debit verticals. Call on options when RISK ON; risk-off puts: equity-index if SPY below 200, HYG credit-leg if HYG below 200. Never CSP/CC. */
+  /** Paper debit verticals. Call on options when RISK ON; risk-off puts: equity-index if SPY below 200, credit-leg if that name is below its own 200. Never CSP/CC. */
   placeVertical?: (v: AutoVertical) => Promise<PlaceResult>;
   fetchExpiries?: (symbol: string) => Promise<OptionExpiry[]>;
   fetchChain?: (symbol: string, expiry: string) => Promise<OptionLeg[]>;
-  /** Delayed lasts for SPY/QQQ (IWM optional) and HYG, used for risk-off put intents. */
+  /** Delayed lasts for SPY/QQQ (IWM optional) and HYG/LQD/JNK, used for risk-off put intents. */
   riskoffQuotes?: Array<{ symbol: string; last: number }>;
   /** 63d total returns for the risk-off ETF overlay vs BIL. Missing/null → fail closed to cash. */
   riskoffEtfReturns?: RiskoffEtfReturns | null;
@@ -618,7 +661,9 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
   const riskOn = ctx.riskOn === true;
   const spyAbove200 = knownBool(ctx.riskChecks?.spyAbove200);
   const hygAbove200 = knownBool(ctx.riskChecks?.hygAbove200);
-  const putChecks: RiskoffPutChecks = { spyAbove200, hygAbove200 };
+  const lqdAbove200 = knownBool(ctx.riskChecks?.lqdAbove200);
+  const jnkAbove200 = knownBool(ctx.riskChecks?.jnkAbove200);
+  const putChecks: RiskoffPutChecks = { spyAbove200, hygAbove200, lqdAbove200, jnkAbove200 };
 
   const sells = decideSells(
     ctx.getPositions(),
@@ -820,9 +865,9 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
           continue;
         }
         let qty: number | undefined;
-        if (intent.symbol === RISKOFF_HYG_SYMBOL) {
-          qty = RISKOFF_HYG_MAX_AUTO_QTY;
-          const gate = checkHygAutoLiquidity(pair.long, pair.short, qty);
+        if (isRiskoffCreditLeg(intent.symbol)) {
+          qty = RISKOFF_CREDIT_LEG_MAX_AUTO_QTY;
+          const gate = checkCreditLegAutoLiquidity(intent.symbol, pair.long, pair.short, qty);
           if (!gate.ok) {
             ctx.log(`auto paper vertical skip ${intent.symbol}: ${gate.reason}`);
             continue;
