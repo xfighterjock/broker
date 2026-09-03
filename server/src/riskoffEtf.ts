@@ -1,5 +1,7 @@
 import {
   DEFAULT_SLEEVE_EQUITY_USD,
+  RISKOFF_ETF_CANDIDATES,
+  RISKOFF_ETF_CASH_SYMBOL,
   RISKOFF_ETF_LOOKBACK_DAYS,
   RISKOFF_ETF_NOTIONAL_FRAC,
   RISKOFF_ETF_STOP_MUL,
@@ -37,6 +39,12 @@ export function isRiskoffEtfSymbol(symbol: string): symbol is RiskoffEtfSymbol {
   return (RISKOFF_ETF_SYMBOLS as readonly string[]).includes(symbol.trim().toUpperCase());
 }
 
+export function emptyRiskoffEtfReturns(): RiskoffEtfReturns {
+  const out = {} as RiskoffEtfReturns;
+  for (const s of RISKOFF_ETF_SYMBOLS) out[s] = null;
+  return out;
+}
+
 /** Exact lookback only. Short or missing series → null (fail closed). */
 export function periodReturn(closes: number[], period: number): number | null {
   const n = closes.length;
@@ -62,42 +70,54 @@ export function riskoffEtfReturnFromBars(bars: DailyBar[] | null | undefined): n
   return periodReturn(closesFromBars(bars), RISKOFF_ETF_LOOKBACK_DAYS);
 }
 
-export function riskoffEtfReturnsFromBars(bars: {
-  GLD: DailyBar[] | null | undefined;
-  UUP: DailyBar[] | null | undefined;
-  BIL: DailyBar[] | null | undefined;
-}): RiskoffEtfReturns {
-  return {
-    GLD: riskoffEtfReturnFromBars(bars.GLD),
-    UUP: riskoffEtfReturnFromBars(bars.UUP),
-    BIL: riskoffEtfReturnFromBars(bars.BIL),
-  };
+export function riskoffEtfReturnsFromBars(
+  bars: Partial<Record<RiskoffEtfSymbol, DailyBar[] | null | undefined>>,
+): RiskoffEtfReturns {
+  const out = emptyRiskoffEtfReturns();
+  for (const s of RISKOFF_ETF_SYMBOLS) {
+    out[s] = riskoffEtfReturnFromBars(bars[s]);
+  }
+  return out;
+}
+
+export function riskoffEtfReturnsReady(returns: RiskoffEtfReturns): boolean {
+  for (const s of RISKOFF_ETF_SYMBOLS) {
+    const r = returns[s];
+    if (r === null || !Number.isFinite(r)) return false;
+  }
+  return true;
 }
 
 /**
- * Hold GLD or UUP if that name's lookback return beats BIL; else BIL.
- * Any missing return → null (cash). Exact RS tie between GLD and UUP keeps
- * the held name when it is one of them, else GLD.
+ * Hold a candidate if that name's lookback return beats BIL; else BIL.
+ * Any missing overlay-universe return → null (cash). Among names that beat
+ * BIL, pick the highest 63d return. Exact RS tie keeps the held name when it
+ * is still eligible, else preference order GLD > UUP > TLT > IEF > XLU > XLP.
  */
 export function pickRiskoffEtfWinner(
   returns: RiskoffEtfReturns,
   held?: string | null,
 ): RiskoffEtfSymbol | null {
-  const gld = returns.GLD;
-  const uup = returns.UUP;
-  const bil = returns.BIL;
-  if (gld === null || uup === null || bil === null) return null;
-  if (!Number.isFinite(gld) || !Number.isFinite(uup) || !Number.isFinite(bil)) return null;
+  if (!riskoffEtfReturnsReady(returns)) return null;
+  const bil = returns[RISKOFF_ETF_CASH_SYMBOL] as number;
   const heldU = held?.trim().toUpperCase() ?? "";
-  const gldBeats = gld > bil;
-  const uupBeats = uup > bil;
-  if (!gldBeats && !uupBeats) return "BIL";
-  if (gldBeats && !uupBeats) return "GLD";
-  if (uupBeats && !gldBeats) return "UUP";
-  if (gld > uup) return "GLD";
-  if (uup > gld) return "UUP";
-  if (heldU === "GLD" || heldU === "UUP") return heldU as RiskoffEtfSymbol;
-  return "GLD";
+  const eligible = RISKOFF_ETF_CANDIDATES.filter((s) => (returns[s] as number) > bil);
+  if (eligible.length === 0) return RISKOFF_ETF_CASH_SYMBOL;
+
+  let bestRet = -Infinity;
+  for (const s of eligible) {
+    const r = returns[s] as number;
+    if (r > bestRet) bestRet = r;
+  }
+  const tied = eligible.filter((s) => returns[s] === bestRet);
+  if (tied.length === 1) return tied[0];
+  if (isRiskoffEtfSymbol(heldU) && tied.includes(heldU as (typeof RISKOFF_ETF_CANDIDATES)[number])) {
+    return heldU;
+  }
+  for (const s of RISKOFF_ETF_CANDIDATES) {
+    if (tied.includes(s)) return s;
+  }
+  return tied[0] ?? RISKOFF_ETF_CASH_SYMBOL;
 }
 
 export function sizeRiskoffEtfShares(
@@ -158,19 +178,19 @@ export function decideRiskoffEtf(input: {
   const open = openRiskoffEtfPositions(input.positions);
 
   if (input.riskOn) {
-    return flattenOpen(open, "risk on: flatten GLD/UUP/BIL", null);
+    return flattenOpen(open, "risk on: flatten risk-off ETF", null);
   }
   if (input.sleeve.paper.realizedPnlUsd <= -input.sleeve.lossCapUsd) {
     return flattenOpen(open, "sleeve loss cap", null);
   }
   if (!input.returns) {
-    return flattenOpen(open, "missing GLD/UUP/BIL bars", null);
+    return flattenOpen(open, "missing risk-off ETF bars", null);
   }
 
   const held = open.length === 1 ? open[0].symbol : null;
   const winner = pickRiskoffEtfWinner(input.returns, held);
   if (winner === null) {
-    return flattenOpen(open, "missing GLD/UUP/BIL bars", null);
+    return flattenOpen(open, "missing risk-off ETF bars", null);
   }
 
   const extras = open.filter((p) => p.symbol.toUpperCase() !== winner);
@@ -188,7 +208,7 @@ export function decideRiskoffEtf(input: {
   const last = lastBySymbol(input.quotes).get(winner);
   if (last === undefined) {
     const reason =
-      winner === "BIL" ? "BIL unquoted: cash" : `${winner} unquoted: cash`;
+      winner === RISKOFF_ETF_CASH_SYMBOL ? "BIL unquoted: cash" : `${winner} unquoted: cash`;
     return flattenOpen(open, reason, winner);
   }
 
@@ -207,17 +227,20 @@ export function decideRiskoffEtf(input: {
       side: "Buy",
       qty,
       stopPrice: last * RISKOFF_ETF_STOP_MUL,
-      thesis: `auto GLD/UUP RS ${RISKOFF_ETF_LOOKBACK_DAYS}d winner ${winner}`,
+      thesis: `auto risk-off ETF RS ${RISKOFF_ETF_LOOKBACK_DAYS}d winner ${winner}`,
     },
   };
 }
 
 export async function fetchRiskoffEtfReturns(): Promise<RiskoffEtfReturns | null> {
-  const [gld, uup, bil] = await Promise.all([
-    fetchMassiveDailyBars("GLD"),
-    fetchMassiveDailyBars("UUP"),
-    fetchMassiveDailyBars("BIL"),
-  ]);
-  if (!gld && !uup && !bil) return null;
-  return riskoffEtfReturnsFromBars({ GLD: gld, UUP: uup, BIL: bil });
+  const pairs = await Promise.all(
+    RISKOFF_ETF_SYMBOLS.map(async (symbol) => {
+      const bars = await fetchMassiveDailyBars(symbol);
+      return [symbol, bars] as const;
+    }),
+  );
+  if (pairs.every(([, bars]) => !bars)) return null;
+  const bars: Partial<Record<RiskoffEtfSymbol, DailyBar[] | null | undefined>> = {};
+  for (const [symbol, series] of pairs) bars[symbol] = series;
+  return riskoffEtfReturnsFromBars(bars);
 }

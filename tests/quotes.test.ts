@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { RISKOFF_QUOTE_STRIP } from "../shared/constants";
 import { defaultSleeves } from "../shared/types";
 import {
   fetchDelayedQuotes,
@@ -88,14 +89,9 @@ describe("mapTicker / parseInstrumentTickers", () => {
       "TLT",
       "IWM",
     ]);
-    expect(symbolsForSleeve(sleeves.riskoff, "riskoff")).toEqual([
-      "SPY",
-      "QQQ",
-      "HYG",
-      "GLD",
-      "UUP",
-      "BIL",
-    ]);
+    expect(symbolsForSleeve(sleeves.riskoff, "riskoff")).toEqual([...RISKOFF_QUOTE_STRIP]);
+    sleeves.riskoff.instruments = "SPY / QQQ / HYG / GLD / UUP / BIL";
+    expect(symbolsForSleeve(sleeves.riskoff, "riskoff")).toEqual([...RISKOFF_QUOTE_STRIP]);
     sleeves.momentum.instruments = "ES, NQ, SPY";
     expect(symbolsForSleeve(sleeves.momentum, "momentum")).toEqual(["ES=F", "NQ=F", "SPY"]);
   });

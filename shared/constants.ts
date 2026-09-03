@@ -109,13 +109,39 @@ export const RISKOFF_HYG_MAX_ROUNDTRIP_SLIPPAGE_FRAC = 0.25;
 /** Hard cap on HYG auto put-debit contracts. Overrides OPTIONS_DEBIT_TARGET_FRAC 1% sizing, which is what produced 50 contracts on a 0.20 debit. */
 export const RISKOFF_HYG_MAX_AUTO_QTY = 3;
 /**
- * Second risk-off expression: one ETF long (GLD or UUP or BIL). Paper only.
- * Classic gold-vs-dollar relative strength vs T-bills.
+ * Risk-off quote strip (visibility). Puts stay SPY/QQQ/IWM + HYG.
+ * LQD/JNK are strip-only in phase 1 (no credit puts yet). SJB is
+ * visibility-only — not a traded inverse.
  */
-export const RISKOFF_ETF_SYMBOLS = ["GLD", "UUP", "BIL"] as const;
-export type RiskoffEtfSymbol = (typeof RISKOFF_ETF_SYMBOLS)[number];
+export const RISKOFF_QUOTE_STRIP = [
+  "SPY",
+  "QQQ",
+  "HYG",
+  "GLD",
+  "UUP",
+  "BIL",
+  "TLT",
+  "IEF",
+  "XLU",
+  "XLP",
+  "LQD",
+  "JNK",
+  "SJB",
+] as const;
+export type RiskoffQuoteSymbol = (typeof RISKOFF_QUOTE_STRIP)[number];
 /**
- * Exact trading-day total-return lookback for GLD vs UUP vs BIL.
+ * Second risk-off expression: one ETF long vs BIL. Paper only.
+ * Preference order for an exact RS tie: GLD > UUP > duration (TLT, IEF)
+ * > defensives (XLU, XLP). BIL is the cash/T-bill benchmark, last.
+ */
+export const RISKOFF_ETF_SYMBOLS = ["GLD", "UUP", "TLT", "IEF", "XLU", "XLP", "BIL"] as const;
+export type RiskoffEtfSymbol = (typeof RISKOFF_ETF_SYMBOLS)[number];
+export const RISKOFF_ETF_CASH_SYMBOL: RiskoffEtfSymbol = "BIL";
+export const RISKOFF_ETF_CANDIDATES = RISKOFF_ETF_SYMBOLS.filter(
+  (s): s is Exclude<RiskoffEtfSymbol, "BIL"> => s !== "BIL",
+);
+/**
+ * Exact trading-day total-return lookback for the risk-off ETF overlay vs BIL.
  * 63 sessions ≈ 3 months — same convention as scan `ret63`, and clearly
  * multi-month (not the 20-session UUP dollar veto on the global gate).
  */

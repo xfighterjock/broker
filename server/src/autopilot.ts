@@ -356,7 +356,7 @@ export function decidePutVerticalIntents(
 /**
  * Flatten equity-index puts when SPY is back above 200dma.
  * Flatten the HYG credit-leg put when HYG is back above 200dma or RISK ON.
- * Leaves the GLD/UUP/BIL ETF long alone. Missing checks do not flatten that name.
+ * Leaves the risk-off ETF long alone. Missing checks do not flatten that name.
  */
 export function decideRiskoffPutSells(
   positions: Position[],
@@ -558,7 +558,7 @@ export type AutopilotCtx = {
   fetchChain?: (symbol: string, expiry: string) => Promise<OptionLeg[]>;
   /** Delayed lasts for SPY/QQQ (IWM optional) and HYG, used for risk-off put intents. */
   riskoffQuotes?: Array<{ symbol: string; last: number }>;
-  /** 63d total returns for GLD/UUP/BIL. Missing/null → ETF expression fails closed to cash. */
+  /** 63d total returns for the risk-off ETF overlay vs BIL. Missing/null → fail closed to cash. */
   riskoffEtfReturns?: RiskoffEtfReturns | null;
   /** Delayed lasts used to size/rotate the risk-off ETF long. */
   riskoffEtfQuotes?: Array<{ symbol: string; last: number }>;

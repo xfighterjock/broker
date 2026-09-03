@@ -46,6 +46,12 @@ describe("defaultSleeves", () => {
     expect(sleeves.riskoff.instruments).toMatch(/SPY/);
     expect(sleeves.riskoff.instruments).toMatch(/HYG/);
     expect(sleeves.riskoff.instruments).toMatch(/GLD/);
+    expect(sleeves.riskoff.instruments).toMatch(/TLT/);
+    expect(sleeves.riskoff.instruments).toMatch(/IEF/);
+    expect(sleeves.riskoff.instruments).toMatch(/XLU/);
+    expect(sleeves.riskoff.instruments).toMatch(/XLP/);
+    expect(sleeves.riskoff.instruments).toMatch(/LQD/);
+    expect(sleeves.riskoff.instruments).toMatch(/JNK/);
     expect(sleeves.day.paper).toEqual(emptyPaperStats());
     expect(sleeves.riskoff.paper).toEqual(emptyPaperStats());
   });

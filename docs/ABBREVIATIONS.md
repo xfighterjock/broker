@@ -26,7 +26,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **bearer** — Opaque session token from POST /api/auth/login. Stored as sha256 in Postgres `user_sessions` (`SESSION_TTL_MS` 30 days). iOS keeps the raw token in the Keychain and sends `Authorization: Bearer`. SPA uses cookie `eg.sid` instead.
 
-**BIL** — SPDR Bloomberg 1-3 Month T-Bill ETF. Cash/T-bill leg of the risk-off 63d relative-strength overlay. Held when neither GLD nor UUP beats it.
+**BIL** — SPDR Bloomberg 1-3 Month T-Bill ETF. Cash/T-bill benchmark of the risk-off 63d relative-strength overlay (RISKOFF_ETF_CASH_SYMBOL). Held when no candidate beats it.
 
 **BUNDLE_ID** — iOS application id. Event Gate iOS must stay `com.logikmancer.mybroker` to match the existing Firebase iOS app.
 
@@ -46,7 +46,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **ET** — America/New_York clock. Gate windows, 15:50 vertical cutoff, session marks, E*TRADE renew window, flatten times.
 
-**ETF** — Exchange-traded fund. Risk-off overlay is one of GLD/UUP/BIL; gate names are SPY/ACWI/HYG/UUP.
+**ETF** — Exchange-traded fund. Risk-off overlay is one of GLD/UUP/TLT/IEF/XLU/XLP/BIL; gate names are SPY/ACWI/HYG/UUP.
 
 **Face ID** — iOS LocalAuthentication unlock of a Keychain session. Optional. Not a remote password. Touch ID is the same path.
 
@@ -68,15 +68,17 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **GICS** — Global Industry Classification Standard. Momentum ranks one name per sector; ownership allows two.
 
-**GLD** — SPDR Gold Shares. Risk-off 63d RS overlay vs UUP vs BIL.
+**GLD** — SPDR Gold Shares. First-preference candidate on the risk-off 63d RS overlay vs BIL.
 
 **HYG** — iShares iBoxx $ High Yield Corporate Bond ETF. RISK ON 200dma leg. Credit-leg ATM put debit on the riskoff sleeve when HYG is below 200dma; the HYG auto entry alone also requires OI >= 100 on each leg, a round-trip within 25% of the entry debit, and a hard 3-contract cap (RISKOFF_HYG_MIN_OPEN_INTEREST, RISKOFF_HYG_MAX_ROUNDTRIP_SLIPPAGE_FRAC, RISKOFF_HYG_MAX_AUTO_QTY).
 
-**IEF** — iShares 7-10 Year Treasury Bond ETF. Not a live risk-off expression (refused / not coded).
+**IEF** — iShares 7-10 Year Treasury Bond ETF. Intermediate-duration candidate on the risk-off 63d RS overlay (after TLT in the duration bucket).
 
 **iOS Event Gate** — Native SwiftUI app in ios/ (bundle com.logikmancer.mybroker). Phone Event Gate client: essentials (GATE, RISK, AUTO PAPER chips, Flatten, sleeve P/L, E*TRADE PIN) plus FCM. Users-table login + optional Face ID / Touch ID unlock of the Keychain session. Web `/m` remains for browsers.
 
 **IWM** — iShares Russell 2000 ETF. Options quote strip; optional third equity-index put on riskoff when SPY is below 200dma and IWM is quoted.
+
+**JNK** — SPDR Bloomberg High Yield Bond ETF. Risk-off quote-strip visibility only. No auto put debit in phase 1.
 
 **Keychain** — iOS credential store. Event Gate iOS keeps the session bearer, login username, and last registered FCM token (`replaceToken`) here only — never UserDefaults, never git.
 
@@ -84,11 +86,13 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **Limit** — Limit order type. Gate leaves limits alone unless oversize.
 
+**LQD** — iShares iBoxx $ Investment Grade Corporate Bond ETF. Risk-off quote-strip visibility only. No auto put debit in phase 1.
+
 **M6E** — CME Micro Euro FX futures. Gated root; freeze-card liquid contract; day quote strip M6E=F.
 
 **Market** — Market order type. Cancelled on gated roots in PRE-ARM and NO-STOP BAND.
 
-**Massive** — Market-data vendor (api.massive.com). Equities last, S&P scan dailies, risk-gate bars, GLD/UUP/BIL. 15-minute delayed Starter.
+**Massive** — Market-data vendor (api.massive.com). Equities last, S&P scan dailies, risk-gate bars, risk-off ETF overlay bars. 15-minute delayed Starter.
 
 **MES** — CME Micro E-mini S&P 500 futures. Gated root; freeze-card liquid contract; day quote strip MES=F.
 
@@ -128,7 +132,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **RISK ON** — Badge iff SPY, ACWI, and HYG are above 200dma and UUP 20d is not greater than +3%. Missing series fail closed to RISK OFF.
 
-**RS** — Relative strength. Momentum score vs SPY; risk-off ETF overlay is 63-session total return of GLD vs UUP vs BIL.
+**RS** — Relative strength. Momentum score vs SPY; risk-off ETF overlay is 63-session total return of GLD/UUP/TLT/IEF/XLU/XLP vs BIL.
 
 **SDS** — ProShares UltraShort S&P 500. Not a live risk-off expression.
 
@@ -138,7 +142,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **SH** — ProShares Short S&P 500. Not a live risk-off expression.
 
-**SJB** — ProShares Short High Yield. Not a live risk-off expression (HYG put is the credit-leg instead).
+**SJB** — ProShares Short High Yield. Risk-off quote-strip visibility only — not a traded inverse (HYG put is the credit-leg instead).
 
 **SMA** — Simple moving average. 20- and 200-day windows in scan/risk features.
 
@@ -160,13 +164,13 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **TA** — Technical analysis. Momentum/ownership entries come from the S&P scan filters and scores, not from the event clock.
 
-**TLT** — iShares 20+ Year Treasury Bond ETF. On momentum and ownership quote strips only. Not a live risk-off expression.
+**TLT** — iShares 20+ Year Treasury Bond ETF. Long-duration candidate on the risk-off 63d RS overlay (first in the duration bucket). Also on momentum and ownership quote strips.
 
 **TRADING_MODE** — Process env. mock is required; live is refused. TradovateDemoBroker is a stub pinned to demo.tradovateapi.com.
 
 **Tradovate** — Futures broker. Demo stub only (demo.tradovateapi.com). Order/position calls are not wired; gate uses MockBroker. Live host URLs throw.
 
-**UUP** — Invesco DB US Dollar Index Bullish Fund. RISK ON dollar veto if 20-session return is missing or greater than +3%. Also a 63d RS candidate on the risk-off ETF overlay.
+**UUP** — Invesco DB US Dollar Index Bullish Fund. RISK ON dollar veto if 20-session return is missing or greater than +3%. Also a 63d RS candidate on the risk-off ETF overlay (second preference after GLD).
 
 **uPnL** — Unrealized profit and loss on open mock positions. Marks from delayed last (or vertical/overlay MTM).
 
@@ -177,6 +181,10 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 **WS** — WebSocket /ws for live status and log.
 
 **XcodeGen** — Optional Mac tool. `ios/project.yml` can regenerate `ios/EventGate.xcodeproj`. The checked-in xcodeproj is enough to open on a Mac without installing XcodeGen.
+
+**XLP** — Consumer Staples Select Sector SPDR Fund. Defensive-equity candidate on the risk-off 63d RS overlay (after XLU).
+
+**XLU** — Utilities Select Sector SPDR Fund. Defensive-equity candidate on the risk-off 63d RS overlay (first in the defensives bucket).
 
 **Yahoo** — Yahoo Finance chart API for futures =F quotes (and fallbacks). Equities prefer Massive.
 

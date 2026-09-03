@@ -7,6 +7,7 @@ import {
   REDIS_CHANNELS,
   AUTO_PAPER_INTERVAL_MS,
   REDIS_KEYS,
+  RISKOFF_ETF_SYMBOLS,
   SLEEVE_IDS,
   TRADER,
   TZ,
@@ -1164,7 +1165,7 @@ export function buildApp(deps: AppDeps): express.Express {
       }
       const [riskoffEtfReturns, etfQuoteRows] = await Promise.all([
         fetchRiskoffEtfReturns(),
-        fetchDelayedQuotes(["GLD", "UUP", "BIL"]).catch(() => []),
+        fetchDelayedQuotes([...RISKOFF_ETF_SYMBOLS]).catch(() => []),
       ]);
       const riskoffEtfQuotes = etfQuoteRows
         .filter((q) => q.last !== null && Number.isFinite(q.last) && q.last > 0)

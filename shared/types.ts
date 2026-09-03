@@ -1,4 +1,4 @@
-import { SLEEVE_IDS, type OrderType } from "./constants";
+import { RISKOFF_QUOTE_STRIP, SLEEVE_IDS, type OrderType } from "./constants";
 
 export type GateMode = "idle" | "PRE-ARM" | "NO-STOP BAND" | "SESSION FLATTEN";
 
@@ -341,18 +341,18 @@ export function defaultSleeves(): Record<SleeveId, SleeveCard> {
     },
     riskoff: {
       id: "riskoff",
-      name: "Risk-off (puts + GLD/UUP)",
+      name: "Risk-off (puts + ETF RS)",
       horizon: "days–months",
       budgetPct: 10,
       lossCapUsd: 1000,
       thesis:
-        "Defined-risk put debit while RISK OFF: SPY/QQQ/IWM only after SPY breaks 200dma; one HYG ATM put when credit is the broken leg; plus one GLD/UUP/BIL relative-strength ETF long.",
+        "Defined-risk put debit while RISK OFF: SPY/QQQ/IWM only after SPY breaks 200dma; one HYG ATM put when credit is the broken leg; plus one defensive ETF long (GLD/UUP/TLT/IEF/XLU/XLP vs BIL) by 63d relative strength.",
       macroDrivers: "SPY/ACWI/HYG 200dma + UUP 20d dollar veto (global risk-off).",
       microDrivers:
-        "30–45 DTE put debit verticals: HYG when HYG is below 200dma (credit-leg); SPY/QQQ/IWM only after an equity 200dma break (SPY below). Prefer HYG first inside the auto cap. Skip missing bid/ask. GLD vs UUP vs BIL 63d total return; hold the winner if it beats T-bills, else BIL/cash. Flatten the ETF on RISK ON; flatten equity-index puts while SPY is still above 200dma; flatten the HYG put when HYG is back above 200 or RISK ON.",
-      instruments: "SPY / QQQ / HYG / GLD / UUP / BIL",
+        "30–45 DTE put debit verticals: HYG when HYG is below 200dma (credit-leg); SPY/QQQ/IWM only after an equity 200dma break (SPY below). Prefer HYG first inside the auto cap. Skip missing bid/ask. GLD/UUP/TLT/IEF/XLU/XLP 63d total return vs BIL; hold the winner if it beats T-bills, else BIL/cash. Exact RS tie keeps the held name if it is still eligible, else GLD > UUP > duration > defensives. Flatten the ETF on RISK ON; flatten equity-index puts while SPY is still above 200dma; flatten the HYG put when HYG is back above 200 or RISK ON.",
+      instruments: RISKOFF_QUOTE_STRIP.join(" / "),
       structure:
-        "put debit verticals + one GLD/UUP/BIL ETF long; no naked short vol",
+        "put debit verticals + one GLD/UUP/TLT/IEF/XLU/XLP/BIL ETF long; no naked short vol",
       killRules: "max debit lost / DTE / sleeve loss cap; ETF rotates only when the winner changes",
       status: "paper",
       paper: emptyPaperStats(),

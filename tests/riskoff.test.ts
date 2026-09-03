@@ -28,15 +28,21 @@ import {
 } from "../server/src/autopilot";
 import {
   DEFAULT_SLEEVE_EQUITY_USD,
+  RISKOFF_ETF_CANDIDATES,
   RISKOFF_ETF_LOOKBACK_DAYS,
   RISKOFF_ETF_NOTIONAL_FRAC,
+  RISKOFF_ETF_STOP_MUL,
+  RISKOFF_ETF_SYMBOLS,
   SLEEVE_IDS,
+  type RiskoffEtfSymbol,
 } from "../shared/constants";
 import {
   decideRiskoffEtf,
+  emptyRiskoffEtfReturns,
   periodReturn,
   pickRiskoffEtfWinner,
   sizeRiskoffEtfShares,
+  type RiskoffEtfReturns,
 } from "../server/src/riskoffEtf";
 import { sleeveBook } from "../server/src/paper";
 import { setPaperNow, validateDebitVertical } from "../server/src/vertical";
@@ -592,7 +598,7 @@ describe("HTTP riskoff put vertical (mocked E*TRADE chain)", () => {
 
   it("POST /api/paper/order accepts GLD on riskoff and refuses other stock names", async () => {
     const { app, broker } = makeTestApp();
-    stubMarketFetch({ lastBySymbol: { GLD: 180, SPY: 500 } });
+    stubMarketFetch({ lastBySymbol: { GLD: 180, SPY: 500, TLT: 90 } });
     const srv = await listen(app);
     try {
       const gld = await fetch(`${srv.url}/api/paper/order`, {
@@ -629,7 +635,35 @@ describe("HTTP riskoff put vertical (mocked E*TRADE chain)", () => {
       });
       expect(spy.status).toBe(400);
       const body = (await spy.json()) as { error: string };
-      expect(body.error).toMatch(/GLD\/UUP\/BIL|put debit/i);
+      expect(body.error).toMatch(/GLD\/UUP\/TLT\/IEF\/XLU\/XLP\/BIL|put debit/i);
+
+      const tlt = await fetch(`${srv.url}/api/paper/order`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sleeveId: "riskoff",
+          symbol: "TLT",
+          side: "Buy",
+          qty: 5,
+          stopPrice: 80,
+          thesis: "manual TLT",
+        }),
+      });
+      expect(tlt.status).toBe(200);
+
+      const lqd = await fetch(`${srv.url}/api/paper/order`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sleeveId: "riskoff",
+          symbol: "LQD",
+          side: "Buy",
+          qty: 1,
+          stopPrice: 100,
+          thesis: "phase 2 credit name",
+        }),
+      });
+      expect(lqd.status).toBe(400);
     } finally {
       await srv.close();
       broker.reset();
@@ -691,9 +725,32 @@ function etfQuotes(lasts: Record<string, number>) {
   return Object.entries(lasts).map(([symbol, last]) => ({ symbol, last }));
 }
 
-const gldWins = { GLD: 0.12, UUP: 0.04, BIL: 0.01 };
-const uupWins = { GLD: 0.03, UUP: 0.11, BIL: 0.01 };
-const bothTrail = { GLD: -0.02, UUP: -0.04, BIL: 0.01 };
+function etfRs(overrides: Partial<Record<RiskoffEtfSymbol, number | null>>): RiskoffEtfReturns {
+  const out = emptyRiskoffEtfReturns();
+  for (const s of RISKOFF_ETF_SYMBOLS) out[s] = 0;
+  out.BIL = 0.01;
+  for (const [k, v] of Object.entries(overrides) as Array<[RiskoffEtfSymbol, number | null]>) {
+    out[k] = v;
+  }
+  return out;
+}
+
+const gldWins = etfRs({ GLD: 0.12, UUP: 0.04 });
+const uupWins = etfRs({ GLD: 0.03, UUP: 0.11 });
+const bothTrail = etfRs({ GLD: -0.02, UUP: -0.04 });
+const tltWins = etfRs({ TLT: 0.14, GLD: 0.05, UUP: 0.04 });
+const iefWins = etfRs({ IEF: 0.13, GLD: 0.04, UUP: 0.03, TLT: 0.06 });
+const xluWins = etfRs({ XLU: 0.12, GLD: 0.04, UUP: 0.03, TLT: 0.05 });
+const xlpWins = etfRs({ XLP: 0.11, GLD: 0.04, UUP: 0.03, TLT: 0.05, XLU: 0.06 });
+const allEtfQuotes = etfQuotes({
+  GLD: 180,
+  UUP: 28,
+  TLT: 90,
+  IEF: 95,
+  XLU: 70,
+  XLP: 80,
+  BIL: 91,
+});
 
 function paperBook(initial: Position[] = []) {
   let positions = initial.map((p) => ({ ...p }));
@@ -725,7 +782,7 @@ const putChainForAuto: OptionLeg[] = [
   callLeg(510, 2.4, 2.5),
 ];
 
-describe("GLD/UUP/BIL relative-strength expression", () => {
+describe("risk-off ETF relative-strength expression", () => {
   beforeEach(() => setPaperNow(new Date("2026-08-24T14:00:00Z")));
   afterEach(() => setPaperNow(null));
   it("uses a 63-session lookback and fails closed without an exact series", () => {
@@ -737,11 +794,54 @@ describe("GLD/UUP/BIL relative-strength expression", () => {
     expect(periodReturn([], 63)).toBeNull();
   });
 
+  it("does not raise notional or loosen the disaster stop", () => {
+    expect(RISKOFF_ETF_NOTIONAL_FRAC).toBe(0.2);
+    expect(RISKOFF_ETF_STOP_MUL).toBe(0.92);
+    expect(RISKOFF_ETF_LOOKBACK_DAYS).toBe(63);
+    const qty = sizeRiskoffEtfShares(180);
+    expect(qty).toBe(Math.floor((DEFAULT_SLEEVE_EQUITY_USD * 0.2) / 180));
+    expect(qty * 180).toBeLessThanOrEqual(DEFAULT_SLEEVE_EQUITY_USD * 0.2);
+    const decided = decideRiskoffEtf({
+      riskOn: false,
+      positions: [],
+      sleeve: defaultSleeves().riskoff,
+      returns: gldWins,
+      quotes: allEtfQuotes,
+    });
+    expect(decided.buy?.symbol).toBe("GLD");
+    expect(decided.buy?.qty).toBe(qty);
+    expect(decided.buy?.stopPrice).toBeCloseTo(180 * 0.92);
+  });
+
   it("picks GLD or UUP only when that name beats BIL", () => {
     expect(pickRiskoffEtfWinner(gldWins)).toBe("GLD");
     expect(pickRiskoffEtfWinner(uupWins)).toBe("UUP");
     expect(pickRiskoffEtfWinner(bothTrail)).toBe("BIL");
-    expect(pickRiskoffEtfWinner({ GLD: null, UUP: 0.2, BIL: 0.01 })).toBeNull();
+    expect(pickRiskoffEtfWinner(etfRs({ GLD: null, UUP: 0.2 }))).toBeNull();
+  });
+
+  it("ranks TLT/IEF/XLU/XLP when they beat BIL and the rest of the sleeve", () => {
+    expect(pickRiskoffEtfWinner(tltWins)).toBe("TLT");
+    expect(pickRiskoffEtfWinner(iefWins)).toBe("IEF");
+    expect(pickRiskoffEtfWinner(xluWins)).toBe("XLU");
+    expect(pickRiskoffEtfWinner(xlpWins)).toBe("XLP");
+    expect(RISKOFF_ETF_CANDIDATES).toEqual(["GLD", "UUP", "TLT", "IEF", "XLU", "XLP"]);
+    expect(RISKOFF_ETF_SYMBOLS).toEqual(["GLD", "UUP", "TLT", "IEF", "XLU", "XLP", "BIL"]);
+  });
+
+  it("keeps the held name on an exact RS tie if it is still eligible, else GLD > UUP > duration > defensives", () => {
+    const gldTltTie = etfRs({ GLD: 0.1, TLT: 0.1, UUP: 0.04 });
+    expect(pickRiskoffEtfWinner(gldTltTie, "TLT")).toBe("TLT");
+    expect(pickRiskoffEtfWinner(gldTltTie)).toBe("GLD");
+    const durationTie = etfRs({ TLT: 0.1, IEF: 0.1, GLD: 0.02 });
+    expect(pickRiskoffEtfWinner(durationTie, "IEF")).toBe("IEF");
+    expect(pickRiskoffEtfWinner(durationTie)).toBe("TLT");
+    const defensiveTie = etfRs({ XLU: 0.1, XLP: 0.1, GLD: 0.02 });
+    expect(pickRiskoffEtfWinner(defensiveTie, "XLP")).toBe("XLP");
+    expect(pickRiskoffEtfWinner(defensiveTie)).toBe("XLU");
+    const gldUupTie = etfRs({ GLD: 0.1, UUP: 0.1 });
+    expect(pickRiskoffEtfWinner(gldUupTie, "UUP")).toBe("UUP");
+    expect(pickRiskoffEtfWinner(gldUupTie)).toBe("GLD");
   });
 
   it("sizes a modest stake well under the $100k sleeve", () => {
@@ -829,6 +929,29 @@ describe("GLD/UUP/BIL relative-strength expression", () => {
     expect(result.bought.filter((b) => b.sleeveId === "riskoff").map((b) => b.symbol)).toEqual(["GLD"]);
     expect(result.verticals.every((v) => v.right === "P" && v.sleeveId === "riskoff")).toBe(true);
     expect(result.verticals.map((v) => v.symbol).sort()).toEqual(["QQQ", "SPY"]);
+  });
+
+  it("2b. TLT beats the rest of the sleeve → paper long TLT at the same notional", async () => {
+    const book = paperBook();
+    const result = await runAutopilot({
+      enabled: true,
+      getPositions: book.getPositions,
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [],
+      featureRows: [],
+      scanReady: true,
+      riskOn: false,
+      riskoffEtfReturns: tltWins,
+      riskoffEtfQuotes: allEtfQuotes,
+      place: book.place,
+      close: book.close,
+      log: () => {},
+    });
+    expect(result.bought.map((b) => b.symbol)).toEqual(["TLT"]);
+    expect(result.bought[0].qty).toBe(sizeRiskoffEtfShares(90));
+    expect(result.bought[0].qty * 90).toBeLessThanOrEqual(DEFAULT_SLEEVE_EQUITY_USD * RISKOFF_ETF_NOTIONAL_FRAC);
+    expect(result.bought[0].stopPrice).toBeCloseTo(90 * RISKOFF_ETF_STOP_MUL);
+    expect(book.getPositions().map((p) => p.symbol)).toEqual(["TLT"]);
   });
 
   it("2. Winner flips to UUP → rotate, still one name", async () => {
@@ -959,8 +1082,8 @@ describe("GLD/UUP/BIL relative-strength expression", () => {
       featureRows: [],
       scanReady: true,
       riskOn: false,
-      riskoffEtfReturns: { GLD: null, UUP: 0.2, BIL: 0.01 },
-      riskoffEtfQuotes: etfQuotes({ GLD: 180, UUP: 28, BIL: 91 }),
+      riskoffEtfReturns: etfRs({ GLD: null, UUP: 0.2 }),
+      riskoffEtfQuotes: allEtfQuotes,
       place: book.place,
       close: book.close,
       log: () => {},
@@ -968,7 +1091,8 @@ describe("GLD/UUP/BIL relative-strength expression", () => {
     expect(result.bought).toEqual([]);
     expect(result.sold.map((s) => s.symbol)).toEqual(["UUP"]);
     expect(book.getPositions()).toEqual([]);
-    expect(pickRiskoffEtfWinner({ GLD: null, UUP: 0.2, BIL: 0.01 })).toBeNull();
+    expect(pickRiskoffEtfWinner(etfRs({ GLD: null, UUP: 0.2 }))).toBeNull();
+    expect(pickRiskoffEtfWinner(etfRs({ TLT: null, GLD: 0.2 }))).toBeNull();
   });
 
   it("6. Size stays modest (well under $100k) and hold does not churn", async () => {
