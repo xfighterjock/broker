@@ -74,7 +74,7 @@ When RISK OFF: no new momentum longs, no new options call-debit verticals; owner
 
 | Path | Vendor | Use |
 | --- | --- | --- |
-| Equities last, S&P scan dailies, risk gate, GLD/UUP/BIL bars | Massive (api.massive.com), 15-minute delayed Starter | quotes, scan, RISK ON, risk-off ETF RS |
+| Equities last, S&P scan dailies, risk gate, risk-off ETF bars | Massive (api.massive.com), 15-minute delayed Starter | quotes, scan, RISK ON, risk-off ETF RS |
 | Futures =F | Yahoo chart | day/momentum quote strip |
 | Option expiries and chains | Live E*TRADE (api.etrade.com) | paper vertical/CSP/CC marks only |
 | S&P 500 universe | datasets CSV on GitHub | scan constituents |
@@ -138,7 +138,7 @@ Overlay: CSP / covered call are manual, tagged to an ownership or SPCX thesis, s
 
 Quote-strip extras: SPY, QQQ, TLT, IWM.
 
-### 5. riskoff — Puts + GLD/UUP/BIL
+### 5. riskoff — Puts + defensive ETF RS
 
 Horizon: days-months. Budget hint 10%. Loss cap $1000. Auto cap MAX_AUTO_RISKOFF_VERTICALS = 3 (one per name). Status: paper.
 
@@ -150,16 +150,17 @@ HYG liquidity/size gate (checkHygAutoLiquidity, HYG auto entry only — never SP
 
 SPY/QQQ/IWM equity-index puts (riskoffEquityPutsAllowed): RISK OFF and spyAbove200 === false. Missing SPY check fail-closed. Order after HYG: SPY, QQQ, then IWM if quoted. Flatten leftover equity-index puts when SPY is back above 200dma. Missing check does not flatten.
 
-GLD / UUP / BIL overlay (server/src/riskoffEtf.ts): 20% of the $100k book (RISKOFF_ETF_NOTIONAL_FRAC). 63-session total return (RISKOFF_ETF_LOOKBACK_DAYS). Hold GLD or UUP if that name beats BIL; else BIL. Missing bars mean cash (flatten). Exact GLD/UUP tie keeps the held name, else GLD. Disaster stop RISKOFF_ETF_STOP_MUL = 0.92; rotation is the primary exit. Flatten the ETF on RISK ON, missing bars, or sleeve loss cap. Puts and the ETF are independent (put sells leave the ETF alone).
+Defensive ETF overlay (server/src/riskoffEtf.ts): 20% of the $100k book (RISKOFF_ETF_NOTIONAL_FRAC — unchanged). 63-session total return (RISKOFF_ETF_LOOKBACK_DAYS). Candidates: GLD, UUP, TLT, IEF, XLU, XLP vs BIL cash/T-bill benchmark (RISKOFF_ETF_SYMBOLS). Hold the name that beats BIL with the highest 63d return; else BIL. Missing any overlay-universe bar means cash (flatten). Exact RS tie keeps the held name if it is still eligible, else preference order GLD > UUP > duration (TLT, IEF) > defensives (XLU, XLP). Disaster stop RISKOFF_ETF_STOP_MUL = 0.92 (unchanged); rotation is the primary exit. Flatten the ETF on RISK ON, missing bars, or sleeve loss cap. Puts and the ETF are independent (put sells leave the ETF alone). LQD/JNK are quote-strip only — no credit puts in this phase.
 
-Quote strip: SPY, QQQ, HYG, GLD, UUP, BIL.
+Quote strip (RISKOFF_QUOTE_STRIP): SPY, QQQ, HYG, GLD, UUP, BIL, TLT, IEF, XLU, XLP, LQD, JNK, SJB. SJB is visibility only (not a traded inverse). symbolsForSleeve always includes this strip for riskoff, then any extra card instruments.
 
 ## Out of scope / refused
 
 - Live broker orders (Tradovate, E*TRADE, NinjaTrader). TRADING_MODE=live exits.
 - Sixth sleeve.
 - Autopilot CSP, covered call, or naked short vol.
-- Inverse/vol ETFs (SH, SDS, VXX, SJB) and duration (IEF/TLT) as risk-off expressions — not coded. TLT appears only on momentum/ownership quote strips.
+- Inverse/vol ETFs as risk-off expressions (SH, SDS, VXX; SJB is quote-strip visibility only). No levered inverse.
+- LQD/JNK put debits (phase 2 — not coded). Those names are on the riskoff quote strip only.
 - Day-sleeve directional entries from Event Gate.
 - Scan-universe dump in these docs (500 names). Only methodology tickers are listed in ABBREVIATIONS.md.
 

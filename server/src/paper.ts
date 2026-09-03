@@ -172,7 +172,7 @@ export function validatePaperOrder(
       return {
         ok: false,
         error:
-          "riskoff sleeve: put debit verticals (POST /api/paper/vertical) or GLD/UUP/BIL ETF long only",
+          "riskoff sleeve: put debit verticals (POST /api/paper/vertical) or GLD/UUP/TLT/IEF/XLU/XLP/BIL ETF long only",
       };
     }
     if (input.side !== "Buy") {
