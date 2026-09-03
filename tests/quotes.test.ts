@@ -90,8 +90,10 @@ describe("mapTicker / parseInstrumentTickers", () => {
       "IWM",
     ]);
     expect(symbolsForSleeve(sleeves.riskoff, "riskoff")).toEqual([...RISKOFF_QUOTE_STRIP]);
+    expect(RISKOFF_QUOTE_STRIP).toContain("DBMF");
     sleeves.riskoff.instruments = "SPY / QQQ / HYG / GLD / UUP / BIL";
     expect(symbolsForSleeve(sleeves.riskoff, "riskoff")).toEqual([...RISKOFF_QUOTE_STRIP]);
+    expect(symbolsForSleeve(sleeves.riskoff, "riskoff")).toContain("DBMF");
     sleeves.momentum.instruments = "ES, NQ, SPY";
     expect(symbolsForSleeve(sleeves.momentum, "momentum")).toEqual(["ES=F", "NQ=F", "SPY"]);
   });

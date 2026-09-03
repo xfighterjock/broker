@@ -92,7 +92,7 @@ export function riskoffEtfReturnsReady(returns: RiskoffEtfReturns): boolean {
  * Hold a candidate if that name's lookback return beats BIL; else BIL.
  * Any missing overlay-universe return → null (cash). Among names that beat
  * BIL, pick the highest 63d return. Exact RS tie keeps the held name when it
- * is still eligible, else preference order GLD > UUP > TLT > IEF > XLU > XLP.
+ * is still eligible, else preference order GLD > UUP > TLT > IEF > XLU > XLP > DBMF.
  */
 export function pickRiskoffEtfWinner(
   returns: RiskoffEtfReturns,

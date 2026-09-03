@@ -272,7 +272,7 @@ export function OptionsPanel({
       <div className="body">
         <div className="hint">
           {putsOnly
-            ? "Massive Starter chain (DELAYED 15m). Paper put debit verticals on MockBroker (SPY/QQQ/IWM after SPY 200dma break; HYG/LQD/JNK when that credit name is below its own 200dma). The defensive ETF long (GLD/UUP/TLT/IEF/XLU/XLP vs BIL) is a separate sleeve position when RISK OFF. Never a live send."
+            ? "Massive Starter chain (DELAYED 15m). Paper put debit verticals on MockBroker (SPY/QQQ/IWM after SPY 200dma break; HYG/LQD/JNK when that credit name is below its own 200dma). The defensive ETF long (GLD/UUP/TLT/IEF/XLU/XLP/DBMF vs BIL) is a separate sleeve position when RISK OFF. Never a live send."
             : HINT}
         </div>
         <div className="paper-form options-form">
@@ -408,7 +408,7 @@ export function OptionsPanel({
           <>
             <label>{RISKOFF_ETF_SYMBOLS.join(" / ")} (one name)</label>
             <div className="hint">
-              Autopilot holds whichever of GLD, UUP, TLT, IEF, XLU, or XLP has the strongest 63-session
+              Autopilot holds whichever of GLD, UUP, TLT, IEF, XLU, XLP, or DBMF has the strongest 63-session
               return vs BIL while RISK OFF. Sits in BIL (or cash) if they all trail T-bills. Flattened on
               RISK ON. Modest size so puts still have room.
             </div>

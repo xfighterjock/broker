@@ -36,6 +36,8 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **CSP** — Cash-secured put. Manual overlay on the options sleeve. Reserves strike x 100 x qty. Never naked. Not sold by autopilot.
 
+**DBMF** — iMGP DBi Managed Futures Strategy ETF. Multi-asset trend candidate on the risk-off 63d RS overlay (trend bucket, after defensives XLU/XLP).
+
 **DTE** — Days to expiration. Auto verticals target 30-45 DTE and exit at 21 DTE (OPTIONS_DTE_EXIT).
 
 **dma** — Daily moving average. See 20dma / 200dma.
@@ -46,7 +48,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **ET** — America/New_York clock. Gate windows, 15:50 vertical cutoff, session marks, E*TRADE renew window, flatten times.
 
-**ETF** — Exchange-traded fund. Risk-off overlay is one of GLD/UUP/TLT/IEF/XLU/XLP/BIL; gate names are SPY/ACWI/HYG/UUP.
+**ETF** — Exchange-traded fund. Risk-off overlay is one of GLD/UUP/TLT/IEF/XLU/XLP/DBMF/BIL; gate names are SPY/ACWI/HYG/UUP.
 
 **Face ID** — iOS LocalAuthentication unlock of a Keychain session. Optional. Not a remote password. Touch ID is the same path.
 
@@ -132,7 +134,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **RISK ON** — Badge iff SPY, ACWI, and HYG are above 200dma and UUP 20d is not greater than +3%. Missing series fail closed to RISK OFF.
 
-**RS** — Relative strength. Momentum score vs SPY; risk-off ETF overlay is 63-session total return of GLD/UUP/TLT/IEF/XLU/XLP vs BIL.
+**RS** — Relative strength. Momentum score vs SPY; risk-off ETF overlay is 63-session total return of GLD/UUP/TLT/IEF/XLU/XLP/DBMF vs BIL.
 
 **SDS** — ProShares UltraShort S&P 500. Not a live risk-off expression.
 

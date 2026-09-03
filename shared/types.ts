@@ -346,13 +346,13 @@ export function defaultSleeves(): Record<SleeveId, SleeveCard> {
       budgetPct: 10,
       lossCapUsd: 1000,
       thesis:
-        "Defined-risk put debit while RISK OFF: SPY/QQQ/IWM only after SPY breaks 200dma; HYG/LQD/JNK ATM puts when that credit name is below its own 200dma; plus one defensive ETF long (GLD/UUP/TLT/IEF/XLU/XLP vs BIL) by 63d relative strength.",
+        "Defined-risk put debit while RISK OFF: SPY/QQQ/IWM only after SPY breaks 200dma; HYG/LQD/JNK ATM puts when that credit name is below its own 200dma; plus one defensive ETF long (GLD/UUP/TLT/IEF/XLU/XLP/DBMF vs BIL) by 63d relative strength.",
       macroDrivers: "SPY/ACWI/HYG 200dma + UUP 20d dollar veto (global risk-off).",
       microDrivers:
-        "30–45 DTE put debit verticals: HYG/LQD/JNK when that name is below its own 200dma (credit-leg; not spyAbove200); SPY/QQQ/IWM only after an equity 200dma break (SPY below). Prefer HYG, then LQD, then JNK inside the auto cap. Skip missing bid/ask. GLD/UUP/TLT/IEF/XLU/XLP 63d total return vs BIL; hold the winner if it beats T-bills, else BIL/cash. Exact RS tie keeps the held name if it is still eligible, else GLD > UUP > duration > defensives. Flatten the ETF on RISK ON; flatten equity-index puts while SPY is still above 200dma; flatten a credit-leg put when that name is back above 200 or RISK ON.",
+        "30–45 DTE put debit verticals: HYG/LQD/JNK when that name is below its own 200dma (credit-leg; not spyAbove200); SPY/QQQ/IWM only after an equity 200dma break (SPY below). Prefer HYG, then LQD, then JNK inside the auto cap. Skip missing bid/ask. GLD/UUP/TLT/IEF/XLU/XLP/DBMF 63d total return vs BIL; hold the winner if it beats T-bills, else BIL/cash. Exact RS tie keeps the held name if it is still eligible, else GLD > UUP > duration > defensives > trend. Flatten the ETF on RISK ON; flatten equity-index puts while SPY is still above 200dma; flatten a credit-leg put when that name is back above 200 or RISK ON.",
       instruments: RISKOFF_QUOTE_STRIP.join(" / "),
       structure:
-        "put debit verticals + one GLD/UUP/TLT/IEF/XLU/XLP/BIL ETF long; no naked short vol",
+        "put debit verticals + one GLD/UUP/TLT/IEF/XLU/XLP/DBMF/BIL ETF long; no naked short vol",
       killRules: "max debit lost / DTE / sleeve loss cap; ETF rotates only when the winner changes",
       status: "paper",
       paper: emptyPaperStats(),
