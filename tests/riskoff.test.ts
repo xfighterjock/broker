@@ -249,6 +249,67 @@ describe("decidePutVerticalIntents", () => {
     expect(intents.map((i) => i.symbol)).toEqual(["HYG", "SPY", "QQQ"]);
   });
 
+  it("allows LQD/JNK on their own 200dma in HYG-only OFF; does not use spyAbove200", () => {
+    const creditQuotes = [
+      ...quotes,
+      { symbol: "LQD", last: 108 },
+      { symbol: "JNK", last: 76 },
+    ];
+    expect(
+      decidePutVerticalIntents(creditQuotes, [], defaultSleeves().riskoff, false, {
+        spyAbove200: true,
+        hygAbove200: true,
+        lqdAbove200: false,
+      }).map((i) => i.symbol),
+    ).toEqual(["LQD"]);
+    expect(
+      decidePutVerticalIntents(creditQuotes, [], defaultSleeves().riskoff, false, {
+        spyAbove200: true,
+        hygAbove200: true,
+        jnkAbove200: false,
+      }).map((i) => i.symbol),
+    ).toEqual(["JNK"]);
+    expect(
+      decidePutVerticalIntents(creditQuotes, [], defaultSleeves().riskoff, false, {
+        spyAbove200: false,
+        hygAbove200: true,
+        lqdAbove200: true,
+        jnkAbove200: true,
+      }).map((i) => i.symbol),
+    ).toEqual(["SPY", "QQQ"]);
+  });
+
+  it("blocks LQD/JNK when own 200dma is missing or above; fill order HYG then LQD then JNK", () => {
+    const creditQuotes = [
+      ...quotes,
+      { symbol: "LQD", last: 108 },
+      { symbol: "JNK", last: 76 },
+      { symbol: "IWM", last: 200 },
+    ];
+    expect(
+      decidePutVerticalIntents(creditQuotes, [], defaultSleeves().riskoff, false, {
+        spyAbove200: true,
+        hygAbove200: false,
+        lqdAbove200: true,
+        jnkAbove200: false,
+      }).map((i) => i.symbol),
+    ).toEqual(["HYG", "JNK"]);
+    expect(
+      decidePutVerticalIntents(creditQuotes, [], defaultSleeves().riskoff, false, {
+        spyAbove200: true,
+        hygAbove200: false,
+      }).map((i) => i.symbol),
+    ).toEqual(["HYG"]);
+    expect(
+      decidePutVerticalIntents(creditQuotes, [], defaultSleeves().riskoff, false, {
+        spyAbove200: false,
+        hygAbove200: false,
+        lqdAbove200: false,
+        jnkAbove200: false,
+      }).map((i) => i.symbol),
+    ).toEqual(["HYG", "LQD", "JNK"]);
+  });
+
   it("options auto never emits put intents; riskoff auto never emits call intents", () => {
     const calls = decideCallVerticalIntents(
       [scanRow("SPY"), scanRow("AAPL")],
@@ -1163,6 +1224,25 @@ describe("flatten risk-off puts while SPY is above 200dma", () => {
     expect(decideRiskoffPutSells([hygPut], true, { hygAbove200: false })).toEqual([
       { sleeveId: "riskoff", symbol: hygPut.symbol, reason: "risk on: flatten credit-leg put" },
     ]);
+  });
+
+  it("flattens LQD/JNK credit-leg puts on own 200dma or RISK ON; missing check does not flatten", () => {
+    const lqdPut = putVertPos("LQD");
+    const jnkPut = putVertPos("JNK");
+    const spyPut = putVertPos("SPY");
+    expect(
+      decideRiskoffPutSells([lqdPut, jnkPut, spyPut], false, {
+        spyAbove200: false,
+        lqdAbove200: true,
+        jnkAbove200: false,
+      }),
+    ).toEqual([
+      { sleeveId: "riskoff", symbol: lqdPut.symbol, reason: "LQD above 200dma: flatten credit-leg put" },
+    ]);
+    expect(decideRiskoffPutSells([lqdPut], true, { lqdAbove200: false })).toEqual([
+      { sleeveId: "riskoff", symbol: lqdPut.symbol, reason: "risk on: flatten credit-leg put" },
+    ]);
+    expect(decideRiskoffPutSells([lqdPut, jnkPut], false, { spyAbove200: true })).toEqual([]);
   });
 
   it("HYG-only OFF flattens leftover SPY/QQQ puts, keeps the HYG put and ETF", async () => {

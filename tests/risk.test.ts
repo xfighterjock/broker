@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { featuresFromBars, type ScanFeatures } from "../server/src/scan";
 import {
   RISK_UUP_VETO_FRAC,
+  above200FromBars,
   resetRiskCache,
   riskFromFeatures,
   riskOffFallback,
@@ -78,6 +79,44 @@ describe("riskFromFeatures", () => {
     expect(off.checks.acwiAbove200).toBe(false);
   });
 
+  it("LQD/JNK own-200 stay off the public checks object and fail closed when bars are missing", () => {
+    const missing = riskFromFeatures({
+      spy: feat(true),
+      acwi: feat(true),
+      hyg: feat(true),
+      uup20dPct: 0.01,
+    });
+    expect(Object.keys(missing.checks).sort()).toEqual(
+      ["acwiAbove200", "dollarVeto", "hygAbove200", "spyAbove200", "uup20dPct"].sort(),
+    );
+    expect(missing.creditLegAbove200).toEqual({ lqdAbove200: null, jnkAbove200: null });
+    expect(missing.checks).not.toHaveProperty("lqdAbove200");
+    expect(missing.checks).not.toHaveProperty("jnkAbove200");
+
+    const known = riskFromFeatures({
+      spy: feat(true),
+      acwi: feat(true),
+      hyg: feat(true),
+      uup20dPct: 0.01,
+      lqd: feat(false),
+      jnk: feat(true),
+    });
+    expect(known.riskOn).toBe(true);
+    expect(known.creditLegAbove200).toEqual({ lqdAbove200: false, jnkAbove200: true });
+    expect(known.checks).not.toHaveProperty("lqdAbove200");
+
+    const barsMissing = riskFromFeatures({
+      spy: feat(true),
+      acwi: feat(true),
+      hyg: feat(true),
+      uup20dPct: 0.01,
+      lqd: null,
+      jnk: null,
+    });
+    expect(barsMissing.creditLegAbove200).toEqual({ lqdAbove200: null, jnkAbove200: null });
+    expect(riskOffFallback().creditLegAbove200).toEqual({ lqdAbove200: null, jnkAbove200: null });
+  });
+
   it("dollar-vetoes when UUP 20d > +3% or the series is missing", () => {
     const veto = riskFromFeatures({
       spy: feat(true),
@@ -109,6 +148,12 @@ describe("uup20dReturn", () => {
     expect(ret).toBeCloseTo(last / base - 1);
     expect(uup20dReturn(bars.slice(0, 10))).toBeNull();
     expect(featuresFromBars(bars.slice(0, 50))).toBeNull();
+    expect(above200FromBars(null)).toBeNull();
+    expect(above200FromBars(bars.slice(0, 50))).toBeNull();
+    const long = Array.from({ length: 220 }, (_, i) => ({ close: 100 + i * 0.01, volume: 1 }));
+    expect(above200FromBars(long)).toBe(true);
+    const below = Array.from({ length: 220 }, (_, i) => ({ close: 100 - i * 0.2, volume: 1 }));
+    expect(above200FromBars(below)).toBe(false);
   });
 });
 

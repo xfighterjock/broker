@@ -74,7 +74,7 @@ When RISK OFF: no new momentum longs, no new options call-debit verticals; owner
 
 | Path | Vendor | Use |
 | --- | --- | --- |
-| Equities last, S&P scan dailies, risk gate, risk-off ETF bars | Massive (api.massive.com), 15-minute delayed Starter | quotes, scan, RISK ON, risk-off ETF RS |
+| Equities last, S&P scan dailies, risk gate, overlay + LQD/JNK 200dma bars | Massive (api.massive.com), 15-minute delayed Starter | quotes, scan, RISK ON, risk-off ETF RS, credit-leg 200dma |
 | Futures =F | Yahoo chart | day/momentum quote strip |
 | Option expiries and chains | Live E*TRADE (api.etrade.com) | paper vertical/CSP/CC marks only |
 | S&P 500 universe | datasets CSV on GitHub | scan constituents |
@@ -144,13 +144,13 @@ Horizon: days-months. Budget hint 10%. Loss cap $1000. Auto cap MAX_AUTO_RISKOFF
 
 Runs while this sleeve AUTO is on and the global badge is RISK OFF. Two put programs plus one ETF long. Puts need a two-sided E*TRADE bid/ask (no invented prices). Turning day AUTO off does not stop this sleeve.
 
-HYG credit-leg put (riskoffHygPutAllowed): RISK OFF and hygAbove200 === false. Missing HYG check fail-closed (no new HYG put). ATM put debit, 30-45 DTE, HYG first inside the cap. Thesis: auto put debit HYG credit-leg. Flatten that vertical when HYG is back above 200dma or RISK ON. Missing check does not flatten.
+Credit-leg puts HYG / LQD / JNK (riskoffCreditLegPutAllowed / riskoffHygPutAllowed): RISK OFF and that name's own 200dma is known below (hygAbove200 / lqdAbove200 / jnkAbove200 === false). Do not use spyAbove200 for LQD/JNK. Missing 200 check fail-closed (no new put on that name). ATM put debit, 30-45 DTE, existing vertical machinery. Fill order inside the cap of 3: HYG, then LQD, then JNK (prefer LQD over sitting idle when HYG is not below 200 or fails liquidity). One vertical per name. Thesis: auto put debit {name} credit-leg. Flatten that name's vertical when the name is back above 200dma or RISK ON. Missing check does not flatten. LQD/JNK 200dma is computed in the risk feature path (Massive dailies + featuresFromBars) and passed to autopilot only — GET /api/public/risk stays {spyAbove200, acwiAbove200, hygAbove200, uup20dPct, dollarVeto}.
 
-HYG liquidity/size gate (checkHygAutoLiquidity, HYG auto entry only — never SPY/QQQ/IWM riskoff, options-sleeve calls, or manual POST /api/paper/vertical): both legs need open interest >= RISKOFF_HYG_MIN_OPEN_INTEREST (100); the immediate round-trip (long bid - short ask) must be at least 75% of the entry debit (long ask - short bid), i.e. round-trip slippage <= RISKOFF_HYG_MAX_ROUNDTRIP_SLIPPAGE_FRAC (25%); qty is hard-capped at RISKOFF_HYG_MAX_AUTO_QTY (3) regardless of the 1% target sizing that would otherwise apply. Added 2026-09-03 after a live HYG 79/78.5P auto entry (OI 7/0) was sized to 50 contracts on a $0.20 debit and hit its 50% debit stop within ~40 minutes.
+Credit-leg liquidity/size gate (checkCreditLegAutoLiquidity, generalized from checkHygAutoLiquidity; HYG/LQD/JNK auto entry only — never SPY/QQQ/IWM riskoff, options-sleeve calls, or manual POST /api/paper/vertical): both legs need open interest >= RISKOFF_HYG_MIN_OPEN_INTEREST (100); the immediate round-trip (long bid - short ask) must be at least 75% of the entry debit (long ask - short bid), i.e. round-trip slippage <= RISKOFF_HYG_MAX_ROUNDTRIP_SLIPPAGE_FRAC (25%); qty is hard-capped at RISKOFF_HYG_MAX_AUTO_QTY (3) regardless of the 1% target sizing that would otherwise apply. RISKOFF_CREDIT_LEG_* aliases keep the same numbers. Added 2026-09-03 after a live HYG 79/78.5P auto entry (OI 7/0) was sized to 50 contracts on a $0.20 debit and hit its 50% debit stop within ~40 minutes.
 
-SPY/QQQ/IWM equity-index puts (riskoffEquityPutsAllowed): RISK OFF and spyAbove200 === false. Missing SPY check fail-closed. Order after HYG: SPY, QQQ, then IWM if quoted. Flatten leftover equity-index puts when SPY is back above 200dma. Missing check does not flatten.
+SPY/QQQ/IWM equity-index puts (riskoffEquityPutsAllowed): RISK OFF and spyAbove200 === false. Missing SPY check fail-closed. Order after the credit legs: SPY, QQQ, then IWM if quoted. Flatten leftover equity-index puts when SPY is back above 200dma. Missing check does not flatten.
 
-Defensive ETF overlay (server/src/riskoffEtf.ts): 20% of the $100k book (RISKOFF_ETF_NOTIONAL_FRAC — unchanged). 63-session total return (RISKOFF_ETF_LOOKBACK_DAYS). Candidates: GLD, UUP, TLT, IEF, XLU, XLP vs BIL cash/T-bill benchmark (RISKOFF_ETF_SYMBOLS). Hold the name that beats BIL with the highest 63d return; else BIL. Missing any overlay-universe bar means cash (flatten). Exact RS tie keeps the held name if it is still eligible, else preference order GLD > UUP > duration (TLT, IEF) > defensives (XLU, XLP). Disaster stop RISKOFF_ETF_STOP_MUL = 0.92 (unchanged); rotation is the primary exit. Flatten the ETF on RISK ON, missing bars, or sleeve loss cap. Puts and the ETF are independent (put sells leave the ETF alone). LQD/JNK are quote-strip only — no credit puts in this phase.
+Defensive ETF overlay (server/src/riskoffEtf.ts): 20% of the $100k book (RISKOFF_ETF_NOTIONAL_FRAC — unchanged). 63-session total return (RISKOFF_ETF_LOOKBACK_DAYS). Candidates: GLD, UUP, TLT, IEF, XLU, XLP vs BIL cash/T-bill benchmark (RISKOFF_ETF_SYMBOLS). Hold the name that beats BIL with the highest 63d return; else BIL. Missing any overlay-universe bar means cash (flatten). Exact RS tie keeps the held name if it is still eligible, else preference order GLD > UUP > duration (TLT, IEF) > defensives (XLU, XLP). Disaster stop RISKOFF_ETF_STOP_MUL = 0.92 (unchanged); rotation is the primary exit. Flatten the ETF on RISK ON, missing bars, or sleeve loss cap. Puts and the ETF are independent (put sells leave the ETF alone).
 
 Quote strip (RISKOFF_QUOTE_STRIP): SPY, QQQ, HYG, GLD, UUP, BIL, TLT, IEF, XLU, XLP, LQD, JNK, SJB. SJB is visibility only (not a traded inverse). symbolsForSleeve always includes this strip for riskoff, then any extra card instruments.
 
@@ -159,8 +159,7 @@ Quote strip (RISKOFF_QUOTE_STRIP): SPY, QQQ, HYG, GLD, UUP, BIL, TLT, IEF, XLU, 
 - Live broker orders (Tradovate, E*TRADE, NinjaTrader). TRADING_MODE=live exits.
 - Sixth sleeve.
 - Autopilot CSP, covered call, or naked short vol.
-- Inverse/vol ETFs as risk-off expressions (SH, SDS, VXX; SJB is quote-strip visibility only). No levered inverse.
-- LQD/JNK put debits (phase 2 — not coded). Those names are on the riskoff quote strip only.
+- Inverse/vol ETFs as risk-off expressions (SH, SDS, VXX; SJB is quote-strip visibility only). No levered inverse. SJB is never a traded inverse.
 - Day-sleeve directional entries from Event Gate.
 - Scan-universe dump in these docs (500 names). Only methodology tickers are listed in ABBREVIATIONS.md.
 

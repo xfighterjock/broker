@@ -139,6 +139,9 @@ describe("GET /api/public/risk", () => {
 
       expect(Object.keys(body).sort()).toEqual(ALLOWED_TOP_KEYS);
       expect(Object.keys(body.riskChecks).sort()).toEqual(ALLOWED_CHECK_KEYS);
+      expect(body.riskChecks).not.toHaveProperty("lqdAbove200");
+      expect(body.riskChecks).not.toHaveProperty("jnkAbove200");
+      expect(body).not.toHaveProperty("creditLegAbove200");
       expect(typeof body.riskOn).toBe("boolean");
       expect(typeof body.riskChecks.spyAbove200).toBe("boolean");
       expect(typeof body.riskChecks.acwiAbove200).toBe("boolean");
