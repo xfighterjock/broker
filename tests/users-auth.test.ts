@@ -44,7 +44,11 @@ async function seededUsers(): Promise<MemoryUserDirectory> {
   return dir;
 }
 
-function makeApp(dir: MemoryUserDirectory, cfg: AppConfig = testCfg()) {
+function makeApp(
+  dir: MemoryUserDirectory,
+  cfg: AppConfig = testCfg(),
+  sessionCookie: { secure?: boolean } = {},
+) {
   const broker = new MockBroker();
   const engine = new GateEngine(broker, () => new Date(), () => seedEvents(), {
     enabled: false,
@@ -67,13 +71,20 @@ function makeApp(dir: MemoryUserDirectory, cfg: AppConfig = testCfg()) {
     users: dir,
   });
   const root = express();
+  // Same as server/src/index.ts: nginx sends X-Forwarded-Proto on the HTTP bind.
+  root.set("trust proxy", 1);
   root.use(
     session({
       name: "eg.sid",
       secret: "test-only-not-real",
       resave: false,
       saveUninitialized: false,
-      cookie: { httpOnly: true, sameSite: "lax", secure: false, path: "/" },
+      cookie: {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: sessionCookie.secure ?? false,
+        path: "/",
+      },
     }),
   );
   root.use(api);
@@ -253,6 +264,30 @@ describe("users AUTH_MODE login", () => {
       expect(body.authed).toBe(true);
       expect(body.mode).toBe("users");
       expect(body.username).toBe("event-gate");
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it("emits eg.sid when cookie.secure is true behind X-Forwarded-Proto https", async () => {
+    const dir = await seededUsers();
+    const srv = await listen(makeApp(dir, testCfg({ cookieSecure: true }), { secure: true }));
+    try {
+      const login = await fetch(`${srv.url}/api/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Forwarded-Proto": "https",
+        },
+        body: JSON.stringify({ username: "event-gate", password: TEST_PASSWORD }),
+      });
+      expect(login.status).toBe(200);
+      const body = (await login.json()) as { ok?: boolean; token?: string };
+      expect(body.ok).toBe(true);
+      expect(typeof body.token).toBe("string");
+      const cookie = login.headers.get("set-cookie") ?? "";
+      expect(cookie).toMatch(/eg\.sid=/);
+      expect(cookie).toMatch(/Secure/i);
     } finally {
       await srv.close();
     }
