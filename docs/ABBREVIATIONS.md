@@ -140,15 +140,11 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **RISK ON** — Badge iff SPY, ACWI, and HYG are above 200dma and UUP 20d is not greater than +3%. Missing series fail closed to RISK OFF.
 
-<<<<<<< HEAD
 **RISKOFF_ETF_NOTIONAL_FRAC** — Fraction of the $100k risk-off mock book for the defensive ETF RS overlay long. 0.40 (~$40k). Paper step toward half the sleeve; not a full 50%. Puts keep the rest. Lookback, stop, and flatten rules are unchanged (RISKOFF_ETF_LOOKBACK_DAYS 63, RISKOFF_ETF_STOP_MUL 0.92).
 
-**RS** — Relative strength. Momentum score vs SPY; risk-off ETF overlay is 63-session total return of GLD/UUP/TLT/IEF/XLU/XLP/DBMF vs BIL, sized at RISKOFF_ETF_NOTIONAL_FRAC.
-=======
 **risk_flip** — FCM eventType when the global RISK ON/OFF badge changes. Last-known state is in memory and Redis `risk:on` so a restart does not false-flip.
 
-**RS** — Relative strength. Momentum score vs SPY; risk-off ETF overlay is 63-session total return of GLD/UUP/TLT/IEF/XLU/XLP/DBMF vs BIL.
->>>>>>> 66f0939 (Wire FCM risk_flip and service_fault producers.)
+**RS** — Relative strength. Momentum score vs SPY; risk-off ETF overlay is 63-session total return of GLD/UUP/TLT/IEF/XLU/XLP/DBMF vs BIL, sized at RISKOFF_ETF_NOTIONAL_FRAC.
 
 **SDS** — ProShares UltraShort S&P 500. Not a live risk-off expression.
 
