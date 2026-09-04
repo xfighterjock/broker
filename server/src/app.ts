@@ -51,6 +51,7 @@ import {
   gatePassword,
   isAuthed,
   requireAuth,
+  requireOpsScope,
   sessionUsername,
   usersAuthMode,
 } from "./auth";
@@ -1541,6 +1542,7 @@ export function buildApp(deps: AppDeps): express.Express {
     }
     requireAuth(req, res, next);
   });
+  app.use("/api", requireOpsScope);
 
   app.get("/api/status", async (_req, res) => {
     res.json(await snapshot());
