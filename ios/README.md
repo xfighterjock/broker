@@ -66,7 +66,7 @@ Xcode may rewrite `aps-environment` to `production` for a Release / App Store pr
 6. Home screen is essentials. Settings (gear) has Face ID / Touch ID unlock, FCM Register / Revoke / Test, and Sign out.
 7. When an FCM token appears (redacted `abcd…wxyz`), tap **Register** if auto-register did not already fire after login.
 8. Tap **Refresh status** — expect `enabled` / `configured` and at least one active token.
-9. Tap **Send test**. A banner should arrive on the phone. Backend test payload is title `Event Gate test notification`, `deepLinkRoute` `/status` (opens essentials).
+9. Tap **Send test**. A banner should arrive on the phone. Backend test payload is title `Event Gate test notification`, `deepLinkRoute` `/status` (opens essentials). The lock-screen / Notification Center icon must be the Event Gate AppIcon (teal robot + amber sparkline), not a generic placeholder. If an older generic icon remains after this rebuild, delete the app and reinstall — iOS caches notification icons.
 10. Token refresh re-registers with `replaceToken`. **Revoke** opts this device out.
 
 Simulator notes: `registerForRemoteNotifications` fails; you will not get a real APNs token or a deliverable FCM push. Use a device.
