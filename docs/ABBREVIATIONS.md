@@ -50,7 +50,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **ETF** — Exchange-traded fund. Risk-off overlay is one of GLD/UUP/TLT/IEF/XLU/XLP/DBMF/BIL; gate names are SPY/ACWI/HYG/UUP.
 
-**EVENT_GATE_OPS_TOKEN** — Optional long-lived HTTPS ops bearer (VPS `/opt/broker/.env`, never git). When set, `Authorization: Bearer` matching the env value authenticates a narrow freeze/status/AUTO PAPER scope (GET /api/status, GET/PUT /api/freeze, GET /api/health, GET /api/sleeves, POST /api/paper/auto). Not a users-table session and not GATE ON/OFF. When unset, behavior unchanged. Agents freeze-save, status-check, and toggle per-sleeve AUTO PAPER at https://broker.logikmancer.com without the Mac.
+**EVENT_GATE_OPS_TOKEN** — Optional long-lived HTTPS ops bearer (VPS `/opt/broker/.env`, never git). When set, `Authorization: Bearer` matching the env value authenticates a narrow ops scope: GET /api/status, GET/PUT /api/freeze, GET /api/health, GET /api/sleeves, POST /api/paper/auto, POST /api/flatten, POST /api/gate/enable (print-day vetoes: flatten + GATE OFF). Same GATE route also GATE ON (`{ enabled: true }` or omitted, defaults ON) — no separate disable path. Not a users-table session. Paper orders, PIN, mock inject, cancel-stops, user admin stay 401. When unset, behavior unchanged. Agents freeze-save, status-check, toggle AUTO, flatten, and GATE OFF at https://broker.logikmancer.com without the Mac.
 
 **Face ID** — iOS LocalAuthentication unlock of a Keychain session. Optional. Not a remote password. Touch ID is the same path.
 
