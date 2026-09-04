@@ -117,16 +117,16 @@ describe("EVENT_GATE_OPS_TOKEN helpers", () => {
     expect(eventGateOpsToken()).toBeUndefined();
   });
 
-  it("allowlists freeze/status and denies trading mutations", () => {
+  it("allowlists freeze/status/AUTO PAPER and denies trading mutations", () => {
     expect(opsRouteAllowed("GET", "/status")).toBe(true);
     expect(opsRouteAllowed("GET", "/freeze")).toBe(true);
     expect(opsRouteAllowed("PUT", "/freeze")).toBe(true);
     expect(opsRouteAllowed("GET", "/health")).toBe(true);
     expect(opsRouteAllowed("GET", "/sleeves")).toBe(true);
+    expect(opsRouteAllowed("POST", "/paper/auto")).toBe(true);
     expect(opsRouteAllowed("POST", "/flatten")).toBe(false);
     expect(opsRouteAllowed("POST", "/gate/enable")).toBe(false);
     expect(opsRouteAllowed("POST", "/paper/order")).toBe(false);
-    expect(opsRouteAllowed("POST", "/paper/auto")).toBe(false);
     expect(opsRouteAllowed("POST", "/cancel-stops")).toBe(false);
     expect(opsRouteAllowed("POST", "/mock/inject-stop")).toBe(false);
     expect(opsRouteAllowed("POST", "/etrade/oauth/pin")).toBe(false);
@@ -189,7 +189,42 @@ describe("EVENT_GATE_OPS_TOKEN HTTPS ops scope", () => {
     }
   });
 
-  it("rejects flatten, gate enable, and paper with the ops bearer", async () => {
+  it("lets the ops bearer POST /api/paper/auto for a sleeve", async () => {
+    const dir = await seededUsers();
+    const { app } = makeApp(dir);
+    const srv = await listen(app);
+    try {
+      const off = await fetch(`${srv.url}/api/paper/auto`, {
+        method: "POST",
+        headers: { ...opsHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: false }),
+      });
+      expect(off.status).toBe(200);
+
+      const auto = await fetch(`${srv.url}/api/paper/auto`, {
+        method: "POST",
+        headers: { ...opsHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ sleeveId: "day", enabled: true }),
+      });
+      expect(auto.status).toBe(200);
+      const snap = (await auto.json()) as {
+        autoPaperBySleeve?: { day?: boolean };
+      };
+      expect(snap.autoPaperBySleeve?.day).toBe(true);
+      expect(JSON.stringify(snap)).not.toContain(OPS_TOKEN);
+
+      const status = await fetch(`${srv.url}/api/status`, { headers: opsHeaders() });
+      expect(status.status).toBe(200);
+      const after = (await status.json()) as {
+        autoPaperBySleeve?: { day?: boolean };
+      };
+      expect(after.autoPaperBySleeve?.day).toBe(true);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it("rejects flatten, gate enable, and paper orders with the ops bearer", async () => {
     const dir = await seededUsers();
     const { app, engine } = makeApp(dir);
     const srv = await listen(app);
@@ -222,13 +257,6 @@ describe("EVENT_GATE_OPS_TOKEN HTTPS ops scope", () => {
         }),
       });
       expect(paper.status).toBe(401);
-
-      const auto = await fetch(`${srv.url}/api/paper/auto`, {
-        method: "POST",
-        headers: { ...opsHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: false }),
-      });
-      expect(auto.status).toBe(401);
     } finally {
       await srv.close();
     }
