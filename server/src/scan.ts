@@ -7,6 +7,7 @@ import {
 } from "./quotes";
 import { fetchMassiveDailyBars } from "./massive";
 import type { RedisClient } from "./redis";
+import { noteServiceDown, noteServiceUp } from "./eventGateAlerts";
 
 export const SP500_CSV_URL =
   "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv";
@@ -539,6 +540,7 @@ async function runScan(): Promise<void> {
   console.log(
     `[EventGate] scan done universe=${names.length} features=${ok} skip=${skip} ${sec}s`,
   );
+  noteServiceUp("quotes");
   // Publish first, then notify. Do not await autopilot — would deadlock while inflight.
   if (scanReadyHook) {
     try {
@@ -557,6 +559,7 @@ export function kickScan(): void {
   inflight = runScan()
     .catch((err) => {
       console.error("[EventGate] scan failed", err instanceof Error ? err.message : err);
+      void noteServiceDown("quotes");
     })
     .finally(() => {
       inflight = null;

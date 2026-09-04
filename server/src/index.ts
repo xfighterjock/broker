@@ -15,6 +15,8 @@ import { MockBroker } from "./mockBroker";
 import { connectRedis } from "./redis";
 import { createTradovateFromEnv } from "./tradovateBroker";
 import { attachScanRedis, kickScan } from "./scan";
+import { attachRiskRedis } from "./risk";
+import { noteServiceUp } from "./eventGateAlerts";
 import { startEtradeAccessTokenKeepAlive, stopEtradeAccessTokenKeepAlive } from "./etrade";
 import { StatusHub } from "./wsHub";
 
@@ -27,6 +29,7 @@ async function main(): Promise<void> {
     pool = createPool(cfg.databaseUrl);
     await pool.query("SELECT 1");
     await runMigrations(pool);
+    noteServiceUp("postgres");
     console.log("[EventGate] postgres connected, migrations applied");
     try {
       const boot = await maybeBootstrapAdmin(createUserDirectory(pool));
@@ -62,6 +65,7 @@ async function main(): Promise<void> {
   try {
     redis = await connectRedis(cfg.redisUrl);
     await redis.client.ping();
+    noteServiceUp("redis");
     console.log("[EventGate] redis connected");
   } catch (err) {
     console.warn(
@@ -220,6 +224,7 @@ async function main(): Promise<void> {
   });
 
   attachScanRedis(redis?.client ?? null);
+  attachRiskRedis(redis?.client ?? null);
   kickScan();
 
   server.listen(cfg.port, cfg.bind, () => {

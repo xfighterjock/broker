@@ -20,6 +20,8 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **ATM** — At the money. Auto debit verticals pick the strike closest to last (pickAtmCallDebit / pickAtmPutDebit).
 
+**auth_needed** — FCM eventType when E*TRADE transitions to `needs_pin`. Deduped as `auth_needed:etrade:needs_pin`.
+
 **AUTH_MODE** — Auth front door. Production `users` (users table + cookie/bearer). Local default `cookie` (GATE_PASSWORD). `nginx` is remapped to `users` in production. GET /api/public/risk is exempt in-app too.
 
 **AUTO PAPER** — Autopilot. Independent enable per sleeve (`autoPaperBySleeve`: day, momentum, options, ownership, riskoff). Snapshot `autoPaper` is true if ANY sleeve is on (badge / old clients). POST /api/paper/auto `{ enabled }` sets all; `{ sleeveId, enabled }` sets one. Redis `paper:auto` is JSON; legacy `0`/`1` migrates on first boot. Default all on when the key is missing. Never CSP/CC/naked. GATE still binds day.
@@ -56,7 +58,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **FedWatch** — CME FedWatch snapshot field on the freeze card (NFP/CPI/FOMC briefing).
 
-**FCM** — Firebase Cloud Messaging. Event Gate push provider (HTTP v1 via Firebase Admin SDK on the VPS; Firebase iOS SDK in `ios/`). Disabled by default until `PUSH_FCM_ENABLED=1` and credentials are configured. The iOS client registers tokens with a users-table bearer; it does not hold the Admin service-account JSON.
+**FCM** — Firebase Cloud Messaging. Event Gate push provider (HTTP v1 via Firebase Admin SDK on the VPS; Firebase iOS SDK in `ios/`). Disabled by default until `PUSH_FCM_ENABLED=1` and credentials are configured. The iOS client registers tokens with a users-table bearer; it does not hold the Admin service-account JSON. Live eventTypes that send: `risk_flip`, `service_fault`, `auth_needed`, plus test `paper_guard`.
 
 **Flatten** — Close gated day-sleeve names (POST /api/flatten) or a sleeve position. Print-day veto with GATE OFF. Does not flatten other sleeves from the event clock.
 
@@ -120,6 +122,8 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **OTM** — Out of the money. Put debit shorts a lower strike; call debit shorts a higher strike.
 
+**paper_guard** — FCM eventType used only by `POST /api/notifications/test` (`dedupeKey` `event-gate-test`). Not a live trading alert.
+
 **P/L** — Profit and loss. Sleeve books expose realized, unrealized, dailyPnlUsd, totalPnlUsd (equity minus $100k).
 
 **PIN** — E*TRADE verifier after Authorize. Typed in Event Gate (desktop header, web /m, or the iOS essentials home). Needed after midnight ET. Never stored in git or chat.
@@ -130,17 +134,25 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **QQQ** — Invesco QQQ Trust (Nasdaq-100). Options quote strip; risk-off equity-index put when SPY is below 200dma; momentum/ownership quote strip.
 
-**Redis** — Cache/store for gate flags, mock book, sleeves, blotter, session marks, scan, AUTO PAPER (per-sleeve JSON on `paper:auto`), and SPA cookie sessions (cookie name `eg.sid`, Redis prefix `eg:sess:`).
+**Redis** — Cache/store for gate flags, mock book, sleeves, blotter, session marks, scan, AUTO PAPER (per-sleeve JSON on `paper:auto`), last-known RISK ON/OFF (`risk:on`), and SPA cookie sessions (cookie name `eg.sid`, Redis prefix `eg:sess:`).
 
 **RISK OFF** — Badge when RISK ON is false. Pauses new momentum longs and options call-debits; ownership pauses new adds. May run the riskoff sleeve. Does not bind the day book.
 
 **RISK ON** — Badge iff SPY, ACWI, and HYG are above 200dma and UUP 20d is not greater than +3%. Missing series fail closed to RISK OFF.
 
+<<<<<<< HEAD
 **RISKOFF_ETF_NOTIONAL_FRAC** — Fraction of the $100k risk-off mock book for the defensive ETF RS overlay long. 0.40 (~$40k). Paper step toward half the sleeve; not a full 50%. Puts keep the rest. Lookback, stop, and flatten rules are unchanged (RISKOFF_ETF_LOOKBACK_DAYS 63, RISKOFF_ETF_STOP_MUL 0.92).
 
 **RS** — Relative strength. Momentum score vs SPY; risk-off ETF overlay is 63-session total return of GLD/UUP/TLT/IEF/XLU/XLP/DBMF vs BIL, sized at RISKOFF_ETF_NOTIONAL_FRAC.
+=======
+**risk_flip** — FCM eventType when the global RISK ON/OFF badge changes. Last-known state is in memory and Redis `risk:on` so a restart does not false-flip.
+
+**RS** — Relative strength. Momentum score vs SPY; risk-off ETF overlay is 63-session total return of GLD/UUP/TLT/IEF/XLU/XLP/DBMF vs BIL.
+>>>>>>> 66f0939 (Wire FCM risk_flip and service_fault producers.)
 
 **SDS** — ProShares UltraShort S&P 500. Not a live risk-off expression.
+
+**service_fault** — FCM eventType for an operational up→down (postgres, redis, or quotes). Deduped per fault class. Not paper fills or AUTO skips.
 
 **SESSION FLATTEN** — Gate mode around flatten ET +/- 5m (and daily-loss). Flattens gated day-sleeve names.
 

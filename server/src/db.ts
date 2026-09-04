@@ -3,16 +3,22 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import type { CalendarEvent } from "../../shared/types";
+import { noteServiceDown } from "./eventGateAlerts";
 
 const { Pool } = pg;
 
 export type DbPool = pg.Pool;
 
 export function createPool(databaseUrl: string): DbPool {
-  return new Pool({
+  const pool = new Pool({
     connectionString: databaseUrl,
     max: 8,
   });
+  pool.on("error", (err) => {
+    console.error("[EventGate] postgres error", err instanceof Error ? err.message : err);
+    void noteServiceDown("postgres");
+  });
+  return pool;
 }
 
 function migrationsDir(): string {

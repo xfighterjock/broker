@@ -113,6 +113,7 @@ import {
   startEtradePinHandshake,
 } from "./etrade";
 import { ensureRisk, getRiskAsOf, kickRisk } from "./risk";
+import { EVENT_GATE_ALERT_PRINCIPAL, noteServiceDown, noteServiceUp } from "./eventGateAlerts";
 import { fetchRiskoffEtfReturns } from "./riskoffEtf";
 import {
   applyOverlayMarks,
@@ -1309,7 +1310,7 @@ export function buildApp(deps: AppDeps): express.Express {
     const etradeAuth = etradeAuthState();
     if (lastEtradeAuth && lastEtradeAuth !== "needs_pin" && etradeAuth === "needs_pin") {
       void sendEventGateAlert(
-        "event-gate",
+        EVENT_GATE_ALERT_PRINCIPAL,
         createEventGateAlert({
           title: "Event Gate: E*TRADE PIN needed",
           body: "Authorize E*TRADE from Event Gate. Paper trading only.",
@@ -1331,7 +1332,9 @@ export function buildApp(deps: AppDeps): express.Express {
         knowledgeTime = parsed.knowledgeTime;
         memory.freeze = freeze;
         memory.knowledgeTime = knowledgeTime;
+        noteServiceUp("postgres");
       } catch {
+        void noteServiceDown("postgres");
         /* keep memory */
       }
     }
