@@ -96,17 +96,38 @@ describe("iOS Event Gate scaffold", () => {
     expect(gi).toMatch(/xcuserdata/);
   });
 
-  it("AppIcon set references the 1024 PNG", () => {
-    const icon = resolve("ios/EventGate/Assets.xcassets/AppIcon.appiconset/AppIcon.png");
-    const contents = readFileSync(
-      resolve("ios/EventGate/Assets.xcassets/AppIcon.appiconset/Contents.json"),
-      "utf8",
-    );
-    expect(existsSync(icon)).toBe(true);
-    expect(statSync(icon).size).toBeGreaterThan(10_000);
-    expect(contents).toContain('"filename" : "AppIcon.png"');
-    expect(contents).toContain('"size" : "1024x1024"');
-    expect(contents).not.toMatch(/"idiom"\s*:\s*"(iphone|ipad|ios-marketing)"/);
+  it("AppIcon set is complete so lock-screen notifications use the Event Gate logo", () => {
+    const iconDir = resolve("ios/EventGate/Assets.xcassets/AppIcon.appiconset");
+    const contents = readFileSync(join(iconDir, "Contents.json"), "utf8");
+    const info = readFileSync(resolve("ios/EventGate/Info.plist"), "utf8");
+    const pbx = readFileSync(resolve("ios/EventGate.xcodeproj/project.pbxproj"), "utf8");
+    const yml = readFileSync(resolve("ios/project.yml"), "utf8");
+    const slots: Array<{ file: string; w: number; h: number }> = [
+      { file: "AppIcon-20@2x.png", w: 40, h: 40 },
+      { file: "AppIcon-20@3x.png", w: 60, h: 60 },
+      { file: "AppIcon-29@2x.png", w: 58, h: 58 },
+      { file: "AppIcon-29@3x.png", w: 87, h: 87 },
+      { file: "AppIcon-40@2x.png", w: 80, h: 80 },
+      { file: "AppIcon-40@3x.png", w: 120, h: 120 },
+      { file: "AppIcon-60@2x.png", w: 120, h: 120 },
+      { file: "AppIcon-60@3x.png", w: 180, h: 180 },
+      { file: "AppIcon.png", w: 1024, h: 1024 },
+    ];
+    for (const slot of slots) {
+      const full = join(iconDir, slot.file);
+      expect(existsSync(full), slot.file).toBe(true);
+      expect(statSync(full).size, slot.file).toBeGreaterThan(1_000);
+      const buf = readFileSync(full);
+      expect(buf.readUInt32BE(16), `${slot.file} width`).toBe(slot.w);
+      expect(buf.readUInt32BE(20), `${slot.file} height`).toBe(slot.h);
+      expect(contents).toContain(`"filename" : "${slot.file}"`);
+    }
+    expect(contents).toContain('"idiom" : "iphone"');
+    expect(contents).toContain('"size" : "20x20"');
+    expect(contents).toContain('"idiom" : "ios-marketing"');
+    expect(info).toMatch(/<key>CFBundleIconName<\/key>\s*<string>AppIcon<\/string>/);
+    expect(pbx).toContain("ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon");
+    expect(yml).toContain("ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon");
   });
 
   it("iOS sources do not embed secrets or service-account JSON", () => {

@@ -10,6 +10,7 @@ import { MockBroker } from "../server/src/mockBroker";
 import {
   NotificationService,
   attachNotificationService,
+  buildFcmMessage,
   redactToken,
   resolvePushConfig,
   sendEventGateAlert,
@@ -326,6 +327,33 @@ describe("notifications service", () => {
     expect(src).not.toMatch(/BEGIN PRIVATE KEY/);
     expect(src).not.toMatch(/AIza[0-9A-Za-z_-]{20,}/);
     expect(src).not.toMatch(/[0-9]{12}:[A-Za-z0-9_-]{20,}/);
+  });
+
+  it("FCM payload is title/body plus data — no Android icon or image override", () => {
+    const payload: EventGateAlertPayload = {
+      title: "Event Gate test notification",
+      body: "This is a harmless Event Gate push test.",
+      eventType: "paper_guard",
+      occurredAt: "2026-09-04T12:00:00.000Z",
+      dedupeKey: "event-gate-test",
+      deepLinkRoute: "/status",
+    };
+    const msg = buildFcmMessage("device-token-placeholder", payload);
+    expect(msg.notification).toEqual({ title: payload.title, body: payload.body });
+    expect(msg.data).toEqual({
+      eventType: payload.eventType,
+      occurredAt: payload.occurredAt,
+      dedupeKey: payload.dedupeKey,
+      deepLinkRoute: payload.deepLinkRoute,
+    });
+    expect(msg.apns.payload.aps).toEqual({ sound: "default" });
+    expect(msg).not.toHaveProperty("android");
+    expect(msg).not.toHaveProperty("fcmOptions");
+    expect(msg.notification).not.toHaveProperty("image");
+    expect(msg.notification).not.toHaveProperty("imageUrl");
+    expect(msg.notification).not.toHaveProperty("icon");
+    expect(JSON.stringify(msg)).not.toMatch(/"image"/);
+    expect(JSON.stringify(msg)).not.toMatch(/"icon"/);
   });
 
   it("sendEventGateAlert is a no-op hook until a service is attached", async () => {

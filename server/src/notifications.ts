@@ -162,6 +162,25 @@ function validateDeviceLabel(label: string | undefined): string | null {
   return next.slice(0, 120);
 }
 
+/** FCM HTTP v1 message for iOS. Title/body only — no Android icon/image fields. */
+export function buildFcmMessage(token: string, payload: EventGateAlertPayload) {
+  return {
+    token,
+    notification: { title: payload.title, body: payload.body },
+    data: {
+      eventType: payload.eventType,
+      occurredAt: payload.occurredAt,
+      dedupeKey: payload.dedupeKey,
+      deepLinkRoute: payload.deepLinkRoute,
+    },
+    apns: {
+      payload: {
+        aps: { sound: "default" },
+      },
+    },
+  };
+}
+
 function makeFcmProvider(cfg: AppConfig): NotificationProvider {
   const resolved = resolvePushConfig(cfg);
   if (!resolved.enabled || !resolved.configured || !resolved.projectId) {
@@ -187,21 +206,7 @@ function makeFcmProvider(cfg: AppConfig): NotificationProvider {
       try {
         const app = await getOrInitFirebaseApp(projectId, credentialSource, credentialPath);
         const { getMessaging } = await import("firebase-admin/messaging");
-        await getMessaging(app).send({
-          token,
-          notification: { title: payload.title, body: payload.body },
-          data: {
-            eventType: payload.eventType,
-            occurredAt: payload.occurredAt,
-            dedupeKey: payload.dedupeKey,
-            deepLinkRoute: payload.deepLinkRoute,
-          },
-          apns: {
-            payload: {
-              aps: { sound: "default" },
-            },
-          },
-        });
+        await getMessaging(app).send(buildFcmMessage(token, payload));
         return { ok: true };
       } catch (err) {
         return { ok: false, error: sanitizeSendError(err instanceof Error ? err.message : String(err), token) };
