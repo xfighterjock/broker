@@ -95,8 +95,9 @@ export type RiskoffSymbol = (typeof RISKOFF_SYMBOLS)[number];
 /** Credit-leg put debit when HYG is below 200dma. Not an inverse ETF. */
 export const RISKOFF_HYG_SYMBOL = "HYG";
 /**
- * Credit-leg put underlyers. Each name may open an ATM put debit when RISK
- * OFF and that name is below its own 200dma. Fill order HYG, then LQD, then
+ * Credit-leg put underlyers. Each name may open a put debit when RISK
+ * OFF and that name is below its own 200dma. ATM first, then the liquid-strike
+ * ladder (±2 then next 30–45 DTE expiries). Fill order HYG, then LQD, then
  * JNK. Not inverse ETFs. SJB is never in this list.
  */
 export const RISKOFF_CREDIT_LEG_SYMBOLS = ["HYG", "LQD", "JNK"] as const;
@@ -122,6 +123,16 @@ export const RISKOFF_CREDIT_LEG_MIN_OPEN_INTEREST = RISKOFF_HYG_MIN_OPEN_INTERES
 export const RISKOFF_CREDIT_LEG_MAX_ROUNDTRIP_SLIPPAGE_FRAC =
   RISKOFF_HYG_MAX_ROUNDTRIP_SLIPPAGE_FRAC;
 export const RISKOFF_CREDIT_LEG_MAX_AUTO_QTY = RISKOFF_HYG_MAX_AUTO_QTY;
+/**
+ * Credit-leg AUTO liquid-strike ladder (HYG/LQD/JNK paper puts only).
+ * When the ATM pair fails the OI / 75% close-value gate, walk this many
+ * strikes either side of ATM (order 0, +1, −1, +2, −2) then the next
+ * 30–45 DTE expiries. Same gate and qty≤3 on every candidate. SPY/QQQ/IWM
+ * stay ATM-only.
+ */
+export const RISKOFF_CREDIT_LEG_STRIKE_OFFSETS = 2;
+/** Credit-leg AUTO: try this many 30–45 DTE expiries (closest to band midpoint first; same scoring as pickTargetExpiry). */
+export const RISKOFF_CREDIT_LEG_EXPIRY_CANDIDATES = 3;
 /**
  * Risk-off quote strip (visibility). Puts are SPY/QQQ/IWM + HYG/LQD/JNK.
  * SJB is visibility-only — not a traded inverse.

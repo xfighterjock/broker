@@ -1,8 +1,21 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { OptionLeg } from "../shared/types";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { OptionExpiry, OptionLeg } from "../shared/types";
 import { defaultSleeves } from "../shared/types";
-import { checkHygAutoLiquidity, runAutopilot, type AutoVertical } from "../server/src/autopilot";
 import {
+  checkHygAutoLiquidity,
+  creditLegStrikeOffsetOrder,
+  pickAtmPutDebit,
+  pickCreditLegAutoPut,
+  pickCreditLegPutDebitCandidates,
+  pickTargetExpiries,
+  pickTargetExpiry,
+  runAutopilot,
+  type AutoVertical,
+} from "../server/src/autopilot";
+import * as eventGateAlerts from "../server/src/eventGateAlerts";
+import {
+  RISKOFF_CREDIT_LEG_EXPIRY_CANDIDATES,
+  RISKOFF_CREDIT_LEG_STRIKE_OFFSETS,
   RISKOFF_HYG_MAX_AUTO_QTY,
   RISKOFF_HYG_MAX_ROUNDTRIP_SLIPPAGE_FRAC,
   RISKOFF_HYG_MIN_OPEN_INTEREST,
@@ -27,7 +40,7 @@ function hygLeg(
     displaySymbol: `HYG P ${strike}`,
     right: "P",
     strike,
-    expiry: "2026-10-09",
+    expiry: extra.expiry ?? "2026-10-09",
     bid,
     ask,
     last: (bid + ask) / 2,
@@ -240,5 +253,292 @@ describe("runAutopilot: HYG gate applies only to the HYG riskoff auto entry", ()
     for (const p of placed.filter((p) => p.symbol !== RISKOFF_HYG_SYMBOL)) {
       expect(p.qty).toBeUndefined();
     }
+  });
+});
+
+function hygChainAroundAtm(
+  expiry: string,
+  oiByStrike: Record<number, number> = {},
+): OptionLeg[] {
+  const rows: Array<[number, number, number]> = [
+    [77, 0.049, 0.05],
+    [77.5, 0.099, 0.1],
+    [78, 0.149, 0.15],
+    [78.5, 0.199, 0.2],
+    [79, 0.41, 0.42],
+    [79.5, 0.51, 0.52],
+    [80, 0.61, 0.62],
+  ];
+  return rows.map(([strike, bid, ask]) =>
+    hygLeg(strike, bid, ask, { expiry, openInterest: oiByStrike[strike] ?? 500 }),
+  );
+}
+
+function expiry(ymd: string, type = "MONTHLY"): OptionExpiry {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return { year: y, month: m, day: d, expiry: ymd, expiryType: type };
+}
+
+const oct9 = expiry("2026-10-09");
+const oct16 = expiry("2026-10-16");
+const oct4 = expiry("2026-10-04");
+const tooSoon = expiry("2026-10-02");
+const tooFar = expiry("2026-10-23");
+
+describe("credit-leg put debit ladder helpers", () => {
+  it("strike offset order is ATM first, then nearer before farther", () => {
+    expect(RISKOFF_CREDIT_LEG_STRIKE_OFFSETS).toBe(2);
+    expect(RISKOFF_CREDIT_LEG_EXPIRY_CANDIDATES).toBe(3);
+    expect(creditLegStrikeOffsetOrder()).toEqual([0, 1, -1, 2, -2]);
+  });
+
+  it("offset 0 matches pickAtmPutDebit; ±1 then ±2 follow the ATM index", () => {
+    const legs = hygChainAroundAtm("2026-10-09");
+    const atm = pickAtmPutDebit(legs, 79);
+    expect(atm?.long.strike).toBe(79);
+    expect(atm?.short.strike).toBe(78.5);
+    const cands = pickCreditLegPutDebitCandidates(legs, 79);
+    expect(cands.map((c) => c.offset)).toEqual([0, 1, -1, 2, -2]);
+    expect(cands[0].long.strike).toBe(atm!.long.strike);
+    expect(cands[0].short.strike).toBe(atm!.short.strike);
+    expect(cands[1]).toMatchObject({ offset: 1, long: { strike: 79.5 }, short: { strike: 79 } });
+    expect(cands[2]).toMatchObject({ offset: -1, long: { strike: 78.5 }, short: { strike: 78 } });
+    expect(cands[3]).toMatchObject({ offset: 2, long: { strike: 80 }, short: { strike: 79.5 } });
+    expect(cands[4]).toMatchObject({ offset: -2, long: { strike: 78 }, short: { strike: 77.5 } });
+  });
+
+  it("pickTargetExpiries scores like pickTargetExpiry and caps at 3", () => {
+    const now = new Date("2026-09-03T13:50:00.000Z");
+    const list = [tooSoon, oct4, oct9, oct16, tooFar];
+    const picked = pickTargetExpiries(list, now);
+    expect(picked.map((e) => e.expiry)).toEqual(["2026-10-09", "2026-10-16", "2026-10-04"]);
+    expect(pickTargetExpiry(list, now)?.expiry).toBe(picked[0].expiry);
+    expect(picked).toHaveLength(RISKOFF_CREDIT_LEG_EXPIRY_CANDIDATES);
+  });
+});
+
+describe("runAutopilot: HYG liquid-strike / expiry ladder", () => {
+  beforeEach(() => setPaperNow(new Date("2026-09-03T13:50:00.000Z")));
+  afterEach(() => {
+    setPaperNow(null);
+    vi.restoreAllMocks();
+  });
+
+  const quotes = [
+    { symbol: "SPY", last: 500 },
+    { symbol: "QQQ", last: 400 },
+    { symbol: "HYG", last: 79 },
+  ];
+
+  it("walks to offset +1 when ATM fails OI but the next pair clears the gate", async () => {
+    const placed: AutoVertical[] = [];
+    const logs: string[] = [];
+    const chain = hygChainAroundAtm("2026-10-09", { 78.5: 0 });
+    const result = await runAutopilot({
+      enabled: true,
+      getPositions: () => [],
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [],
+      featureRows: [],
+      scanReady: true,
+      riskOn: false,
+      riskChecks: { spyAbove200: true, hygAbove200: false },
+      riskoffQuotes: quotes,
+      place: async () => ({ ok: true }),
+      close: async () => ({ ok: true }),
+      placeVertical: async (v: AutoVertical) => {
+        placed.push(v);
+        return { ok: true };
+      },
+      fetchExpiries: async () => [oct9],
+      fetchChain: async () => chain,
+      log: (line) => logs.push(line),
+    });
+    expect(placed).toHaveLength(1);
+    expect(placed[0].symbol).toBe("HYG");
+    expect(placed[0].longStrike).toBe(79.5);
+    expect(placed[0].shortStrike).toBe(79);
+    expect(placed[0].qty).toBe(RISKOFF_HYG_MAX_AUTO_QTY);
+    expect(placed[0].thesis).toMatch(/credit-leg/);
+    expect(result.verticals[0].longStrike).toBe(79.5);
+    expect(logs.some((l) => /put debit ladder HYG 79\.5\/79 P 2026-10-09 \(offset \+1, expiry 1\/1\)/.test(l))).toBe(
+      true,
+    );
+  });
+
+  it("uses the second 30–45 DTE expiry when every first-expiry strike fails", async () => {
+    const placed: AutoVertical[] = [];
+    const logs: string[] = [];
+    const thinFirst = hygChainAroundAtm("2026-10-09", {
+      77: 0,
+      77.5: 0,
+      78: 0,
+      78.5: 0,
+      79: 7,
+      79.5: 0,
+      80: 0,
+    });
+    const liquidSecond = hygChainAroundAtm("2026-10-16");
+    const result = await runAutopilot({
+      enabled: true,
+      getPositions: () => [],
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [],
+      featureRows: [],
+      scanReady: true,
+      riskOn: false,
+      riskChecks: { spyAbove200: true, hygAbove200: false },
+      riskoffQuotes: quotes,
+      place: async () => ({ ok: true }),
+      close: async () => ({ ok: true }),
+      placeVertical: async (v: AutoVertical) => {
+        placed.push(v);
+        return { ok: true };
+      },
+      fetchExpiries: async () => [oct9, oct16, tooFar],
+      fetchChain: async (_symbol, exp) => (exp === "2026-10-16" ? liquidSecond : thinFirst),
+      log: (line) => logs.push(line),
+    });
+    expect(placed).toHaveLength(1);
+    expect(placed[0].expiry).toBe("2026-10-16");
+    expect(placed[0].longStrike).toBe(79);
+    expect(placed[0].shortStrike).toBe(78.5);
+    expect(placed[0].qty).toBe(3);
+    expect(result.verticals[0].expiry).toBe("2026-10-16");
+    expect(logs.some((l) => /put debit ladder HYG 79\/78\.5 P 2026-10-16 \(offset 0, expiry 2\/2\)/.test(l))).toBe(
+      true,
+    );
+  });
+
+  it("notes the OI skip once and does not place when every ladder candidate fails", async () => {
+    const skip = vi.spyOn(eventGateAlerts, "noteCreditLegOiSkip").mockResolvedValue(null);
+    const placed: string[] = [];
+    const logs: string[] = [];
+    const thin = hygChainAroundAtm("2026-10-09", {
+      77: 0,
+      77.5: 0,
+      78: 0,
+      78.5: 0,
+      79: 7,
+      79.5: 0,
+      80: 0,
+    });
+    const result = await runAutopilot({
+      enabled: true,
+      getPositions: () => [],
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [],
+      featureRows: [],
+      scanReady: true,
+      riskOn: false,
+      riskChecks: { spyAbove200: true, hygAbove200: false },
+      riskoffQuotes: quotes,
+      place: async () => ({ ok: true }),
+      close: async () => ({ ok: true }),
+      placeVertical: async (v: AutoVertical) => {
+        placed.push(v.symbol);
+        return { ok: true };
+      },
+      fetchExpiries: async () => [oct9, oct16],
+      fetchChain: async () => thin,
+      log: (line) => logs.push(line),
+    });
+    expect(placed).toEqual([]);
+    expect(result.verticals).toEqual([]);
+    expect(skip).toHaveBeenCalledTimes(1);
+    const hygSkips = logs.filter((l) => /vertical skip HYG/.test(l));
+    expect(hygSkips).toHaveLength(1);
+    expect(hygSkips[0]).toMatch(/open interest/i);
+  });
+
+  it("keeps SPY ATM-only even when nearby strikes exist", async () => {
+    const placed: AutoVertical[] = [];
+    const spyChain: OptionLeg[] = [
+      equityPutLeg(480, 2.1, 2.3),
+      equityPutLeg(490, 3.4, 3.6),
+      equityPutLeg(500, 6.1, 6.3),
+      equityPutLeg(510, 9.1, 9.3),
+    ];
+    await runAutopilot({
+      enabled: true,
+      getPositions: () => [],
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [],
+      featureRows: [],
+      scanReady: true,
+      riskOn: false,
+      riskChecks: { spyAbove200: false, hygAbove200: true },
+      riskoffQuotes: [
+        { symbol: "SPY", last: 500 },
+        { symbol: "QQQ", last: 400 },
+      ],
+      place: async () => ({ ok: true }),
+      close: async () => ({ ok: true }),
+      placeVertical: async (v: AutoVertical) => {
+        placed.push(v);
+        return { ok: true };
+      },
+      fetchExpiries: async () => [oct9, oct16],
+      fetchChain: async () => spyChain,
+      log: () => {},
+    });
+    const spy = placed.find((p) => p.symbol === "SPY");
+    expect(spy).toBeDefined();
+    expect(spy?.longStrike).toBe(500);
+    expect(spy?.shortStrike).toBe(490);
+    expect(spy?.expiry).toBe("2026-10-09");
+    expect(spy?.qty).toBeUndefined();
+  });
+
+  it("still picks ATM on the primary expiry when that pair is liquid", async () => {
+    const placed: AutoVertical[] = [];
+    const logs: string[] = [];
+    const chain = hygChainAroundAtm("2026-10-09");
+    await runAutopilot({
+      enabled: true,
+      getPositions: () => [],
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [],
+      featureRows: [],
+      scanReady: true,
+      riskOn: false,
+      riskChecks: { spyAbove200: true, hygAbove200: false },
+      riskoffQuotes: quotes,
+      place: async () => ({ ok: true }),
+      close: async () => ({ ok: true }),
+      placeVertical: async (v: AutoVertical) => {
+        placed.push(v);
+        return { ok: true };
+      },
+      fetchExpiries: async () => [oct9, oct16],
+      fetchChain: async () => chain,
+      log: (line) => logs.push(line),
+    });
+    expect(placed[0]).toMatchObject({
+      symbol: "HYG",
+      longStrike: 79,
+      shortStrike: 78.5,
+      expiry: "2026-10-09",
+      qty: 3,
+    });
+    expect(logs.some((l) => /put debit ladder/.test(l))).toBe(false);
+  });
+});
+
+describe("pickCreditLegAutoPut", () => {
+  it("prefers offset −1 when ATM and +1 fail OI", async () => {
+    const chain = hygChainAroundAtm("2026-10-09", { 79: 7, 79.5: 500 });
+    const result = await pickCreditLegAutoPut({
+      symbol: "HYG",
+      last: 79,
+      expiries: [oct9],
+      fetchChain: async () => chain,
+      now: new Date("2026-09-03T13:50:00.000Z"),
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.pick.offset).toBe(-1);
+    expect(result.pick.long.strike).toBe(78.5);
+    expect(result.pick.short.strike).toBe(78);
   });
 });
