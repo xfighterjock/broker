@@ -5,9 +5,11 @@ import {
   OPTIONS_DTE_EXIT,
   OPTIONS_DTE_TARGET_MAX,
   OPTIONS_DTE_TARGET_MIN,
+  RISKOFF_CREDIT_LEG_EXPIRY_CANDIDATES,
   RISKOFF_CREDIT_LEG_MAX_AUTO_QTY,
   RISKOFF_CREDIT_LEG_MAX_ROUNDTRIP_SLIPPAGE_FRAC,
   RISKOFF_CREDIT_LEG_MIN_OPEN_INTEREST,
+  RISKOFF_CREDIT_LEG_STRIKE_OFFSETS,
   RISKOFF_CREDIT_LEG_SYMBOLS,
   RISKOFF_HYG_MAX_AUTO_QTY,
   RISKOFF_HYG_SYMBOL,
@@ -435,14 +437,13 @@ export function decideRiskoffPutSells(
   return out;
 }
 
-/** Long higher-strike (ATM) put, short further OTM (lower strike). Skip if <2 put strikes. */
-export function pickAtmPutDebit(
-  legs: OptionLeg[],
-  last: number,
-): { long: OptionLeg; short: OptionLeg } | null {
-  if (!(last > 0)) return null;
-  const puts = legs.filter((l) => l.right === "P").sort((a, b) => a.strike - b.strike);
-  if (puts.length < 2) return null;
+function sortedPuts(legs: OptionLeg[]): OptionLeg[] {
+  return legs.filter((l) => l.right === "P").sort((a, b) => a.strike - b.strike);
+}
+
+/** ATM index among sorted puts. Same bump as pickAtmPutDebit: if ATM is the lowest strike, step up so a short exists below. */
+function atmPutIndex(puts: OptionLeg[], last: number): number | null {
+  if (!(last > 0) || puts.length < 2) return null;
   let atmIdx = 0;
   let best = Infinity;
   for (let i = 0; i < puts.length; i++) {
@@ -453,10 +454,68 @@ export function pickAtmPutDebit(
     }
   }
   if (atmIdx === 0) atmIdx = 1;
-  const long = puts[atmIdx];
-  const short = puts[atmIdx - 1];
+  return atmIdx;
+}
+
+function putDebitAt(
+  puts: OptionLeg[],
+  longIdx: number,
+): { long: OptionLeg; short: OptionLeg } | null {
+  const shortIdx = longIdx - 1;
+  if (longIdx < 0 || longIdx >= puts.length || shortIdx < 0 || shortIdx >= puts.length) return null;
+  const long = puts[longIdx];
+  const short = puts[shortIdx];
+  if (shortIdx !== longIdx - 1) return null;
   if (!(long.strike > short.strike)) return null;
   return { long, short };
+}
+
+/** Long higher-strike (ATM) put, short further OTM (lower strike). Skip if <2 put strikes. */
+export function pickAtmPutDebit(
+  legs: OptionLeg[],
+  last: number,
+): { long: OptionLeg; short: OptionLeg } | null {
+  const puts = sortedPuts(legs);
+  const atmIdx = atmPutIndex(puts, last);
+  if (atmIdx === null) return null;
+  return putDebitAt(puts, atmIdx);
+}
+
+export type PutDebitCandidate = {
+  long: OptionLeg;
+  short: OptionLeg;
+  /** 0 = ATM (same pair as pickAtmPutDebit). +n / −n walk the ATM index. */
+  offset: number;
+};
+
+/** ATM first, then nearer strikes before farther: 0, +1, −1, +2, −2, … */
+export function creditLegStrikeOffsetOrder(
+  maxOffset = RISKOFF_CREDIT_LEG_STRIKE_OFFSETS,
+): number[] {
+  const out = [0];
+  for (let n = 1; n <= maxOffset; n++) out.push(n, -n);
+  return out;
+}
+
+/**
+ * Credit-leg strike ladder around ATM for one expiry. Offset 0 is pickAtmPutDebit.
+ * Skips invalid indices, non-adjacent pairs, and long.strike ≤ short.strike.
+ */
+export function pickCreditLegPutDebitCandidates(
+  legs: OptionLeg[],
+  last: number,
+  maxOffset = RISKOFF_CREDIT_LEG_STRIKE_OFFSETS,
+): PutDebitCandidate[] {
+  const puts = sortedPuts(legs);
+  const atmIdx = atmPutIndex(puts, last);
+  if (atmIdx === null) return [];
+  const out: PutDebitCandidate[] = [];
+  for (const offset of creditLegStrikeOffsetOrder(maxOffset)) {
+    const pair = putDebitAt(puts, atmIdx + offset);
+    if (!pair) continue;
+    out.push({ ...pair, offset });
+  }
+  return out;
 }
 
 export type HygLiquidityCheck = { ok: true } | { ok: false; reason: string };
@@ -470,9 +529,9 @@ export type CreditLegLiquidityCheck = HygLiquidityCheck;
  * RISKOFF_CREDIT_LEG_MAX_ROUNDTRIP_SLIPPAGE_FRAC of the entry debit — i.e.
  * the immediate close must be at least 75% of the entry debit. See the
  * RISKOFF_HYG_* constants doc comment (shared/constants.ts) for the incident
- * this is guarding against. Only called from the credit-leg branch of the
- * riskoff auto put-vertical loop below; SPY/QQQ/IWM riskoff, options-sleeve
- * calls, and manual POST /api/paper/vertical never call this.
+ * this is guarding against. Called for each credit-leg ladder candidate
+ * (ATM, then ±2, then the next 30–45 DTE expiries). SPY/QQQ/IWM riskoff,
+ * options-sleeve calls, and manual POST /api/paper/vertical never call this.
  */
 export function checkCreditLegAutoLiquidity(
   symbol: string,
@@ -565,7 +624,16 @@ export function pickAtmCallDebit(
   return { long, short };
 }
 
-export function pickTargetExpiry(expiries: OptionExpiry[], now = new Date()): OptionExpiry | null {
+/**
+ * Up to `limit` expiries inside OPTIONS_DTE_TARGET_MIN..MAX (30–45), DTE >
+ * OPTIONS_DTE_EXIT, closest to the band midpoint first. Same scoring as
+ * pickTargetExpiry — [0] matches pickTargetExpiry when any exist.
+ */
+export function pickTargetExpiries(
+  expiries: OptionExpiry[],
+  now = new Date(),
+  limit = RISKOFF_CREDIT_LEG_EXPIRY_CANDIDATES,
+): OptionExpiry[] {
   const scored: Array<{ e: OptionExpiry; dte: number }> = [];
   for (const e of expiries) {
     const dte = daysToExpiry(e.expiry, now);
@@ -574,10 +642,86 @@ export function pickTargetExpiry(expiries: OptionExpiry[], now = new Date()): Op
     if (dte < OPTIONS_DTE_TARGET_MIN || dte > OPTIONS_DTE_TARGET_MAX) continue;
     scored.push({ e, dte });
   }
-  if (!scored.length) return null;
+  if (!scored.length) return [];
   const mid = (OPTIONS_DTE_TARGET_MIN + OPTIONS_DTE_TARGET_MAX) / 2;
   scored.sort((a, b) => Math.abs(a.dte - mid) - Math.abs(b.dte - mid));
-  return scored[0].e;
+  const n = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : 0;
+  return scored.slice(0, n).map((s) => s.e);
+}
+
+export function pickTargetExpiry(expiries: OptionExpiry[], now = new Date()): OptionExpiry | null {
+  return pickTargetExpiries(expiries, now, 1)[0] ?? null;
+}
+
+export type CreditLegPutPick = {
+  expiry: string;
+  long: OptionLeg;
+  short: OptionLeg;
+  offset: number;
+  expiryIndex: number;
+  expiryCount: number;
+};
+
+export type CreditLegPutPickResult =
+  | { ok: true; pick: CreditLegPutPick }
+  | { ok: false; reason: string; noteOiSkip: boolean };
+
+function formatStrikeOffset(offset: number): string {
+  return offset > 0 ? `+${offset}` : String(offset);
+}
+
+/**
+ * Credit-leg AUTO: strike ladder (±RISKOFF_CREDIT_LEG_STRIKE_OFFSETS) on the
+ * first 30–45 DTE expiry, then the next couple of expiries in the same band.
+ * First pair that clears checkCreditLegAutoLiquidity wins. Paper only.
+ */
+export async function pickCreditLegAutoPut(opts: {
+  symbol: string;
+  last: number;
+  expiries: OptionExpiry[];
+  fetchChain: (symbol: string, expiry: string) => Promise<OptionLeg[]>;
+  now?: Date;
+  qty?: number;
+}): Promise<CreditLegPutPickResult> {
+  const qty = opts.qty ?? RISKOFF_CREDIT_LEG_MAX_AUTO_QTY;
+  const candidates = pickTargetExpiries(opts.expiries, opts.now ?? new Date());
+  if (!candidates.length) {
+    return { ok: false, reason: "no 30–45 DTE expiry", noteOiSkip: false };
+  }
+  let lastReason = "no liquid put debit";
+  let sawLiquidityFail = false;
+  for (let ei = 0; ei < candidates.length; ei++) {
+    const picked = candidates[ei];
+    const legs = await opts.fetchChain(opts.symbol, picked.expiry);
+    const pairs = pickCreditLegPutDebitCandidates(legs, opts.last);
+    if (!pairs.length) {
+      lastReason = "no ATM put debit";
+      continue;
+    }
+    for (const cand of pairs) {
+      if (cand.long.right !== "P" || cand.short.right !== "P") {
+        lastReason = "refuses calls";
+        continue;
+      }
+      const gate = checkCreditLegAutoLiquidity(opts.symbol, cand.long, cand.short, qty);
+      if (gate.ok) {
+        return {
+          ok: true,
+          pick: {
+            expiry: picked.expiry,
+            long: cand.long,
+            short: cand.short,
+            offset: cand.offset,
+            expiryIndex: ei,
+            expiryCount: candidates.length,
+          },
+        };
+      }
+      lastReason = gate.reason;
+      sawLiquidityFail = true;
+    }
+  }
+  return { ok: false, reason: lastReason, noteOiSkip: sawLiquidityFail };
 }
 
 export type PlaceResult = { ok: true } | { ok: false; error: string };
@@ -865,36 +1009,52 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
       }
       try {
         const expiries = await ctx.fetchExpiries(intent.symbol);
-        const picked = pickTargetExpiry(expiries);
-        if (!picked) {
-          ctx.log(`auto paper vertical skip ${intent.symbol}: no 30–45 DTE expiry`);
-          continue;
-        }
-        const legs = await ctx.fetchChain(intent.symbol, picked.expiry);
-        const pair = pickAtmPutDebit(legs, intent.last);
-        if (!pair) {
-          ctx.log(`auto paper vertical skip ${intent.symbol}: no ATM put debit`);
-          continue;
-        }
-        if (pair.long.right !== "P" || pair.short.right !== "P") {
-          ctx.log(`auto paper vertical skip ${intent.symbol}: refuses calls`);
-          continue;
-        }
+        let pair: { long: OptionLeg; short: OptionLeg } | null = null;
+        let expiry = "";
         let qty: number | undefined;
         if (isRiskoffCreditLeg(intent.symbol)) {
           qty = RISKOFF_CREDIT_LEG_MAX_AUTO_QTY;
-          const gate = checkCreditLegAutoLiquidity(intent.symbol, pair.long, pair.short, qty);
-          if (!gate.ok) {
-            ctx.log(`auto paper vertical skip ${intent.symbol}: ${gate.reason}`);
-            void noteCreditLegOiSkip();
+          const ladder = await pickCreditLegAutoPut({
+            symbol: intent.symbol,
+            last: intent.last,
+            expiries,
+            fetchChain: ctx.fetchChain,
+          });
+          if (!ladder.ok) {
+            ctx.log(`auto paper vertical skip ${intent.symbol}: ${ladder.reason}`);
+            if (ladder.noteOiSkip) void noteCreditLegOiSkip();
             continue;
           }
+          pair = { long: ladder.pick.long, short: ladder.pick.short };
+          expiry = ladder.pick.expiry;
+          if (ladder.pick.offset !== 0 || ladder.pick.expiryIndex !== 0) {
+            ctx.log(
+              `auto paper put debit ladder ${intent.symbol} ${pair.long.strike}/${pair.short.strike} P ${expiry} (offset ${formatStrikeOffset(ladder.pick.offset)}, expiry ${ladder.pick.expiryIndex + 1}/${ladder.pick.expiryCount})`,
+            );
+          }
+        } else {
+          const picked = pickTargetExpiry(expiries);
+          if (!picked) {
+            ctx.log(`auto paper vertical skip ${intent.symbol}: no 30–45 DTE expiry`);
+            continue;
+          }
+          const legs = await ctx.fetchChain(intent.symbol, picked.expiry);
+          pair = pickAtmPutDebit(legs, intent.last);
+          if (!pair) {
+            ctx.log(`auto paper vertical skip ${intent.symbol}: no ATM put debit`);
+            continue;
+          }
+          expiry = picked.expiry;
+        }
+        if (!pair || pair.long.right !== "P" || pair.short.right !== "P") {
+          ctx.log(`auto paper vertical skip ${intent.symbol}: refuses calls`);
+          continue;
         }
         const v: AutoVertical = {
           sleeveId: "riskoff",
           symbol: intent.symbol,
           right: "P",
-          expiry: picked.expiry,
+          expiry,
           longStrike: pair.long.strike,
           shortStrike: pair.short.strike,
           thesis: intent.thesis,
