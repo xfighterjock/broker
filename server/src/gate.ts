@@ -7,6 +7,7 @@ import type {
   WorkingOrder,
 } from "../../shared/types";
 import type { BrokerClient } from "./broker";
+import { considerGateTickAlerts } from "./eventGateAlerts";
 
 export interface GateTickInput {
   now: Date;
@@ -177,6 +178,7 @@ export class GateEngine {
     });
     this.flattenFiredKey = result.flattenFiredKey;
     await this.apply(result.actions);
+    void considerGateTickAlerts(result);
     return result;
   }
 

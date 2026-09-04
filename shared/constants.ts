@@ -65,6 +65,8 @@ export const REDIS_KEYS = {
   autoPaper: "paper:auto",
   sessionMarks: "sleeves:session_marks",
   verticalStopCooldown: "paper:vertical_stop_cooldown",
+  /** Last published RISK ON/OFF (`1`/`0`) so a process restart does not false-flip FCM. */
+  riskOn: "risk:on",
 } as const;
 
 /** Independent mock starting equity per sleeve (day, momentum, options, ownership, riskoff). */

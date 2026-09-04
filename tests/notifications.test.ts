@@ -8,6 +8,7 @@ import type { AppConfig } from "../server/src/config";
 import { GateEngine } from "../server/src/gate";
 import { MockBroker } from "../server/src/mockBroker";
 import {
+  EVENT_GATE_ALERT_TYPES,
   NotificationService,
   attachNotificationService,
   buildFcmMessage,
@@ -18,6 +19,8 @@ import {
   type NotificationProvider,
 } from "../server/src/notifications";
 import { StatusHub } from "../server/src/wsHub";
+import { resetRiskCache } from "../server/src/risk";
+import { EVENT_GATE_ALERT_PRINCIPAL } from "../server/src/eventGateAlerts";
 
 function cfg(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
@@ -158,9 +161,13 @@ async function listen(app: ReturnType<typeof buildApp>) {
 describe("notifications service", () => {
   beforeEach(() => {
     delete process.env.GATE_PASSWORD;
+    resetRiskCache();
+    attachNotificationService(null);
   });
   afterEach(() => {
     delete process.env.GATE_PASSWORD;
+    resetRiskCache();
+    attachNotificationService(null);
   });
 
   it("returns disabled when FCM config is off", async () => {
@@ -321,6 +328,7 @@ describe("notifications service", () => {
   it("does not embed Firebase secrets, project IDs, or device tokens in source", () => {
     const src = [
       readFileSync(resolve("server/src/notifications.ts"), "utf8"),
+      readFileSync(resolve("server/src/eventGateAlerts.ts"), "utf8"),
       readFileSync(resolve(".env.example"), "utf8"),
       readFileSync(resolve("docs/DESIGN.md"), "utf8"),
     ].join("\n");
@@ -367,5 +375,59 @@ describe("notifications service", () => {
       deepLinkRoute: "/status",
     });
     expect(idle.outcome).toBe("disabled");
+  });
+
+  it("auth_needed and paper_guard test payloads still send through the attached service", async () => {
+    const pool = new FakePool();
+    const sent: EventGateAlertPayload[] = [];
+    const provider: NotificationProvider = {
+      name: "fcm",
+      enabled: true,
+      configured: true,
+      send: async (_token, payload) => {
+        sent.push(payload);
+        return { ok: true };
+      },
+    };
+    const svc = new NotificationService(pool as never, cfg({ pushFcmEnabled: true, pushFcmProjectId: "p" }), provider);
+    attachNotificationService(svc);
+    await svc.registerToken({ principal: EVENT_GATE_ALERT_PRINCIPAL, platform: "ios", token: "k".repeat(140) });
+    const auth = await sendEventGateAlert(
+      EVENT_GATE_ALERT_PRINCIPAL,
+      {
+        title: "Event Gate: E*TRADE PIN needed",
+        body: "Authorize E*TRADE from Event Gate. Paper trading only.",
+        eventType: "auth_needed",
+        occurredAt: new Date().toISOString(),
+        dedupeKey: "auth_needed:etrade:needs_pin",
+        deepLinkRoute: "/status",
+      },
+    );
+    const test = await svc.sendTest(EVENT_GATE_ALERT_PRINCIPAL);
+    expect(auth.outcome).toBe("delivered");
+    expect(test.outcome).toBe("delivered");
+    expect(sent.map((p) => p.eventType)).toEqual(["auth_needed", "paper_guard"]);
+    expect(sent[1].dedupeKey).toBe("event-gate-test");
+    expect(EVENT_GATE_ALERT_TYPES).toEqual(
+      expect.arrayContaining([
+        "risk_flip",
+        "service_fault",
+        "auth_needed",
+        "paper_guard",
+        "pre_arm",
+        "freeze_missing",
+        "day_fill",
+        "day_flatten",
+        "day_loss_cap",
+        "veto_confirm",
+        "overlay_rotation",
+        "credit_put_opened",
+        "credit_put_stopped",
+        "credit_put_risk_on_flatten",
+        "oi_skip_streak",
+        "etrade_renew_failed",
+        "sleeve_loss_warn",
+      ]),
+    );
   });
 });

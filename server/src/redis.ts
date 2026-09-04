@@ -1,4 +1,5 @@
 import { createClient } from "redis";
+import { noteServiceDown, noteServiceUp } from "./eventGateAlerts";
 
 export type RedisClient = ReturnType<typeof createClient>;
 
@@ -10,6 +11,10 @@ export async function connectRedis(url: string): Promise<{
   const client = createClient({ url });
   client.on("error", (err) => {
     console.error("[EventGate] redis error", err);
+    void noteServiceDown("redis");
+  });
+  client.on("ready", () => {
+    noteServiceUp("redis");
   });
   await client.connect();
   const pub = client.duplicate();

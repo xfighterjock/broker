@@ -1,6 +1,15 @@
+import { REDIS_KEYS } from "../../shared/constants";
 import type { ScanFeatures } from "./scan";
 import { featuresFromBars } from "./scan";
 import { fetchMassiveDailyBars, type DailyBar } from "./massive";
+import {
+  noteServiceDown,
+  noteServiceUp,
+  notifyRiskFlip,
+  resetEventGateAlertState,
+  resetOiSkipStreak,
+} from "./eventGateAlerts";
+import type { RedisClient } from "./redis";
 
 export const RISK_UUP_VETO_FRAC = 0.03;
 export const RISK_CACHE_MS = 15 * 60 * 1000;
@@ -120,10 +129,30 @@ export function riskTooltip(snap: RiskSnapshot): string {
 
 let cached: { at: number; snap: RiskSnapshot } | null = null;
 let inflight: Promise<RiskSnapshot> | null = null;
+let redis: RedisClient | null = null;
+let lastKnownRiskOn: boolean | null = null;
+let persistedHydrated = false;
+
+export function attachRiskRedis(client: RedisClient | null): void {
+  redis = client;
+}
+
+/** Test/boot helper. Null = unknown baseline (first snap after this will not notify). */
+export function seedPersistedRiskOn(value: boolean | null): void {
+  lastKnownRiskOn = value;
+  persistedHydrated = true;
+}
+
+export function getLastKnownRiskOn(): boolean | null {
+  return lastKnownRiskOn;
+}
 
 export function resetRiskCache(): void {
   cached = null;
   inflight = null;
+  lastKnownRiskOn = null;
+  persistedHydrated = false;
+  resetEventGateAlertState();
 }
 
 export function getRiskSnapshot(): RiskSnapshot {
@@ -135,6 +164,61 @@ export function getRiskAsOf(): number | null {
   return cached?.at ?? null;
 }
 
+async function hydratePersistedRiskOn(): Promise<void> {
+  if (persistedHydrated) return;
+  persistedHydrated = true;
+  if (!redis) return;
+  try {
+    const raw = await redis.get(REDIS_KEYS.riskOn);
+    if (raw === "1") lastKnownRiskOn = true;
+    else if (raw === "0") lastKnownRiskOn = false;
+  } catch {
+    /* keep unknown baseline */
+  }
+}
+
+async function persistRiskOn(riskOn: boolean): Promise<void> {
+  lastKnownRiskOn = riskOn;
+  if (!redis) return;
+  try {
+    await redis.set(REDIS_KEYS.riskOn, riskOn ? "1" : "0");
+  } catch {
+    /* in-memory lastKnown still holds */
+  }
+}
+
+/** After a computed (or fallback) snap: baseline, flip, or quotes fault. Never throws. */
+export async function applyResolvedRisk(
+  snap: RiskSnapshot,
+  opts: { hardFailure?: boolean } = {},
+): Promise<void> {
+  try {
+    await hydratePersistedRiskOn();
+    if (opts.hardFailure) await noteServiceDown("quotes");
+    else noteServiceUp("quotes");
+    if (snap.riskOn) resetOiSkipStreak();
+    const prev = lastKnownRiskOn;
+    if (prev === null) {
+      await persistRiskOn(snap.riskOn);
+      return;
+    }
+    if (prev === snap.riskOn) return;
+    await persistRiskOn(snap.riskOn);
+    await notifyRiskFlip(snap);
+  } catch (err) {
+    console.warn("[EventGate] risk alert hook failed", err instanceof Error ? err.message : err);
+  }
+}
+
+function gateBarsMissing(
+  spyBars: DailyBar[] | null,
+  acwiBars: DailyBar[] | null,
+  hygBars: DailyBar[] | null,
+  uupBars: DailyBar[] | null,
+): boolean {
+  return !spyBars && !acwiBars && !hygBars && !uupBars;
+}
+
 async function runRisk(): Promise<RiskSnapshot> {
   const [spyBars, acwiBars, hygBars, uupBars, lqdBars, jnkBars] = await Promise.all([
     fetchMassiveDailyBars("SPY"),
@@ -144,22 +228,35 @@ async function runRisk(): Promise<RiskSnapshot> {
     fetchMassiveDailyBars("LQD"),
     fetchMassiveDailyBars("JNK"),
   ]);
-  const snap = riskFromFeatures({
-    spy: spyBars ? featuresFromBars(spyBars) : null,
-    acwi: acwiBars ? featuresFromBars(acwiBars) : null,
-    hyg: hygBars ? featuresFromBars(hygBars) : null,
-    uup20dPct: uup20dReturn(uupBars),
-    lqd: lqdBars ? featuresFromBars(lqdBars) : null,
-    jnk: jnkBars ? featuresFromBars(jnkBars) : null,
-  });
+  const hardFailure = gateBarsMissing(spyBars, acwiBars, hygBars, uupBars);
+  const snap = hardFailure
+    ? riskOffFallback()
+    : riskFromFeatures({
+        spy: spyBars ? featuresFromBars(spyBars) : null,
+        acwi: acwiBars ? featuresFromBars(acwiBars) : null,
+        hyg: hygBars ? featuresFromBars(hygBars) : null,
+        uup20dPct: uup20dReturn(uupBars),
+        lqd: lqdBars ? featuresFromBars(lqdBars) : null,
+        jnk: jnkBars ? featuresFromBars(jnkBars) : null,
+      });
   cached = { at: Date.now(), snap };
+  await applyResolvedRisk(snap, { hardFailure });
+  return snap;
+}
+
+async function resolveRiskFailure(err: unknown): Promise<RiskSnapshot> {
+  console.warn("[EventGate] risk gate failed", err instanceof Error ? err.message : err);
+  if (cached) return cached.snap;
+  const snap = riskOffFallback();
+  cached = { at: Date.now(), snap };
+  await applyResolvedRisk(snap, { hardFailure: true });
   return snap;
 }
 
 export function kickRisk(): void {
   if (inflight) return;
   inflight = runRisk()
-    .catch(() => riskOffFallback())
+    .catch((err) => resolveRiskFailure(err))
     .finally(() => {
       inflight = null;
     });
@@ -174,10 +271,7 @@ export async function ensureRisk(now = Date.now()): Promise<RiskSnapshot> {
       return getRiskSnapshot();
     }
   }
-  inflight = runRisk().catch((err) => {
-    console.warn("[EventGate] risk gate failed", err instanceof Error ? err.message : err);
-    return cached?.snap ?? riskOffFallback();
-  });
+  inflight = runRisk().catch((err) => resolveRiskFailure(err));
   try {
     return await inflight;
   } finally {

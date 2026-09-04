@@ -113,6 +113,19 @@ import {
   startEtradePinHandshake,
 } from "./etrade";
 import { ensureRisk, getRiskAsOf, kickRisk } from "./risk";
+import {
+  considerClockAlerts,
+  considerSleeveLossWarn,
+  isCreditLegSymbol,
+  noteServiceDown,
+  noteServiceUp,
+  notifyAuthNeeded,
+  notifyCreditPutOpened,
+  notifyCreditPutStopped,
+  notifyDayFill,
+  notifyDayFlatten,
+  notifyVetoConfirm,
+} from "./eventGateAlerts";
 import { fetchRiskoffEtfReturns } from "./riskoffEtf";
 import {
   applyOverlayMarks,
@@ -149,8 +162,6 @@ import type { StatusHub } from "./wsHub";
 import {
   NotificationService,
   attachNotificationService,
-  createEventGateAlert,
-  sendEventGateAlert,
 } from "./notifications";
 
 let autoPaperTimer: ReturnType<typeof setInterval> | null = null;
@@ -664,6 +675,13 @@ export function buildApp(deps: AppDeps): express.Express {
       deps.engine.log(
         `paper VERTICAL EXIT ${pos.symbol} ${hit.reason} pnl ${hit.realizedPnl.toFixed(2)} (MockBroker flatten, not live, not E*TRADE order)`,
       );
+      if (
+        (pos.sleeveId ?? "options") === "riskoff" &&
+        isVerticalStopReason(hit.reason) &&
+        isCreditLegSymbol(v.quoteSymbol || v.underlying)
+      ) {
+        void notifyCreditPutStopped(v.quoteSymbol || v.underlying);
+      }
     }
     return exits.length;
   }
@@ -1009,6 +1027,9 @@ export function buildApp(deps: AppDeps): express.Express {
     deps.engine.log(
       `paper VERTICAL BUY ${v.qty} ${pkg} long @ ${v.longFill} short @ ${v.shortFill} debit ${v.netDebitPaid.toFixed(2)} (MockBroker, not E*TRADE order, not Tradovate, not live)`,
     );
+    if (parsed.sleeveId === "riskoff" && parsed.right === "P" && isCreditLegSymbol(parsed.symbol)) {
+      void notifyCreditPutOpened(parsed.symbol);
+    }
     return { ok: true, symbol: pkg };
   }
 
@@ -1074,6 +1095,7 @@ export function buildApp(deps: AppDeps): express.Express {
     deps.engine.log(
       `paper ${parsed.side} ${parsed.qty} ${v.mapped} @ ${last} stop ${stop.stopPrice} ${stop.side} StopMarket (MockBroker, not Tradovate, not live)`,
     );
+    if (parsed.sleeveId === "day") void notifyDayFill(v.mapped);
     return { ok: true, mapped: v.mapped, last };
   }
 
@@ -1308,17 +1330,7 @@ export function buildApp(deps: AppDeps): express.Express {
     const risk = await ensureRisk();
     const etradeAuth = etradeAuthState();
     if (lastEtradeAuth && lastEtradeAuth !== "needs_pin" && etradeAuth === "needs_pin") {
-      void sendEventGateAlert(
-        "event-gate",
-        createEventGateAlert({
-          title: "Event Gate: E*TRADE PIN needed",
-          body: "Authorize E*TRADE from Event Gate. Paper trading only.",
-          eventType: "auth_needed",
-          occurredAt: new Date().toISOString(),
-          dedupeKey: "auth_needed:etrade:needs_pin",
-          deepLinkRoute: "/status",
-        }),
-      );
+      void notifyAuthNeeded();
     }
     lastEtradeAuth = etradeAuth;
     let freeze = memory.freeze;
@@ -1331,7 +1343,9 @@ export function buildApp(deps: AppDeps): express.Express {
         knowledgeTime = parsed.knowledgeTime;
         memory.freeze = freeze;
         memory.knowledgeTime = knowledgeTime;
+        noteServiceUp("postgres");
       } catch {
+        void noteServiceDown("postgres");
         /* keep memory */
       }
     }
@@ -1349,6 +1363,9 @@ export function buildApp(deps: AppDeps): express.Express {
         /* keep memory */
       }
     }
+    const sleeveBooks = await sleeveBooksWithSession();
+    void considerClockAlerts(clock, freeze);
+    void considerSleeveLossWarn(memory.sleeves, sleeveBooks, now);
     return {
       trader: TRADER,
       tz: TZ,
@@ -1380,7 +1397,7 @@ export function buildApp(deps: AppDeps): express.Express {
       paperBlotter: memory.blotter.slice(-200),
       autoPaper: memory.autoPaper,
       autoPaperBySleeve: { ...memory.autoPaperBySleeve },
-      sleeveBooks: await sleeveBooksWithSession(),
+      sleeveBooks,
       riskOn: risk.riskOn,
       riskChecks: risk.checks,
       notifications: await notifications.status(),
@@ -1641,6 +1658,7 @@ export function buildApp(deps: AppDeps): express.Express {
       await deps.redis.set(REDIS_KEYS.gateEnabled, enabled ? "1" : "0");
     }
     deps.engine.log(enabled ? "gate enabled" : "gate disabled");
+    if (!enabled) void notifyVetoConfirm("gate_off");
     await publishStatus();
     res.json(await snapshot());
   });
@@ -1648,6 +1666,8 @@ export function buildApp(deps: AppDeps): express.Express {
   app.post("/api/flatten", async (_req, res) => {
     await deps.engine.flattenSleeve("manual");
     sessionNote("flatten", "manual flatten sleeve");
+    void notifyDayFlatten("manual");
+    void notifyVetoConfirm("flatten");
     await publishStatus();
     res.json(await snapshot());
   });
