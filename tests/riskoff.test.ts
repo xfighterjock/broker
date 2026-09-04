@@ -871,13 +871,14 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(periodReturn([], 63)).toBeNull();
   });
 
-  it("does not raise notional or loosen the disaster stop", () => {
-    expect(RISKOFF_ETF_NOTIONAL_FRAC).toBe(0.2);
+  it("uses 40% book notional and does not loosen the disaster stop", () => {
+    expect(RISKOFF_ETF_NOTIONAL_FRAC).toBe(0.4);
+    expect(DEFAULT_SLEEVE_EQUITY_USD * RISKOFF_ETF_NOTIONAL_FRAC).toBe(40_000);
     expect(RISKOFF_ETF_STOP_MUL).toBe(0.92);
     expect(RISKOFF_ETF_LOOKBACK_DAYS).toBe(63);
     const qty = sizeRiskoffEtfShares(180);
-    expect(qty).toBe(Math.floor((DEFAULT_SLEEVE_EQUITY_USD * 0.2) / 180));
-    expect(qty * 180).toBeLessThanOrEqual(DEFAULT_SLEEVE_EQUITY_USD * 0.2);
+    expect(qty).toBe(Math.floor((DEFAULT_SLEEVE_EQUITY_USD * 0.4) / 180));
+    expect(qty * 180).toBeLessThanOrEqual(DEFAULT_SLEEVE_EQUITY_USD * 0.4);
     const decided = decideRiskoffEtf({
       riskOn: false,
       positions: [],
@@ -925,11 +926,15 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(pickRiskoffEtfWinner(gldUupTie)).toBe("GLD");
   });
 
-  it("sizes a modest stake well under the $100k sleeve", () => {
+  it("sizes a 40% stake well under the $100k sleeve (short of half)", () => {
     const qty = sizeRiskoffEtfShares(180);
     expect(qty).toBe(Math.floor((DEFAULT_SLEEVE_EQUITY_USD * RISKOFF_ETF_NOTIONAL_FRAC) / 180));
-    expect(qty * 180).toBeLessThan(25_000);
+    expect(qty * 180).toBeGreaterThan(35_000);
+    expect(qty * 180).toBeLessThan(50_000);
     expect(qty * 180).toBeLessThan(DEFAULT_SLEEVE_EQUITY_USD);
+    const uupQty = sizeRiskoffEtfShares(28);
+    expect(qty).toBeLessThan(uupQty);
+    expect(uupQty * 28).toBeLessThanOrEqual(DEFAULT_SLEEVE_EQUITY_USD * RISKOFF_ETF_NOTIONAL_FRAC);
     expect(SLEEVE_IDS).toHaveLength(5);
     expect(SLEEVE_IDS).toEqual(
       expect.arrayContaining(["day", "momentum", "options", "ownership", "riskoff"]),
@@ -967,7 +972,7 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(etfBuys).toHaveLength(1);
     expect(etfBuys[0].symbol).toBe("GLD");
     expect(etfBuys[0].qty).toBe(sizeRiskoffEtfShares(180));
-    expect(etfBuys[0].qty * 180).toBeLessThan(DEFAULT_SLEEVE_EQUITY_USD * 0.25);
+    expect(etfBuys[0].qty * 180).toBeLessThanOrEqual(DEFAULT_SLEEVE_EQUITY_USD * RISKOFF_ETF_NOTIONAL_FRAC);
     expect(book.getPositions().filter((p) => !p.vertical).map((p) => p.symbol)).toEqual(["GLD"]);
     expect(result.verticals.map((v) => v.symbol)).toEqual(["HYG"]);
     expect(result.verticals[0].right).toBe("P");
@@ -1076,9 +1081,28 @@ describe("risk-off ETF relative-strength expression", () => {
     });
     expect(result.sold.map((s) => s.symbol)).toEqual(["GLD"]);
     expect(result.bought.map((b) => b.symbol)).toEqual(["UUP"]);
+    expect(result.bought[0].qty).toBe(sizeRiskoffEtfShares(28));
+    expect(result.bought[0].qty * 28).toBeLessThanOrEqual(
+      DEFAULT_SLEEVE_EQUITY_USD * RISKOFF_ETF_NOTIONAL_FRAC,
+    );
     const etfs = book.getPositions().filter((p) => p.sleeveId === "riskoff" && !p.vertical);
     expect(etfs).toHaveLength(1);
     expect(etfs[0].symbol).toBe("UUP");
+    expect(etfs[0].qty).toBe(sizeRiskoffEtfShares(28));
+
+    const rotate = decideRiskoffEtf({
+      riskOn: false,
+      positions: [etfPos("GLD", 100, 180)],
+      sleeve: defaultSleeves().riskoff,
+      returns: uupWins,
+      quotes: etfQuotes({ GLD: 180, UUP: 28, BIL: 91 }),
+    });
+    expect(rotate.sells.map((s) => s.symbol)).toEqual(["GLD"]);
+    expect(rotate.buy?.symbol).toBe("UUP");
+    expect(rotate.buy?.qty).toBe(sizeRiskoffEtfShares(28));
+    expect((rotate.buy?.qty ?? 0) * 28).toBeLessThanOrEqual(
+      DEFAULT_SLEEVE_EQUITY_USD * RISKOFF_ETF_NOTIONAL_FRAC,
+    );
   });
 
   it("3. Both trail BIL → BIL or cash, not GLD/UUP", async () => {
@@ -1200,8 +1224,9 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(pickRiskoffEtfWinner(etfRs({ DBMF: null, GLD: 0.2 }))).toBeNull();
   });
 
-  it("6. Size stays modest (well under $100k) and hold does not churn", async () => {
+  it("6. Size stays ~$40k (well under $100k) and hold does not churn", async () => {
     const qty = sizeRiskoffEtfShares(180);
+    expect(qty * 180).toBeLessThanOrEqual(DEFAULT_SLEEVE_EQUITY_USD * RISKOFF_ETF_NOTIONAL_FRAC);
     const book = paperBook([etfPos("GLD", qty, 180)]);
     const result = await runAutopilot({
       enabled: true,
@@ -1230,6 +1255,19 @@ describe("risk-off ETF relative-strength expression", () => {
     });
     expect(decided.buy).toBeNull();
     expect(decided.winner).toBe("GLD");
+
+    const oldQty = Math.floor((DEFAULT_SLEEVE_EQUITY_USD * 0.2) / 180);
+    expect(oldQty).toBeLessThan(qty);
+    const holdOld = decideRiskoffEtf({
+      riskOn: false,
+      positions: [etfPos("GLD", oldQty, 180)],
+      sleeve: defaultSleeves().riskoff,
+      returns: gldWins,
+      quotes: etfQuotes({ GLD: 180, UUP: 28, BIL: 91 }),
+    });
+    expect(holdOld.buy).toBeNull();
+    expect(holdOld.sells).toEqual([]);
+    expect(holdOld.winner).toBe("GLD");
   });
 });
 

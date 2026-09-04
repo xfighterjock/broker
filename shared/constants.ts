@@ -159,10 +159,11 @@ export const RISKOFF_ETF_CANDIDATES = RISKOFF_ETF_SYMBOLS.filter(
  */
 export const RISKOFF_ETF_LOOKBACK_DAYS = 63;
 /**
- * Fraction of the $100k risk-off mock book for the ETF long (~$20k).
- * Puts keep the rest of the sleeve. Easy to change.
+ * Fraction of the $100k risk-off mock book for the ETF long (~$40k).
+ * Puts keep the rest of the sleeve. Paper step toward half the sleeve
+ * (not a full 50%). Easy to change.
  */
-export const RISKOFF_ETF_NOTIONAL_FRAC = 0.20;
+export const RISKOFF_ETF_NOTIONAL_FRAC = 0.40;
 /** Disaster stop on the ETF long. Rotation — not this stop — is the primary exit. */
 export const RISKOFF_ETF_STOP_MUL = 0.92;
 /** Prefer 30–45 DTE, always above OPTIONS_DTE_EXIT. */
