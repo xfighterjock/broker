@@ -31,6 +31,12 @@ import {
 } from "./riskoffEtf";
 import { passesMomentumFilter } from "./scan";
 import {
+  noteCreditLegOiSkip,
+  notifyCreditPutRiskOnFlatten,
+  notifyOverlayRotation,
+  resetOiSkipStreak,
+} from "./eventGateAlerts";
+import {
   daysToExpiry,
   isVerticalPosition,
   valuationNow,
@@ -659,6 +665,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
   }
 
   const riskOn = ctx.riskOn === true;
+  if (riskOn) resetOiSkipStreak();
   const spyAbove200 = knownBool(ctx.riskChecks?.spyAbove200);
   const hygAbove200 = knownBool(ctx.riskChecks?.hygAbove200);
   const lqdAbove200 = knownBool(ctx.riskChecks?.lqdAbove200);
@@ -693,6 +700,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
         quotes: ctx.riskoffEtfQuotes ?? [],
       })
     : { sells: [] as AutoSell[], buy: null as AutoBuy | null };
+  let overlayRotated: { from: string; to: string } | null = null;
   for (const s of etf.sells) {
     const r = await ctx.close(s);
     if (r.ok) {
@@ -700,14 +708,20 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
         `auto paper close ${s.sleeveId} ${s.symbol} ${s.reason} (MockBroker, not Tradovate, not live)`,
       );
       sold.push(s);
+      const m = /^rotate to ([A-Z]+)/i.exec(s.reason);
+      if (m) overlayRotated = { from: s.symbol, to: m[1] };
     } else {
       ctx.log(`auto paper close skip ${s.symbol}: ${r.error}`);
     }
+  }
+  if (overlayRotated) {
+    void notifyOverlayRotation(overlayRotated.from, overlayRotated.to);
   }
 
   const putSells = sleeveAutoOn(ctx, "riskoff")
     ? decideRiskoffPutSells(ctx.getPositions(), riskOn, putChecks)
     : [];
+  let creditRiskOnFlattened = false;
   for (const s of putSells) {
     const r = await ctx.close(s);
     if (r.ok) {
@@ -715,10 +729,12 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
         `auto paper close ${s.sleeveId} ${s.symbol} ${s.reason} (MockBroker, not Tradovate, not live)`,
       );
       sold.push(s);
+      if (/risk on: flatten credit-leg put/i.test(s.reason)) creditRiskOnFlattened = true;
     } else {
       ctx.log(`auto paper close skip ${s.symbol}: ${r.error}`);
     }
   }
+  if (creditRiskOnFlattened) void notifyCreditPutRiskOnFlatten();
 
   if (!ctx.scanReady) {
     if (sleeveAutoOn(ctx, "riskoff")) await placeRiskoffEtfBuy(ctx, etf.buy, bought);
@@ -870,6 +886,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
           const gate = checkCreditLegAutoLiquidity(intent.symbol, pair.long, pair.short, qty);
           if (!gate.ok) {
             ctx.log(`auto paper vertical skip ${intent.symbol}: ${gate.reason}`);
+            void noteCreditLegOiSkip();
             continue;
           }
         }

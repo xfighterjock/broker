@@ -58,7 +58,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **FedWatch** — CME FedWatch snapshot field on the freeze card (NFP/CPI/FOMC briefing).
 
-**FCM** — Firebase Cloud Messaging. Event Gate push provider (HTTP v1 via Firebase Admin SDK on the VPS; Firebase iOS SDK in `ios/`). Disabled by default until `PUSH_FCM_ENABLED=1` and credentials are configured. The iOS client registers tokens with a users-table bearer; it does not hold the Admin service-account JSON. Live eventTypes that send: `risk_flip`, `service_fault`, `auth_needed`, plus test `paper_guard`.
+**FCM** — Firebase Cloud Messaging. Event Gate push provider (HTTP v1 via Firebase Admin SDK on the VPS; Firebase iOS SDK in `ios/`). Disabled by default until `PUSH_FCM_ENABLED=1` and credentials are configured. The iOS client registers tokens with a users-table bearer; it does not hold the Admin service-account JSON. Live eventTypes: `risk_flip`, `service_fault`, `auth_needed`, `pre_arm`, `freeze_missing`, `day_fill`, `day_flatten`, `day_loss_cap`, `veto_confirm`, `overlay_rotation`, `credit_put_opened`, `credit_put_stopped`, `credit_put_risk_on_flatten`, `oi_skip_streak`, `etrade_renew_failed`, `sleeve_loss_warn`, plus test `paper_guard`.
 
 **Flatten** — Close gated day-sleeve names (POST /api/flatten) or a sleeve position. Print-day veto with GATE OFF. Does not flatten other sleeves from the event clock.
 

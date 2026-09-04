@@ -7,6 +7,7 @@ import {
   noteServiceUp,
   notifyRiskFlip,
   resetEventGateAlertState,
+  resetOiSkipStreak,
 } from "./eventGateAlerts";
 import type { RedisClient } from "./redis";
 
@@ -195,6 +196,7 @@ export async function applyResolvedRisk(
     await hydratePersistedRiskOn();
     if (opts.hardFailure) await noteServiceDown("quotes");
     else noteServiceUp("quotes");
+    if (snap.riskOn) resetOiSkipStreak();
     const prev = lastKnownRiskOn;
     if (prev === null) {
       await persistRiskOn(snap.riskOn);

@@ -8,6 +8,7 @@ import type { AppConfig } from "../server/src/config";
 import { GateEngine } from "../server/src/gate";
 import { MockBroker } from "../server/src/mockBroker";
 import {
+  EVENT_GATE_ALERT_TYPES,
   NotificationService,
   attachNotificationService,
   buildFcmMessage,
@@ -407,5 +408,26 @@ describe("notifications service", () => {
     expect(test.outcome).toBe("delivered");
     expect(sent.map((p) => p.eventType)).toEqual(["auth_needed", "paper_guard"]);
     expect(sent[1].dedupeKey).toBe("event-gate-test");
+    expect(EVENT_GATE_ALERT_TYPES).toEqual(
+      expect.arrayContaining([
+        "risk_flip",
+        "service_fault",
+        "auth_needed",
+        "paper_guard",
+        "pre_arm",
+        "freeze_missing",
+        "day_fill",
+        "day_flatten",
+        "day_loss_cap",
+        "veto_confirm",
+        "overlay_rotation",
+        "credit_put_opened",
+        "credit_put_stopped",
+        "credit_put_risk_on_flatten",
+        "oi_skip_streak",
+        "etrade_renew_failed",
+        "sleeve_loss_warn",
+      ]),
+    );
   });
 });

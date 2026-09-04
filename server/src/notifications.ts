@@ -10,6 +10,19 @@ export const EVENT_GATE_ALERT_TYPES = [
   "service_fault",
   "auth_needed",
   "paper_guard",
+  "pre_arm",
+  "freeze_missing",
+  "day_fill",
+  "day_flatten",
+  "day_loss_cap",
+  "veto_confirm",
+  "overlay_rotation",
+  "credit_put_opened",
+  "credit_put_stopped",
+  "credit_put_risk_on_flatten",
+  "oi_skip_streak",
+  "etrade_renew_failed",
+  "sleeve_loss_warn",
 ] as const;
 
 export type EventGateAlertType = (typeof EVENT_GATE_ALERT_TYPES)[number];

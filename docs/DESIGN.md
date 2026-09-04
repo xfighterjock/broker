@@ -183,10 +183,21 @@ Quote strip (RISKOFF_QUOTE_STRIP): SPY, QQQ, HYG, GLD, UUP, BIL, TLT, IEF, XLU, 
   6) Entitlements: Push Notifications + remote-notification background mode. Open `ios/EventGate.xcodeproj` on a Mac; Richard picks the Apple Team. Simulator will not get real APNs. Copy `~/Downloads/GoogleService-Info.plist` to `ios/EventGate/GoogleService-Info.plist` before building. Example plist is `ios/GoogleService-Info.plist.example` (`API_KEY=REPLACE_ME`). `project.yml` can regenerate the xcodeproj via XcodeGen.
   7) Firebase Console still needs an APNs Authentication Key (`.p8`) uploaded for the iOS app. That key is not in this repo and must be created in Apple Developer / uploaded by Richard.
   8) Lock-screen / Notification Center glyph is the compiled AppIcon (auto-agent A: teal robot + amber sparkline). `GENERATE_INFOPLIST_FILE` is NO, so `Info.plist` sets `CFBundleIconName=AppIcon`. The AppIcon set includes iPhone 20/29/40/60pt slots plus the 1024 marketing PNG. FCM messages are title/body + data only — no Android `icon` / `image` fields.
-- Events that actually send (principal `event-gate`, matching iOS `x-remote-user`):
-  1) `auth_needed` — E*TRADE `ok|error → needs_pin` in the status snapshot (dedupe key `auth_needed:etrade:needs_pin`).
-  2) `risk_flip` — global RISK ON/OFF badge change from `ensureRisk` / `kickRisk`. Title `Event Gate: RISK ON` or `Event Gate: RISK OFF`; body is the failed/cleared SPY/ACWI/HYG 200dma + dollar-veto reason. Last-known `riskOn` lives in process memory and Redis `risk:on` so a restart baselines without a false flip; unchanged `riskOn` (cache refresh) does not send. Dedupe key is `risk_flip:{on|off}:{checkSignature}:{UTC hour}`.
-  3) `service_fault` — operational up→down only, after the subsystem was seen up: Postgres (snapshot query / pool error), Redis (client error after connect), quotes (Massive hard failure that forces `riskOffFallback`, or scan failure). Dedupe key `service_fault:{postgres|redis|quotes}`. Not paper fills, not AUTO skips, not every disabled/not_configured FCM test.
-  4) `paper_guard` — `POST /api/notifications/test` only (`dedupeKey` `event-gate-test`).
-- Hook for server-side producers: call `sendEventGateAlert(principal, payload)` (or `NotificationService.sendAlert`) with a typed `EventGateAlertPayload`. Missing FCM config returns `disabled` / `not_configured` and never crashes `kickRisk`. Do not wire speculative trading alerts here.
+- Events that actually send (principal `event-gate`, matching iOS `x-remote-user`). Title/body + `deepLinkRoute` `/status` only — no secrets, position dumps, or order controls. 30-minute Postgres dedupe plus type-specific keys. Missing FCM returns `disabled` / `not_configured` and never crashes trading loops.
+  1) `auth_needed` — E*TRADE `ok|error → needs_pin` in the status snapshot (`auth_needed:etrade:needs_pin`).
+  2) `risk_flip` — global RISK ON/OFF badge change from `ensureRisk` / `kickRisk`. Title `Event Gate: RISK ON` or `Event Gate: RISK OFF`; body is the failed/cleared SPY/ACWI/HYG 200dma + dollar-veto reason. Last-known `riskOn` in memory and Redis `risk:on` so a restart baselines without a false flip; unchanged `riskOn` does not send. Key `risk_flip:{on|off}:{checkSignature}:{UTC hour}`.
+  3) `service_fault` — operational up→down after the subsystem was seen up: Postgres, Redis, quotes (Massive hard failure that forces `riskOffFallback`, or scan failure). Key `service_fault:{postgres|redis|quotes}`. Not paper fills, not AUTO skips, not disabled/not_configured FCM tests.
+  4) `pre_arm` — clock enters PRE-ARM (T−15) for an NFP/CPI/FOMC focus event. One ping per event id.
+  5) `freeze_missing` — morning-of a scheduled print (within 2h of print or at PRE-ARM) if the freeze card has no `freezeTimestamp`. One per event id.
+  6) `day_fill` — day-sleeve paper fill opened (`day_fill:{symbol}:{NY date}`).
+  7) `day_flatten` — day sleeve flattened by session flatten or manual POST `/api/flatten`.
+  8) `day_loss_cap` — day hits GATE daily-loss or the day sleeve `lossCapUsd` (default −$500). Once per NY date.
+  9) `veto_confirm` — POST `/api/flatten` or GATE OFF (`POST /api/gate/enable { enabled: false }`) succeeded.
+  10) `overlay_rotation` — risk-off ETF RS overlay rotates (e.g. XLP→GLD), body includes the new symbol.
+  11) `credit_put_opened` / `credit_put_stopped` / `credit_put_risk_on_flatten` — HYG/LQD/JNK credit-leg put opened, 50% debit stop, or RISK ON flatten.
+  12) `oi_skip_streak` — HYG/LQD/JNK auto OI/liquidity skips reach 6 in ~30 minutes. One quiet “credit puts blocked on OI”. Reset when a credit put opens or RISK ON.
+  13) `etrade_renew_failed` — E*TRADE access-token renew fails (not on success, not on silent missing credentials).
+  14) `sleeve_loss_warn` — any sleeve realized+unrealized at or beyond ~80% of `lossCapUsd`. Once per sleeve per NY date.
+  15) `paper_guard` — `POST /api/notifications/test` only (`event-gate-test`).
+- Hook: `sendEventGateAlert(principal, payload)` / `NotificationService.sendAlert` via `server/src/eventGateAlerts.ts`. Do not wire inverse-ETF trading or live broker orders.
 - Credentials: ADC (`PUSH_FCM_CREDENTIAL_SOURCE=adc`) or a root-owned JSON file path. Never accept service-account secrets through the UI. Never persist them in Redis/Postgres. No Firebase API keys, service-account JSON, nginx passwords, or FCM device tokens are committed. Feature stays disabled until `PUSH_FCM_ENABLED=1` and project/credentials are set on the VPS.

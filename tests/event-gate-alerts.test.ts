@@ -1,10 +1,34 @@
+import http from "node:http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { computeClock, seedEvents } from "../shared/clock";
 import { REDIS_KEYS } from "../shared/constants";
+import { defaultSleeves, emptyFreeze, type SleeveBook, type SleeveId } from "../shared/types";
+import { buildApp } from "../server/src/app";
+import type { AppConfig } from "../server/src/config";
+import { GateEngine } from "../server/src/gate";
+import { MockBroker } from "../server/src/mockBroker";
+import { StatusHub } from "../server/src/wsHub";
 import {
   EVENT_GATE_ALERT_PRINCIPAL,
+  FREEZE_MISSING_LEAD_MS,
+  OI_SKIP_STREAK_N,
+  considerClockAlerts,
+  considerGateTickAlerts,
+  considerSleeveLossWarn,
+  noteCreditLegOiSkip,
   noteServiceDown,
   noteServiceUp,
+  notifyCreditPutOpened,
+  notifyCreditPutRiskOnFlatten,
+  notifyCreditPutStopped,
+  notifyDayFill,
+  notifyDayFlatten,
+  notifyDayLossCap,
+  notifyEtradeRenewFailed,
+  notifyOverlayRotation,
+  notifyVetoConfirm,
   resetEventGateAlertState,
+  resetOiSkipStreak,
   riskFlipBody,
   riskFlipDedupeKey,
   riskFlipTitle,
@@ -77,9 +101,18 @@ function countingService() {
       calls.push({ principal, payload });
       return delivered();
     },
+    async status() {
+      return {
+        provider: "fcm" as const,
+        enabled: true,
+        configured: true,
+        dedupeWindowMinutes: 30,
+        tokens: { total: 0, active: 0, revoked: 0 },
+      };
+    },
   };
   attachNotificationService(svc as unknown as NotificationService);
-  return calls;
+  return { calls, svc: svc as unknown as NotificationService };
 }
 
 function memoryRedis(seed: Record<string, string> = {}) {
@@ -113,7 +146,7 @@ describe("event-gate FCM producers", () => {
   });
 
   it("OFF→ON and ON→OFF each send risk_flip once; unchanged riskOn does not", async () => {
-    const calls = countingService();
+    const { calls } = countingService();
     seedPersistedRiskOn(false);
     await applyResolvedRisk(onSnap());
     await applyResolvedRisk(onSnap());
@@ -137,7 +170,7 @@ describe("event-gate FCM producers", () => {
   it("restart/baseline does not spam a flip when persisted riskOn matches", async () => {
     const redis = memoryRedis();
     attachRiskRedis(redis.client);
-    const calls = countingService();
+    const { calls } = countingService();
     await applyResolvedRisk(onSnap());
     expect(calls).toHaveLength(0);
     expect(redis.store.get(REDIS_KEYS.riskOn)).toBe("1");
@@ -146,7 +179,7 @@ describe("event-gate FCM producers", () => {
     resetRiskCache();
     resetEventGateAlertState();
     attachRiskRedis(redis.client);
-    const afterRestart = countingService();
+    const { calls: afterRestart } = countingService();
     await applyResolvedRisk(onSnap());
     expect(afterRestart).toHaveLength(0);
     expect(getLastKnownRiskOn()).toBe(true);
@@ -159,7 +192,7 @@ describe("event-gate FCM producers", () => {
   });
 
   it("first boot without persisted state sets baseline without notifying", async () => {
-    const calls = countingService();
+    const { calls } = countingService();
     await applyResolvedRisk(offSnap());
     expect(calls).toHaveLength(0);
     expect(getLastKnownRiskOn()).toBe(false);
@@ -169,7 +202,7 @@ describe("event-gate FCM producers", () => {
   });
 
   it("ensureRisk cache refresh does not re-send when riskOn is unchanged", async () => {
-    const calls = countingService();
+    const { calls } = countingService();
     seedPersistedRiskOn(false);
     setMassiveTestKey();
     stubMarketFetch({
@@ -192,7 +225,7 @@ describe("event-gate FCM producers", () => {
   });
 
   it("quotes hard failure that forces riskOffFallback sends service_fault once", async () => {
-    const calls = countingService();
+    const { calls } = countingService();
     seedPersistedRiskOn(true);
     noteServiceUp("quotes");
     const snap = await ensureRisk();
@@ -216,7 +249,7 @@ describe("event-gate FCM producers", () => {
   });
 
   it("service_fault fires on postgres/redis up→down and dedupes until recovered", async () => {
-    const calls = countingService();
+    const { calls } = countingService();
     expect(await noteServiceDown("postgres")).toBeNull();
     expect(await noteServiceDown("redis")).toBeNull();
     noteServiceUp("postgres");
@@ -260,4 +293,197 @@ describe("event-gate FCM producers", () => {
     expect(riskFlipDedupeKey(on).length).toBeLessThanOrEqual(180);
     expect(riskFlipBody(on)).not.toMatch(/position|order|P\/L/i);
   });
+
+  it("pre_arm fires once when the clock enters PRE-ARM; staying there does not spam", async () => {
+    const { calls } = countingService();
+    const events = seedEvents();
+    const pre = computeClock(new Date("2026-09-04T12:20:00Z"), events);
+    expect(pre.mode).toBe("PRE-ARM");
+    expect(pre.focusEvent?.type).toBe("NFP");
+    await considerClockAlerts(pre, emptyFreeze());
+    await considerClockAlerts(pre, { freezeTimestamp: "2026-09-04T11:00:00.000Z" });
+    expect(calls.filter((c) => c.payload.eventType === "pre_arm")).toHaveLength(1);
+    expect(calls[0].payload.title).toBe("Event Gate: PRE-ARM");
+    expect(calls[0].payload.body).toMatch(/NFP/);
+    expect(calls[0].payload.dedupeKey).toBe("pre_arm:nfp-2026-09-04");
+  });
+
+  it("freeze_missing fires in the 2h lead or PRE-ARM when the freeze card is empty, once per event", async () => {
+    const { calls } = countingService();
+    const events = seedEvents();
+    const lead = computeClock(new Date("2026-09-04T11:00:00Z"), events);
+    expect(lead.countdownMs).toBeGreaterThan(0);
+    expect(lead.countdownMs).toBeLessThanOrEqual(FREEZE_MISSING_LEAD_MS);
+    expect(lead.mode).toBe("idle");
+    await considerClockAlerts(lead, emptyFreeze());
+    await considerClockAlerts(lead, emptyFreeze());
+    expect(calls.filter((c) => c.payload.eventType === "freeze_missing")).toHaveLength(1);
+    expect(calls[0].payload.body).toMatch(/NFP/);
+    expect(calls[0].payload.dedupeKey).toBe("freeze_missing:nfp-2026-09-04");
+
+    resetEventGateAlertState();
+    const { calls: filled } = countingService();
+    await considerClockAlerts(lead, { freezeTimestamp: "2026-09-04T10:00:00.000Z" });
+    expect(filled).toHaveLength(0);
+  });
+
+  it("day fill, flatten, loss cap, and veto_confirm send typed payloads", async () => {
+    const { calls } = countingService();
+    await notifyDayFill("MES=F");
+    await notifyDayFlatten("session");
+    await notifyDayLossCap();
+    await notifyVetoConfirm("flatten");
+    await notifyVetoConfirm("gate_off");
+    expect(calls.map((c) => c.payload.eventType)).toEqual([
+      "day_fill",
+      "day_flatten",
+      "day_loss_cap",
+      "veto_confirm",
+      "veto_confirm",
+    ]);
+    expect(calls[0].payload.body).toMatch(/MES/);
+    expect(calls[3].payload.body).toMatch(/Flatten confirmed/);
+    expect(calls[4].payload.body).toMatch(/GATE OFF/);
+    expect(JSON.stringify(calls)).not.toMatch(/avgPrice|stopPrice|password/i);
+  });
+
+  it("gate tick session flatten and daily loss produce day_flatten / day_loss_cap", async () => {
+    const { calls } = countingService();
+    await considerGateTickAlerts({
+      actions: [{ kind: "flatten", reason: "session flatten 15:45 ET" }],
+    });
+    await considerGateTickAlerts({
+      actions: [{ kind: "log", message: "flatten (daily loss -520 (limit 500)): nothing open" }],
+    });
+    expect(calls.map((c) => c.payload.eventType)).toEqual(["day_flatten", "day_loss_cap"]);
+  });
+
+  it("overlay rotation, credit put open/stop/risk-on flatten send once", async () => {
+    const { calls } = countingService();
+    await notifyOverlayRotation("XLP", "GLD");
+    await notifyCreditPutOpened("HYG");
+    await notifyCreditPutStopped("HYG");
+    await notifyCreditPutRiskOnFlatten();
+    expect(calls.map((c) => c.payload.eventType)).toEqual([
+      "overlay_rotation",
+      "credit_put_opened",
+      "credit_put_stopped",
+      "credit_put_risk_on_flatten",
+    ]);
+    expect(calls[0].payload.body).toMatch(/XLP → GLD/);
+    expect(calls[1].payload.body).toMatch(/HYG/);
+    expect(calls[2].payload.body).toMatch(/50% debit stop/);
+    expect(calls[3].payload.body).toMatch(/RISK ON/);
+  });
+
+  it("oi_skip_streak fires once at N skips in the window and resets on RISK ON / put open", async () => {
+    const { calls } = countingService();
+    const t0 = Date.now();
+    for (let i = 0; i < OI_SKIP_STREAK_N - 1; i++) {
+      expect(await noteCreditLegOiSkip(t0 + i * 60_000)).toBeNull();
+    }
+    expect(calls).toHaveLength(0);
+    await noteCreditLegOiSkip(t0 + (OI_SKIP_STREAK_N - 1) * 60_000);
+    expect(calls.map((c) => c.payload.eventType)).toEqual(["oi_skip_streak"]);
+    expect(calls[0].payload.body).toMatch(/blocked on OI/);
+    expect(await noteCreditLegOiSkip(t0 + OI_SKIP_STREAK_N * 60_000)).toBeNull();
+    expect(calls).toHaveLength(1);
+    resetOiSkipStreak();
+    for (let i = 0; i < OI_SKIP_STREAK_N; i++) {
+      await noteCreditLegOiSkip(t0 + 40 * 60_000 + i * 1_000);
+    }
+    expect(calls.filter((c) => c.payload.eventType === "oi_skip_streak")).toHaveLength(2);
+  });
+
+  it("etrade_renew_failed and sleeve_loss_warn fire with per-day sleeve dedupe", async () => {
+    const { calls } = countingService();
+    await notifyEtradeRenewFailed();
+    expect(calls[0].payload.eventType).toBe("etrade_renew_failed");
+    expect(calls[0].payload.body).toMatch(/renew failed/);
+
+    const sleeves = defaultSleeves();
+    const books = {
+      day: book(-100, 0),
+      momentum: book(-850, -850),
+      options: book(0, 0),
+      ownership: book(0, 0),
+      riskoff: book(0, 0),
+    } as Record<SleeveId, SleeveBook>;
+    await considerSleeveLossWarn(sleeves, books, new Date("2026-09-04T18:00:00Z"));
+    await considerSleeveLossWarn(sleeves, books, new Date("2026-09-04T18:05:00Z"));
+    const warns = calls.filter((c) => c.payload.eventType === "sleeve_loss_warn");
+    expect(warns).toHaveLength(1);
+    expect(warns[0].payload.body).toMatch(/momentum/i);
+    expect(warns[0].payload.dedupeKey).toBe("sleeve_loss_warn:momentum:2026-09-04");
+  });
+
+  it("POST flatten and GATE OFF send veto_confirm (and manual day_flatten)", async () => {
+    const { calls, svc } = countingService();
+    const events = seedEvents();
+    const broker = new MockBroker();
+    const engine = new GateEngine(broker, () => new Date(), () => events, {
+      enabled: true,
+      dailyLossUsd: 500,
+    });
+    const app = buildApp({
+      cfg: {
+        databaseUrl: "postgres://x",
+        redisUrl: "redis://127.0.0.1:6379",
+        port: 0,
+        bind: "127.0.0.1",
+        gatePassword: undefined,
+        tradingMode: "mock",
+        nodeEnv: "test",
+        cookieSecure: false,
+        authMode: "cookie",
+        tradovateBaseUrl: undefined,
+      } as AppConfig,
+      pool: null,
+      redis: null,
+      redisPub: null,
+      broker,
+      engine,
+      getEvents: () => events,
+      setEvents: () => {},
+      hub: new StatusHub(),
+      brokerName: "MockBroker",
+      brokerMode: "mock",
+      liveRefused: false,
+      stubNote: null,
+      notifications: svc,
+    });
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    const addr = server.address();
+    if (!addr || typeof addr === "string") throw new Error("no listen address");
+    const url = `http://127.0.0.1:${addr.port}`;
+    try {
+      const flatten = await fetch(`${url}/api/flatten`, { method: "POST" });
+      expect(flatten.status).toBe(200);
+      const off = await fetch(`${url}/api/gate/enable`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: false }),
+      });
+      expect(off.status).toBe(200);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+    }
+    expect(calls.some((c) => c.payload.eventType === "day_flatten")).toBe(true);
+    expect(calls.filter((c) => c.payload.eventType === "veto_confirm").map((c) => c.payload.body)).toEqual([
+      "Flatten confirmed.",
+      "GATE OFF confirmed.",
+    ]);
+  });
 });
+
+function book(daily: number, total: number): SleeveBook {
+  return {
+    equityUsd: 100_000 + total,
+    realizedPnlUsd: total,
+    unrealizedPnlUsd: 0,
+    pnlUsd: total,
+    totalPnlUsd: total,
+    dailyPnlUsd: daily,
+  };
+}

@@ -16,6 +16,7 @@ import type {
   OptionRight,
 } from "../../shared/types";
 import sandboxOptionChainJson from "./sandbox-optionchain.json" with { type: "json" };
+import { notifyEtradeRenewFailed } from "./eventGateAlerts";
 
 export const ETRADE_AUTHORIZE_URL = "https://us.etrade.com/e/t/etws/authorize";
 export const ETRADE_FETCH_TIMEOUT_MS = 12_000;
@@ -600,10 +601,12 @@ export async function renewAccessToken(
         const error = `HTTP ${status}`;
         noteEtradeHttpStatus(status);
         log(`[EventGate] etrade renew failed: ${error}`);
+        void notifyEtradeRenewFailed();
         return { ok: false, error, status };
       }
     } catch {
       log("[EventGate] etrade renew failed: unreachable");
+      void notifyEtradeRenewFailed();
       return { ok: false, error: "unreachable", status: 502 };
     } finally {
       clearTimeout(timer);
@@ -629,6 +632,7 @@ export async function renewAccessToken(
     return { ok: true, rotated: Boolean(newToken && newSecret) };
   } catch {
     log("[EventGate] etrade renew failed");
+    void notifyEtradeRenewFailed();
     return { ok: false, error: "etrade renew failed", status: 502 };
   }
 }
