@@ -5,7 +5,7 @@ import { REDIS_KEYS } from "../../shared/constants";
 import { seedEvents } from "../../shared/clock";
 import type { CalendarEvent } from "../../shared/types";
 import { buildApp, stopAutoPaperLoop } from "./app";
-import { authRequired, buildSessionMiddleware, gatePassword } from "./auth";
+import { authRequired, buildSessionMiddleware, eventGateOpsToken, gatePassword } from "./auth";
 import { createUserDirectory, maybeBootstrapAdmin } from "./users";
 import { loadConfig } from "./config";
 import { maybeLoadAppDotenv } from "./massive";
@@ -231,6 +231,7 @@ async function main(): Promise<void> {
     } else {
       console.log(`[EventGate] GATE_PASSWORD ${authRequired() ? "set" : "UNSET"}`);
     }
+    console.log(`[EventGate] EVENT_GATE_OPS_TOKEN ${eventGateOpsToken() ? "set" : "unset"}`);
     startEtradeAccessTokenKeepAlive();
   });
 
