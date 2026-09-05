@@ -142,9 +142,11 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **RISKOFF_ETF_NOTIONAL_FRAC** — Fraction of the $100k risk-off mock book for the defensive ETF RS overlay long. 0.40 (~$40k). Paper step toward half the sleeve; not a full 50%. Puts keep the rest. Lookback, stop, and flatten rules are unchanged (RISKOFF_ETF_LOOKBACK_DAYS 63, RISKOFF_ETF_STOP_MUL 0.92).
 
+**RISKOFF_ETF_RS_HYSTERESIS** — Mild absolute 63d total-return margin (0.005 / 50bp) on the risk-off ETF overlay. A challenger must beat the held name by this much before rotate, so tiny GLD↔DBMF (etc.) edges do not churn. Exact RS ties still use preference order. Does not apply when held is ineligible (≤ BIL) or missing.
+
 **risk_flip** — FCM eventType when the global RISK ON/OFF badge changes. Last-known state is in memory and Redis `risk:on` so a restart does not false-flip.
 
-**RS** — Relative strength. Momentum score vs SPY; risk-off ETF overlay is 63-session total return of GLD/UUP/TLT/IEF/XLU/XLP/DBMF vs BIL, sized at RISKOFF_ETF_NOTIONAL_FRAC.
+**RS** — Relative strength. Momentum score vs SPY; risk-off ETF overlay is 63-session total return of GLD/UUP/TLT/IEF/XLU/XLP/DBMF vs BIL, sized at RISKOFF_ETF_NOTIONAL_FRAC. Mild 50bp hysteresis (RISKOFF_ETF_RS_HYSTERESIS) so tiny GLD↔DBMF (etc.) edges do not rotate.
 
 **SDS** — ProShares UltraShort S&P 500. Not a live risk-off expression.
 

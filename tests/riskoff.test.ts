@@ -31,6 +31,7 @@ import {
   RISKOFF_ETF_CANDIDATES,
   RISKOFF_ETF_LOOKBACK_DAYS,
   RISKOFF_ETF_NOTIONAL_FRAC,
+  RISKOFF_ETF_RS_HYSTERESIS,
   RISKOFF_ETF_STOP_MUL,
   RISKOFF_ETF_SYMBOLS,
   SLEEVE_IDS,
@@ -924,6 +925,58 @@ describe("risk-off ETF relative-strength expression", () => {
     const gldUupTie = etfRs({ GLD: 0.1, UUP: 0.1 });
     expect(pickRiskoffEtfWinner(gldUupTie, "UUP")).toBe("UUP");
     expect(pickRiskoffEtfWinner(gldUupTie)).toBe("GLD");
+  });
+
+  it("keeps held GLD when DBMF leads by less than RISKOFF_ETF_RS_HYSTERESIS", () => {
+    expect(RISKOFF_ETF_RS_HYSTERESIS).toBe(0.005);
+    const dbmfTinyLead = etfRs({ GLD: 0.1, DBMF: 0.104 });
+    expect(0.104 - 0.1).toBeLessThan(RISKOFF_ETF_RS_HYSTERESIS);
+    expect(pickRiskoffEtfWinner(dbmfTinyLead, "GLD")).toBe("GLD");
+    const hold = decideRiskoffEtf({
+      riskOn: false,
+      positions: [etfPos("GLD", 100, 180)],
+      sleeve: defaultSleeves().riskoff,
+      returns: dbmfTinyLead,
+      quotes: allEtfQuotes,
+    });
+    expect(hold.winner).toBe("GLD");
+    expect(hold.buy).toBeNull();
+    expect(hold.sells).toEqual([]);
+    expect(hold.reason).toBe("hold GLD");
+  });
+
+  it("rotates GLD to DBMF when DBMF leads by RISKOFF_ETF_RS_HYSTERESIS or more", () => {
+    const dbmfClearLead = etfRs({ GLD: 0.1, DBMF: 0.106 });
+    expect((dbmfClearLead.DBMF as number) - (dbmfClearLead.GLD as number)).toBeGreaterThanOrEqual(
+      RISKOFF_ETF_RS_HYSTERESIS,
+    );
+    expect(pickRiskoffEtfWinner(dbmfClearLead, "GLD")).toBe("DBMF");
+    const rotate = decideRiskoffEtf({
+      riskOn: false,
+      positions: [etfPos("GLD", 100, 180)],
+      sleeve: defaultSleeves().riskoff,
+      returns: dbmfClearLead,
+      quotes: allEtfQuotes,
+    });
+    expect(rotate.winner).toBe("DBMF");
+    expect(rotate.sells.map((s) => s.symbol)).toEqual(["GLD"]);
+    expect(rotate.buy?.symbol).toBe("DBMF");
+    expect(rotate.buy?.thesis).toMatch(/winner DBMF/);
+  });
+
+  it("does not apply RS hysteresis when held is ineligible or missing", () => {
+    const heldBelowBil = etfRs({ GLD: 0.009, DBMF: 0.012 });
+    expect(heldBelowBil.GLD).toBeLessThanOrEqual(heldBelowBil.BIL as number);
+    expect((heldBelowBil.DBMF as number) - (heldBelowBil.GLD as number)).toBeLessThan(
+      RISKOFF_ETF_RS_HYSTERESIS,
+    );
+    expect(pickRiskoffEtfWinner(heldBelowBil, "GLD")).toBe("DBMF");
+    const noHeldCloseRace = etfRs({ GLD: 0.1, DBMF: 0.104 });
+    expect(pickRiskoffEtfWinner(noHeldCloseRace)).toBe("DBMF");
+    expect(pickRiskoffEtfWinner(noHeldCloseRace, null)).toBe("DBMF");
+    const exactTie = etfRs({ GLD: 0.1, DBMF: 0.1 });
+    expect(pickRiskoffEtfWinner(exactTie, "GLD")).toBe("GLD");
+    expect(pickRiskoffEtfWinner(exactTie, "DBMF")).toBe("DBMF");
   });
 
   it("sizes a 40% stake well under the $100k sleeve (short of half)", () => {

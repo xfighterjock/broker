@@ -179,6 +179,12 @@ export const RISKOFF_ETF_LOOKBACK_DAYS = 63;
 export const RISKOFF_ETF_NOTIONAL_FRAC = 0.40;
 /** Disaster stop on the ETF long. Rotation — not this stop — is the primary exit. */
 export const RISKOFF_ETF_STOP_MUL = 0.92;
+/**
+ * Mild absolute 63d total-return margin. Challenger must beat held by this
+ * much before rotate. Exact ties still use existing preference. Does not
+ * apply when held is ineligible (≤ BIL) or missing.
+ */
+export const RISKOFF_ETF_RS_HYSTERESIS = 0.005;
 /** Prefer 30–45 DTE, always above OPTIONS_DTE_EXIT. */
 export const OPTIONS_DTE_TARGET_MIN = 30;
 export const OPTIONS_DTE_TARGET_MAX = 45;
