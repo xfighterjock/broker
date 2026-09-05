@@ -946,8 +946,10 @@ describe("risk-off ETF relative-strength expression", () => {
   });
 
   it("rotates GLD to DBMF when DBMF leads by RISKOFF_ETF_RS_HYSTERESIS or more", () => {
-    const dbmfClearLead = etfRs({ GLD: 0.1, DBMF: 0.105 });
-    expect(0.105 - 0.1).toBeGreaterThanOrEqual(RISKOFF_ETF_RS_HYSTERESIS);
+    const dbmfClearLead = etfRs({ GLD: 0.1, DBMF: 0.106 });
+    expect((dbmfClearLead.DBMF as number) - (dbmfClearLead.GLD as number)).toBeGreaterThanOrEqual(
+      RISKOFF_ETF_RS_HYSTERESIS,
+    );
     expect(pickRiskoffEtfWinner(dbmfClearLead, "GLD")).toBe("DBMF");
     const rotate = decideRiskoffEtf({
       riskOn: false,
