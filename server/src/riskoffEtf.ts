@@ -4,6 +4,7 @@ import {
   RISKOFF_ETF_CASH_SYMBOL,
   RISKOFF_ETF_LOOKBACK_DAYS,
   RISKOFF_ETF_NOTIONAL_FRAC,
+  RISKOFF_ETF_RS_HYSTERESIS,
   RISKOFF_ETF_STOP_MUL,
   RISKOFF_ETF_SYMBOLS,
   type RiskoffEtfSymbol,
@@ -91,9 +92,26 @@ export function riskoffEtfReturnsReady(returns: RiskoffEtfReturns): boolean {
 /**
  * Hold a candidate if that name's lookback return beats BIL; else BIL.
  * Any missing overlay-universe return → null (cash). Among names that beat
- * BIL, pick the highest 63d return. Exact RS tie keeps the held name when it
- * is still eligible, else preference order GLD > UUP > TLT > IEF > XLU > XLP > DBMF.
+ * BIL, pick the highest 63d return. If held is still eligible, keep it unless
+ * a challenger leads by RISKOFF_ETF_RS_HYSTERESIS or more. Exact RS tie keeps
+ * the held name when it is still eligible, else preference order
+ * GLD > UUP > TLT > IEF > XLU > XLP > DBMF. Hysteresis does not apply when
+ * held is missing, not an overlay candidate, or ineligible (return ≤ BIL).
  */
+function pickAmongTiedBest(
+  tied: Array<(typeof RISKOFF_ETF_CANDIDATES)[number]>,
+  heldU: string,
+): RiskoffEtfSymbol {
+  if (tied.length === 1) return tied[0];
+  if (isRiskoffEtfSymbol(heldU) && tied.includes(heldU as (typeof RISKOFF_ETF_CANDIDATES)[number])) {
+    return heldU;
+  }
+  for (const s of RISKOFF_ETF_CANDIDATES) {
+    if (tied.includes(s)) return s;
+  }
+  return tied[0] ?? RISKOFF_ETF_CASH_SYMBOL;
+}
+
 export function pickRiskoffEtfWinner(
   returns: RiskoffEtfReturns,
   held?: string | null,
@@ -109,15 +127,17 @@ export function pickRiskoffEtfWinner(
     const r = returns[s] as number;
     if (r > bestRet) bestRet = r;
   }
+
+  const heldCandidate = RISKOFF_ETF_CANDIDATES.find((s) => s === heldU);
+  if (heldCandidate && eligible.includes(heldCandidate)) {
+    const heldReturn = returns[heldCandidate] as number;
+    if (bestRet - heldReturn < RISKOFF_ETF_RS_HYSTERESIS) {
+      return heldCandidate;
+    }
+  }
+
   const tied = eligible.filter((s) => returns[s] === bestRet);
-  if (tied.length === 1) return tied[0];
-  if (isRiskoffEtfSymbol(heldU) && tied.includes(heldU as (typeof RISKOFF_ETF_CANDIDATES)[number])) {
-    return heldU;
-  }
-  for (const s of RISKOFF_ETF_CANDIDATES) {
-    if (tied.includes(s)) return s;
-  }
-  return tied[0] ?? RISKOFF_ETF_CASH_SYMBOL;
+  return pickAmongTiedBest(tied, heldU);
 }
 
 export function sizeRiskoffEtfShares(
