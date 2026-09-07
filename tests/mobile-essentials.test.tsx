@@ -51,6 +51,13 @@ function snapshot(over: Partial<StatusSnapshot> = {}): StatusSnapshot {
       inBand: false,
       inSessionFlatten: false,
     },
+    marketSession: {
+      cashOpen: true,
+      closedReason: null,
+      holidayName: null,
+      asOfEt: "Tue 2026-09-01 13:32:01 EDT",
+      nextOpenEt: "Wed 2026-09-02 09:30:00 EDT",
+    },
     events: [],
     freeze: emptyFreeze(),
     knowledgeTime: null,
@@ -161,6 +168,45 @@ describe("MobileEssentials", () => {
     expect(node.querySelector(".essentials-risk-badge")?.textContent).toBe("RISK ON");
     expect(node.querySelector(".grid")).toBeNull();
     expect(node.querySelector(".tabs")).toBeNull();
+  });
+
+  it("shows the US cash closed strip for Labor Day without hiding the event clock", () => {
+    const node = render(
+      <MobileEssentials
+        state={snapshot({
+          marketSession: {
+            cashOpen: false,
+            closedReason: "holiday",
+            holidayName: "Labor Day",
+            asOfEt: "Mon 2026-09-07 10:00:00 EDT",
+            nextOpenEt: "Tue 2026-09-08 09:30:00 EDT",
+          },
+        })}
+        onToggleGate={() => {}}
+        onToggleAutoPaper={() => {}}
+        onToggleAutoSleeve={() => {}}
+        onFlatten={() => {}}
+      />,
+    );
+    expect(node.querySelector(".essentials-market-closed")?.textContent).toBe(
+      "US cash market closed — Labor Day",
+    );
+    expect(node.textContent).toMatch(/13:32:01/);
+    expect(node.textContent).toMatch(/PRE-ARM/);
+    expect(node.textContent).toMatch(/NFP/);
+  });
+
+  it("hides the cash-closed strip on a regular weekday session", () => {
+    const node = render(
+      <MobileEssentials
+        state={snapshot()}
+        onToggleGate={() => {}}
+        onToggleAutoPaper={() => {}}
+        onToggleAutoSleeve={() => {}}
+        onFlatten={() => {}}
+      />,
+    );
+    expect(node.querySelector(".essentials-market-closed")).toBeNull();
   });
 
   it("shows RISK OFF in red copy when the snapshot is off", () => {

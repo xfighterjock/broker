@@ -1,11 +1,16 @@
 import type {
   AutoPaperBySleeve,
+  MarketSession,
   Position,
   SleeveBook,
   SleeveId,
   StatusSnapshot,
 } from "../../shared/types";
 import { anyAutoPaperOn, defaultAutoPaperBySleeve } from "../../shared/types";
+import { marketSessionBanner } from "../../shared/marketSession";
+
+export { marketSessionBanner };
+export type { MarketSession };
 
 /** Phone / small-tablet cutoff. Desktop layout stays as-is above this. */
 export const ESSENTIALS_MAX_WIDTH_PX = 767;
@@ -160,3 +165,10 @@ export function sleevePnlRows(
 
 export const FLATTEN_CONFIRM =
   "Flatten gated paper positions? This is the print-day / emergency veto (MockBroker, not live).";
+
+export function marketSessionLine(
+  s: Pick<StatusSnapshot, "marketSession"> | null | undefined,
+): string | null {
+  if (!s?.marketSession) return null;
+  return marketSessionBanner(s.marketSession);
+}

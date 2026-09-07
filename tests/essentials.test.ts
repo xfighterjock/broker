@@ -18,6 +18,7 @@ import {
   formatPnlPct,
   formatPnlUsd,
   gateModeClass,
+  marketSessionLine,
   pathWantsEssentials,
   riskBadgeTitle,
   riskWhyLine,
@@ -61,6 +62,13 @@ function snapshot(over: Partial<StatusSnapshot> = {}): StatusSnapshot {
       inPreArm: false,
       inBand: false,
       inSessionFlatten: false,
+    },
+    marketSession: {
+      cashOpen: true,
+      closedReason: null,
+      holidayName: null,
+      asOfEt: "Tue 2026-09-01 13:32:01 EDT",
+      nextOpenEt: "Wed 2026-09-02 09:30:00 EDT",
     },
     events: [],
     freeze: emptyFreeze(),
@@ -119,6 +127,41 @@ describe("essentials view selection", () => {
     expect(pathWantsEssentials("/mobile")).toBe(false);
     expect(pathWantsEssentials("/api/status")).toBe(false);
     expect(ESSENTIALS_MAX_WIDTH_PX).toBe(767);
+  });
+});
+
+describe("US cash market closed banner copy", () => {
+  it("is null on a regular weekday session", () => {
+    expect(marketSessionLine(snapshot())).toBeNull();
+  });
+
+  it("names Labor Day and weekend without touching GateMode", () => {
+    expect(
+      marketSessionLine(
+        snapshot({
+          marketSession: {
+            cashOpen: false,
+            closedReason: "holiday",
+            holidayName: "Labor Day",
+            asOfEt: "Mon 2026-09-07 10:00:00 EDT",
+            nextOpenEt: "Tue 2026-09-08 09:30:00 EDT",
+          },
+        }),
+      ),
+    ).toBe("US cash market closed — Labor Day");
+    expect(
+      marketSessionLine(
+        snapshot({
+          marketSession: {
+            cashOpen: false,
+            closedReason: "weekend",
+            holidayName: null,
+            asOfEt: "Sat 2026-09-05 10:00:00 EDT",
+            nextOpenEt: "Tue 2026-09-08 09:30:00 EDT",
+          },
+        }),
+      ),
+    ).toBe("US cash market closed — weekend");
   });
 });
 

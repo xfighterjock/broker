@@ -117,6 +117,14 @@ struct ClockSnapshot: Decodable {
     let focusEvent: CalendarEventSnap?
 }
 
+struct MarketSessionSnap: Decodable {
+    let cashOpen: Bool?
+    let closedReason: String?
+    let holidayName: String?
+    let asOfEt: String?
+    let nextOpenEt: String?
+}
+
 struct RiskChecks: Decodable {
     let spyAbove200: Bool?
     let acwiAbove200: Bool?
@@ -148,6 +156,7 @@ struct BrokerSnapshot: Decodable {
 
 struct StatusSnapshot: Decodable {
     let clock: ClockSnapshot?
+    let marketSession: MarketSessionSnap?
     let gateEnabled: Bool
     let autoPaper: Bool?
     let autoPaperBySleeve: [String: Bool]?

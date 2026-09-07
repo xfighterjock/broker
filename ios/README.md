@@ -1,6 +1,6 @@
 # Event Gate iOS (essentials + FCM)
 
-Native phone client for Event Gate. Home screen mirrors web `/m` (MobileEssentials): clock/mode, GATE, RISK ON/OFF, AUTO PAPER master + D/M/O/Ow/R chips, Flatten (same confirm copy), sleeve P/L, optional E*TRADE PIN. Settings holds credentials/session tools and FCM register/revoke/test.
+Native phone client for Event Gate. Home screen mirrors web `/m` (MobileEssentials): clock/mode, US cash closed/holiday strip (`marketSession` from GET `/api/status`), GATE, RISK ON/OFF, AUTO PAPER master + D/M/O/Ow/R chips, Flatten (same confirm copy), sleeve P/L, optional E*TRADE PIN. Settings holds credentials/session tools and FCM register/revoke/test. Rebuild the Xcode target after pulling — no App Store release is required for this strip.
 
 Web `/m` remains for browsers. This app talks to the same JSON APIs with a users-table session (Bearer in Keychain). It does not wrap the SPA in WKWebView.
 
