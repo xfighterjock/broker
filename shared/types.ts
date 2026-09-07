@@ -1,4 +1,7 @@
 import { RISKOFF_QUOTE_STRIP, SLEEVE_IDS, type OrderType } from "./constants";
+import type { MarketSession } from "./marketSession";
+
+export type { MarketClosedReason, MarketSession } from "./marketSession";
 
 export type GateMode = "idle" | "PRE-ARM" | "NO-STOP BAND" | "SESSION FLATTEN";
 
@@ -518,6 +521,11 @@ export interface StatusSnapshot {
   trader: string;
   tz: string;
   clock: ClockSnapshot;
+  /**
+   * NYSE cash-session calendar (weekend / full holiday / early close).
+   * Top-level so clients do not overload GateMode. Does not flatten or pause AUTO.
+   */
+  marketSession: MarketSession;
   events: CalendarEvent[];
   freeze: FreezeCard;
   knowledgeTime: string | null;

@@ -119,6 +119,29 @@ enum EssentialsFormat {
         return "\(open.count) open · \(Int(lots)) lots"
     }
 
+    /// Matches `marketSessionBanner` in shared/marketSession.ts
+    static func marketSessionBanner(_ snap: StatusSnapshot) -> String? {
+        guard let session = snap.marketSession else { return nil }
+        let name = session.holidayName
+        let cashOpen = session.cashOpen == true
+        if cashOpen {
+            if session.closedReason == "early_close" {
+                return "US cash market early close — \(name ?? "early close")"
+            }
+            return nil
+        }
+        if session.closedReason == "weekend" {
+            return "US cash market closed — weekend"
+        }
+        if session.closedReason == "holiday" {
+            return "US cash market closed — \(name ?? "holiday")"
+        }
+        if session.closedReason == "early_close" {
+            return "US cash market closed — \(name ?? "early close")"
+        }
+        return "US cash market closed"
+    }
+
     static func wantsEssentials(_ route: String) -> Bool {
         let path = route.split(separator: "?").first.map(String.init) ?? route
         let trimmed = path.split(separator: "#").first.map(String.init) ?? path

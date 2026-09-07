@@ -80,11 +80,13 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **GLD** — SPDR Gold Shares. First-preference candidate on the risk-off 63d RS overlay vs BIL.
 
+**holiday** — NYSE full-day cash close. Status `marketSession.closedReason` (`holiday` / `weekend` / `early_close`). Web and iOS show a muted closed strip. Does not change GateMode, flatten books, or pause AUTO.
+
 **HYG** — iShares iBoxx $ High Yield Corporate Bond ETF. RISK ON 200dma leg. First credit-leg put debit on the riskoff sleeve when HYG is below its own 200dma. AUTO tries ATM first, then ±2 strikes, then up to two more 30-45 DTE expiries; each candidate still needs OI >= 100 on each leg, a round-trip within 25% of the entry debit, and a hard 3-contract cap (RISKOFF_HYG_* / RISKOFF_CREDIT_LEG_* aliases). Paper only.
 
 **IEF** — iShares 7-10 Year Treasury Bond ETF. Intermediate-duration candidate on the risk-off 63d RS overlay (after TLT in the duration bucket). Also the fallback for gated duration when TLT is unquoted or sizes to 0.
 
-**iOS Event Gate** — Native SwiftUI app in ios/ (bundle com.logikmancer.mybroker). Phone Event Gate client: essentials (GATE, RISK, AUTO PAPER chips, Flatten, sleeve P/L, E*TRADE PIN) plus FCM. Users-table login + optional Face ID / Touch ID unlock of the Keychain session. Web `/m` remains for browsers. Push notification glyph is the AppIcon (same auto-agent artwork as the web favicon).
+**iOS Event Gate** — Native SwiftUI app in ios/ (bundle com.logikmancer.mybroker). Phone Event Gate client: essentials (clock, US cash closed/holiday strip, GATE, RISK, AUTO PAPER chips, Flatten, sleeve P/L, E*TRADE PIN) plus FCM. Users-table login + optional Face ID / Touch ID unlock of the Keychain session. Web `/m` remains for browsers. Push notification glyph is the AppIcon (same auto-agent artwork as the web favicon).
 
 **IWM** — iShares Russell 2000 ETF. Options quote strip; optional third equity-index put on riskoff when SPY is below 200dma and IWM is quoted.
 
@@ -101,6 +103,8 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 **M6E** — CME Micro Euro FX futures. Gated root; freeze-card liquid contract; day quote strip M6E=F.
 
 **Market** — Market order type. Cancelled on gated roots in PRE-ARM and NO-STOP BAND.
+
+**marketSession** — Top-level GET `/api/status` field: NYSE cash open/closed in ET (`cashOpen`, `closedReason`, `holidayName`, `asOfEt`, `nextOpenEt`). Not a GateMode.
 
 **Massive** — Market-data vendor (api.massive.com). Equities last, S&P scan dailies, risk-gate bars, risk-off ETF overlay bars. 15-minute delayed Starter.
 
@@ -119,6 +123,8 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 **NQ** — CME E-mini Nasdaq-100 futures. Gated root. Yahoo NQ=F.
 
 **NY** — New York session date (America/New_York calendar YYYY-MM-DD) used for sleeve session marks and same-day vertical stop cooldown.
+
+**NYSE** — New York Stock Exchange cash calendar. Event Gate `marketSession` uses the NYSE equity holiday set (New Year’s, MLK, Presidents’, Good Friday, Memorial Day, Juneteenth, Independence Day, Labor Day, Thanksgiving, Christmas, plus weekend observance) in America/New_York. Orthogonal to GATE.
 
 **OAuth** — E*TRADE 1.0a handshake. In-app Authorize + PIN; in-process renew during the cash session.
 
@@ -234,6 +240,6 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **%K** — Slow stochastic (14,3). Day-sleeve MES momentum. Long when %K crosses up through %D after %K was at or below 20; short is the mirror above 80.
 
-**RTH** — Regular trading hours, 09:30-16:00 ET. Day-sleeve VWAP and entry window (09:35-15:45) use RTH only.
+**RTH** — Regular trading hours, 09:30-16:00 ET. Day-sleeve VWAP and entry window (09:35-15:45) use RTH only. Distinct from `marketSession.cashOpen`, which is the NYSE calendar day (not “are we inside 09:30–16:00 right now”).
 
 **VWAP** — Volume-weighted average price (session, RTH). Day-sleeve MES longs only above it, shorts only below; lose VWAP and the paper position exits.

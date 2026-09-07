@@ -14,6 +14,7 @@ import {
   TZ,
 } from "../../shared/constants";
 import { computeClock } from "../../shared/clock";
+import { computeMarketSession } from "../../shared/marketSession";
 import {
   anyAutoPaperOn,
   applyAutoPaperPatch,
@@ -1374,6 +1375,7 @@ export function buildApp(deps: AppDeps): express.Express {
       trader: TRADER,
       tz: TZ,
       clock,
+      marketSession: computeMarketSession(now),
       events,
       freeze,
       knowledgeTime,

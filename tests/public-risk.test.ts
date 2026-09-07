@@ -46,6 +46,7 @@ const SENSITIVE_MARKERS = [
   "activeSleeve",
   "autoPaper",
   "autoPaperBySleeve",
+  "marketSession",
   "SIMULATION",
 ];
 

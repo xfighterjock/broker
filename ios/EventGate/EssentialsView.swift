@@ -9,6 +9,7 @@ struct EssentialsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 header
+                marketClosed
                 EtradePinView()
                 summary
                 riskBadge
@@ -60,6 +61,21 @@ struct EssentialsView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .background(Color(red: 0.05, green: 0.06, blue: 0.09))
+    }
+
+    private var marketClosed: some View {
+        Group {
+            if let line = snap.flatMap(EssentialsFormat.marketSessionBanner) {
+                Text(line)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color(red: 0.90, green: 0.69, blue: 0.24))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(Color(red: 0.16, green: 0.14, blue: 0.06))
+                    .accessibilityIdentifier("market-closed")
+            }
+        }
     }
 
     private var summary: some View {

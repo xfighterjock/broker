@@ -10,6 +10,7 @@ import {
   formatPnlPct,
   formatPnlUsd,
   gateModeClass,
+  marketSessionLine,
   riskWhyLine,
   sleevePnlRows,
 } from "./essentials";
@@ -73,6 +74,15 @@ export function MobileEssentials({
         <div className="sim">PAPER · MOCK</div>
         <div className="essentials-clock">{clock?.nowEt ?? "—"}</div>
       </header>
+
+      {marketSessionLine(state) && (
+        <div
+          className={`essentials-market-closed${state.marketSession?.cashOpen ? " early" : ""}`}
+          role="status"
+        >
+          {marketSessionLine(state)}
+        </div>
+      )}
 
       {pin}
 

@@ -22,6 +22,7 @@ import {
   formatPnlPct,
   formatPnlUsd,
   gateModeClass as modeClass,
+  marketSessionLine,
   riskBadgeTitle,
   SLEEVE_TAB_LABELS as TAB_LABELS,
 } from "./essentials";
@@ -452,6 +453,7 @@ export default function App() {
   }
 
   const clock = state?.clock;
+  const cashClosedLine = marketSessionLine(state);
   const freezeDirty = useMemo(
     () => JSON.stringify(freeze) !== JSON.stringify(state?.freeze),
     [freeze, state],
@@ -630,6 +632,15 @@ export default function App() {
       <div className="hint auto-hint">
         Auto paper is per sleeve (D / M / O / Ow / R). Master AUTO PAPER is on if any sleeve is on. Mock only. Stops in the book. GATE still binds day (pre-arm / no-stop / flatten). RISK ON/OFF is automated (SPY/ACWI/HYG 200dma, UUP 20d) and does not bind the day book. Each sleeve starts at mock $100,000.
       </div>
+
+      {cashClosedLine && (
+        <div
+          className={`market-closed${state.marketSession?.cashOpen ? " early" : ""}`}
+          role="status"
+        >
+          {cashClosedLine}
+        </div>
+      )}
 
       {tab === "day" && (
       <>

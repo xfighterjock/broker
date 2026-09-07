@@ -88,6 +88,12 @@ describe("iOS Event Gate scaffold", () => {
     expect(essentials).toContain("AUTO PAPER");
     expect(essentials).toContain("SleeveChip");
     expect(essentials).toContain("confirmFlatten");
+    expect(readFileSync(resolve("ios/EventGate/Models.swift"), "utf8")).toContain(
+      "marketSession",
+    );
+    expect(format).toContain("US cash market closed");
+    expect(essentials).toContain("marketSessionBanner");
+    expect(essentials).toContain("market-closed");
   });
 
   it("gitignore blocks the real plist and Xcode userdata", () => {

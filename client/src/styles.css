@@ -152,6 +152,27 @@ code, .mono, table, .clock, .badge, .log, .cd {
 .banner.idle { background: #102018; color: var(--green); border-color: #1d4a32; }
 .banner .cd { font-size: 16px; }
 
+/* NYSE cash closed / holiday — muted warning, not GATE alarm-red. */
+.market-closed,
+.essentials-market-closed {
+  padding: 8px 14px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  background: #2a2410;
+  color: var(--amber);
+  border-bottom: 1px solid #5a4a18;
+}
+.market-closed.early,
+.essentials-market-closed.early {
+  background: #1e2210;
+  color: #c9b06a;
+  border-bottom-color: #4a4420;
+}
+.essentials-market-closed {
+  padding: 10px 16px;
+  font-size: 14px;
+}
+
 .grid {
   display: grid;
   grid-template-columns: 1fr 1.15fr 1.15fr;
