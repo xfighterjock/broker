@@ -164,6 +164,11 @@ export interface Position {
   vertical?: VerticalMeta;
   /** Cash-secured put or covered call on the options sleeve (ownership overlay). */
   overlay?: OverlayMeta;
+  /**
+   * Paper risk-off gated duration long (TLT/IEF). Distinct from the 63d RS
+   * overlay so the two programs do not flatten or rotate each other.
+   */
+  gatedDuration?: boolean;
 }
 
 export interface FreezeCard {
@@ -341,19 +346,19 @@ export function defaultSleeves(): Record<SleeveId, SleeveCard> {
     },
     riskoff: {
       id: "riskoff",
-      name: "Risk-off (puts + ETF RS)",
+      name: "Risk-off (puts + ETF RS + gated duration)",
       horizon: "days–months",
       budgetPct: 10,
       lossCapUsd: 1000,
       thesis:
-        "Defined-risk put debit while RISK OFF: SPY/QQQ/IWM only after SPY breaks 200dma; HYG/LQD/JNK ATM puts when that credit name is below its own 200dma; plus one defensive ETF long (GLD/UUP/TLT/IEF/XLU/XLP/DBMF vs BIL) by 63d relative strength.",
+        "Defined-risk put debit while RISK OFF: SPY/QQQ/IWM only after SPY breaks 200dma; HYG/LQD/JNK ATM puts when that credit name is below its own 200dma; plus one defensive ETF long (GLD/UUP/TLT/IEF/XLU/XLP/DBMF vs BIL) by 63d relative strength; plus a separate gated TLT/IEF duration long only when SPY is below 200dma and the dollar veto is clear.",
       macroDrivers: "SPY/ACWI/HYG 200dma + UUP 20d dollar veto (global risk-off).",
       microDrivers:
-        "30–45 DTE put debit verticals: HYG/LQD/JNK when that name is below its own 200dma (credit-leg; not spyAbove200); SPY/QQQ/IWM only after an equity 200dma break (SPY below). Prefer HYG, then LQD, then JNK inside the auto cap. Skip missing bid/ask. GLD/UUP/TLT/IEF/XLU/XLP/DBMF 63d total return vs BIL; hold the winner if it beats T-bills, else BIL/cash. Exact RS tie keeps the held name if it is still eligible, else GLD > UUP > duration > defensives > trend. Flatten the ETF on RISK ON; flatten equity-index puts while SPY is still above 200dma; flatten a credit-leg put when that name is back above 200 or RISK ON.",
+        "30–45 DTE put debit verticals: HYG/LQD/JNK when that name is below its own 200dma (credit-leg; not spyAbove200); SPY/QQQ/IWM only after an equity 200dma break (SPY below). Prefer HYG, then LQD, then JNK inside the auto cap. Skip missing bid/ask. GLD/UUP/TLT/IEF/XLU/XLP/DBMF 63d total return vs BIL; hold the winner if it beats T-bills, else BIL/cash. Exact RS tie keeps the held name if it is still eligible, else GLD > UUP > duration > defensives > trend. Flatten the ETF on RISK ON; flatten equity-index puts while SPY is still above 200dma; flatten a credit-leg put when that name is back above 200 or RISK ON. Gated duration is not an RS pick: long TLT (IEF fallback) only on RISK OFF + SPY below 200 + dollar veto clear; flatten on RISK ON, SPY back above 200, dollar veto, missing checks, or sleeve loss cap. Stay flat if the RS overlay already holds TLT or IEF.",
       instruments: RISKOFF_QUOTE_STRIP.join(" / "),
       structure:
-        "put debit verticals + one GLD/UUP/TLT/IEF/XLU/XLP/DBMF/BIL ETF long; no naked short vol",
-      killRules: "max debit lost / DTE / sleeve loss cap; ETF rotates only when the winner changes",
+        "put debit verticals + 63d RS ETF overlay (40%) + gated TLT/IEF duration (20%); no naked short vol",
+      killRules: "max debit lost / DTE / sleeve loss cap; ETF rotates only when the winner changes; gated duration exits on SPY/dollar/RISK ON",
       status: "paper",
       paper: emptyPaperStats(),
       updatedAt: null,

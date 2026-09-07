@@ -31,6 +31,11 @@ import {
   openRiskoffEtfPositions,
   type RiskoffEtfReturns,
 } from "./riskoffEtf";
+import {
+  decideRiskoffDuration,
+  openRiskoffDurationPositions,
+  overlayHoldsDurationName,
+} from "./riskoffDuration";
 import { passesMomentumFilter } from "./scan";
 import {
   noteCreditLegOiSkip,
@@ -60,6 +65,8 @@ export type AutoBuy = {
   qty: number;
   stopPrice: number;
   thesis: string;
+  /** Risk-off gated duration lot. Persist on the MockBroker position. */
+  gatedDuration?: boolean;
 };
 
 export type AutoSell = {
@@ -272,6 +279,7 @@ export type RiskoffPutChecks = {
   hygAbove200?: boolean | null;
   lqdAbove200?: boolean | null;
   jnkAbove200?: boolean | null;
+  dollarVeto?: boolean | null;
 };
 
 const RISKOFF_EQUITY_PUTS = new Set<string>([...RISKOFF_SYMBOLS, "IWM"]);
@@ -666,6 +674,46 @@ export type CreditLegPutPickResult =
   | { ok: true; pick: CreditLegPutPick }
   | { ok: false; reason: string; noteOiSkip: boolean };
 
+export type FetchExpiriesResult =
+  | { ok: true; expiries: OptionExpiry[] }
+  | { ok: false; error: string; status?: number };
+
+export type FetchChainResult =
+  | { ok: true; legs: OptionLeg[] }
+  | { ok: false; error: string; status?: number };
+
+export function normalizeExpiriesResult(
+  got: FetchExpiriesResult | OptionExpiry[],
+): FetchExpiriesResult {
+  if (Array.isArray(got)) return { ok: true, expiries: got };
+  return got;
+}
+
+export function normalizeChainResult(got: FetchChainResult | OptionLeg[]): FetchChainResult {
+  if (Array.isArray(got)) return { ok: true, legs: got };
+  return got;
+}
+
+export function formatOptionFetchUnavailable(
+  kind: "expiries" | "chain",
+  err: { error: string; status?: number },
+): string {
+  const status = err.status != null ? ` (status ${err.status})` : "";
+  return `option ${kind} unavailable: ${err.error}${status}`;
+}
+
+/** Empty list vs nonempty-but-outside 30–45 DTE. Null when a band expiry exists. */
+export function expirySkipReason(expiries: OptionExpiry[], now = new Date()): string | null {
+  if (expiries.length === 0) return "option expiries empty";
+  if (pickTargetExpiry(expiries, now)) return null;
+  const dtes = expiries
+    .map((e) => daysToExpiry(e.expiry, now))
+    .filter((d): d is number => Number.isFinite(d));
+  if (!dtes.length) return "no 30–45 DTE expiry";
+  const nearest = dtes.reduce((a, b) => (Math.abs(a) < Math.abs(b) ? a : b));
+  return `no 30–45 DTE expiry (${expiries.length} listed, nearest ${nearest} DTE)`;
+}
+
 function formatStrikeOffset(offset: number): string {
   return offset > 0 ? `+${offset}` : String(offset);
 }
@@ -679,20 +727,27 @@ export async function pickCreditLegAutoPut(opts: {
   symbol: string;
   last: number;
   expiries: OptionExpiry[];
-  fetchChain: (symbol: string, expiry: string) => Promise<OptionLeg[]>;
+  fetchChain: (symbol: string, expiry: string) => Promise<FetchChainResult | OptionLeg[]>;
   now?: Date;
   qty?: number;
 }): Promise<CreditLegPutPickResult> {
   const qty = opts.qty ?? RISKOFF_CREDIT_LEG_MAX_AUTO_QTY;
-  const candidates = pickTargetExpiries(opts.expiries, opts.now ?? new Date());
-  if (!candidates.length) {
-    return { ok: false, reason: "no 30–45 DTE expiry", noteOiSkip: false };
+  const now = opts.now ?? new Date();
+  const bandSkip = expirySkipReason(opts.expiries, now);
+  if (bandSkip) {
+    return { ok: false, reason: bandSkip, noteOiSkip: false };
   }
+  const candidates = pickTargetExpiries(opts.expiries, now);
   let lastReason = "no liquid put debit";
   let sawLiquidityFail = false;
   for (let ei = 0; ei < candidates.length; ei++) {
     const picked = candidates[ei];
-    const legs = await opts.fetchChain(opts.symbol, picked.expiry);
+    const chain = normalizeChainResult(await opts.fetchChain(opts.symbol, picked.expiry));
+    if (!chain.ok) {
+      lastReason = formatOptionFetchUnavailable("chain", chain);
+      continue;
+    }
+    const legs = chain.legs;
     const pairs = pickCreditLegPutDebitCandidates(legs, opts.last);
     if (!pairs.length) {
       lastReason = "no ATM put debit";
@@ -747,8 +802,17 @@ export type AutopilotCtx = {
   close: (sell: AutoSell) => Promise<CloseResult>;
   /** Paper debit verticals. Call on options when RISK ON; risk-off puts: equity-index if SPY below 200, credit-leg if that name is below its own 200. Never CSP/CC. */
   placeVertical?: (v: AutoVertical) => Promise<PlaceResult>;
-  fetchExpiries?: (symbol: string) => Promise<OptionExpiry[]>;
-  fetchChain?: (symbol: string, expiry: string) => Promise<OptionLeg[]>;
+  /**
+   * Option expiries. Prefer `{ ok, expiries }` / `{ ok: false, error }` so
+   * E*TRADE/auth failures are not collapsed to a silent empty list.
+   * A bare array is treated as success (tests / older callers).
+   */
+  fetchExpiries?: (symbol: string) => Promise<FetchExpiriesResult | OptionExpiry[]>;
+  /**
+   * Option chain. Same result-type convention as fetchExpiries — a bare
+   * array is success. Failures must not look like an empty chain.
+   */
+  fetchChain?: (symbol: string, expiry: string) => Promise<FetchChainResult | OptionLeg[]>;
   /** Delayed lasts for SPY/QQQ (IWM optional) and HYG/LQD/JNK, used for risk-off put intents. */
   riskoffQuotes?: Array<{ symbol: string; last: number }>;
   /** 63d total returns for the risk-off ETF overlay vs BIL. Missing/null → fail closed to cash. */
@@ -843,7 +907,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
         returns: ctx.riskoffEtfReturns ?? null,
         quotes: ctx.riskoffEtfQuotes ?? [],
       })
-    : { sells: [] as AutoSell[], buy: null as AutoBuy | null };
+    : { sells: [] as AutoSell[], buy: null as AutoBuy | null, winner: null };
   let overlayRotated: { from: string; to: string } | null = null;
   for (const s of etf.sells) {
     const r = await ctx.close(s);
@@ -860,6 +924,29 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
   }
   if (overlayRotated) {
     void notifyOverlayRotation(overlayRotated.from, overlayRotated.to);
+  }
+
+  const duration = sleeveAutoOn(ctx, "riskoff")
+    ? decideRiskoffDuration({
+        riskOn,
+        spyAbove200,
+        dollarVeto: knownBool(ctx.riskChecks?.dollarVeto),
+        positions: ctx.getPositions(),
+        sleeve: ctx.getSleeves().riskoff,
+        quotes: ctx.riskoffEtfQuotes ?? [],
+        overlayWinner: etf.winner ?? null,
+      })
+    : { sells: [] as AutoSell[], buy: null as AutoBuy | null };
+  for (const s of duration.sells) {
+    const r = await ctx.close(s);
+    if (r.ok) {
+      ctx.log(
+        `auto paper close ${s.sleeveId} ${s.symbol} ${s.reason} (MockBroker, not Tradovate, not live)`,
+      );
+      sold.push(s);
+    } else {
+      ctx.log(`auto paper close skip ${s.symbol}: ${r.error}`);
+    }
   }
 
   const putSells = sleeveAutoOn(ctx, "riskoff")
@@ -881,7 +968,10 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
   if (creditRiskOnFlattened) void notifyCreditPutRiskOnFlatten();
 
   if (!ctx.scanReady) {
-    if (sleeveAutoOn(ctx, "riskoff")) await placeRiskoffEtfBuy(ctx, etf.buy, bought);
+    if (sleeveAutoOn(ctx, "riskoff")) {
+      await placeRiskoffEtfBuy(ctx, etf.buy, bought);
+      await placeRiskoffDurationBuy(ctx, duration.buy, bought);
+    }
     return { bought, sold, verticals };
   }
 
@@ -935,14 +1025,31 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
         continue;
       }
       try {
-        const expiries = await ctx.fetchExpiries(intent.symbol);
-        const picked = pickTargetExpiry(expiries);
+        const expGot = normalizeExpiriesResult(await ctx.fetchExpiries(intent.symbol));
+        if (!expGot.ok) {
+          ctx.log(
+            `auto paper vertical skip ${intent.symbol}: ${formatOptionFetchUnavailable("expiries", expGot)}`,
+          );
+          continue;
+        }
+        const expSkip = expirySkipReason(expGot.expiries);
+        if (expSkip) {
+          ctx.log(`auto paper vertical skip ${intent.symbol}: ${expSkip}`);
+          continue;
+        }
+        const picked = pickTargetExpiry(expGot.expiries);
         if (!picked) {
           ctx.log(`auto paper vertical skip ${intent.symbol}: no 30–45 DTE expiry`);
           continue;
         }
-        const legs = await ctx.fetchChain(intent.symbol, picked.expiry);
-        const pair = pickAtmCallDebit(legs, intent.last);
+        const chainGot = normalizeChainResult(await ctx.fetchChain(intent.symbol, picked.expiry));
+        if (!chainGot.ok) {
+          ctx.log(
+            `auto paper vertical skip ${intent.symbol}: ${formatOptionFetchUnavailable("chain", chainGot)}`,
+          );
+          continue;
+        }
+        const pair = pickAtmCallDebit(chainGot.legs, intent.last);
         if (!pair) {
           ctx.log(`auto paper vertical skip ${intent.symbol}: no ATM call debit`);
           continue;
@@ -1008,7 +1115,13 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
         continue;
       }
       try {
-        const expiries = await ctx.fetchExpiries(intent.symbol);
+        const expGot = normalizeExpiriesResult(await ctx.fetchExpiries(intent.symbol));
+        if (!expGot.ok) {
+          ctx.log(
+            `auto paper vertical skip ${intent.symbol}: ${formatOptionFetchUnavailable("expiries", expGot)}`,
+          );
+          continue;
+        }
         let pair: { long: OptionLeg; short: OptionLeg } | null = null;
         let expiry = "";
         let qty: number | undefined;
@@ -1017,7 +1130,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
           const ladder = await pickCreditLegAutoPut({
             symbol: intent.symbol,
             last: intent.last,
-            expiries,
+            expiries: expGot.expiries,
             fetchChain: ctx.fetchChain,
           });
           if (!ladder.ok) {
@@ -1033,13 +1146,24 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
             );
           }
         } else {
-          const picked = pickTargetExpiry(expiries);
+          const expSkip = expirySkipReason(expGot.expiries);
+          if (expSkip) {
+            ctx.log(`auto paper vertical skip ${intent.symbol}: ${expSkip}`);
+            continue;
+          }
+          const picked = pickTargetExpiry(expGot.expiries);
           if (!picked) {
             ctx.log(`auto paper vertical skip ${intent.symbol}: no 30–45 DTE expiry`);
             continue;
           }
-          const legs = await ctx.fetchChain(intent.symbol, picked.expiry);
-          pair = pickAtmPutDebit(legs, intent.last);
+          const chainGot = normalizeChainResult(await ctx.fetchChain(intent.symbol, picked.expiry));
+          if (!chainGot.ok) {
+            ctx.log(
+              `auto paper vertical skip ${intent.symbol}: ${formatOptionFetchUnavailable("chain", chainGot)}`,
+            );
+            continue;
+          }
+          pair = pickAtmPutDebit(chainGot.legs, intent.last);
           if (!pair) {
             ctx.log(`auto paper vertical skip ${intent.symbol}: no ATM put debit`);
             continue;
@@ -1079,7 +1203,10 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
     }
   }
 
-  if (sleeveAutoOn(ctx, "riskoff")) await placeRiskoffEtfBuy(ctx, etf.buy, bought);
+  if (sleeveAutoOn(ctx, "riskoff")) {
+    await placeRiskoffEtfBuy(ctx, etf.buy, bought);
+    await placeRiskoffDurationBuy(ctx, duration.buy, bought);
+  }
   return { bought, sold, verticals };
 }
 
@@ -1100,6 +1227,45 @@ async function placeRiskoffEtfBuy(
   }
   if (
     openRiskoffEtfPositions(ctx.getPositions()).some(
+      (p) => p.symbol.toUpperCase() === buy.symbol.toUpperCase(),
+    )
+  ) {
+    return;
+  }
+  const r = await ctx.place(buy);
+  if (r.ok) {
+    ctx.log(
+      `auto paper buy ${buy.sleeveId} ${buy.qty} ${buy.symbol} stop ${buy.stopPrice} ${buy.thesis} (MockBroker, not Tradovate, not live)`,
+    );
+    bought.push(buy);
+  } else if (/no delayed last/i.test(r.error)) {
+    ctx.log(`auto paper skip ${buy.symbol} no delayed last`);
+  } else {
+    ctx.log(`auto paper skip ${buy.symbol}: ${r.error}`);
+  }
+}
+
+async function placeRiskoffDurationBuy(
+  ctx: AutopilotCtx,
+  buy: AutoBuy | null,
+  bought: AutoBuy[],
+): Promise<void> {
+  if (!buy) return;
+  if (overlayHoldsDurationName(ctx.getPositions())) {
+    ctx.log(`auto paper skip ${buy.symbol}: overlay already long TLT/IEF`);
+    return;
+  }
+  const leftover = openRiskoffDurationPositions(ctx.getPositions()).filter(
+    (p) => p.symbol.toUpperCase() !== buy.symbol.toUpperCase(),
+  );
+  if (leftover.length) {
+    ctx.log(
+      `auto paper skip ${buy.symbol}: still holding gated duration ${leftover.map((p) => p.symbol).join(",")}`,
+    );
+    return;
+  }
+  if (
+    openRiskoffDurationPositions(ctx.getPositions()).some(
       (p) => p.symbol.toUpperCase() === buy.symbol.toUpperCase(),
     )
   ) {

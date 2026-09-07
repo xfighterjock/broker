@@ -125,6 +125,7 @@ export class MockBroker implements BrokerClient {
       sleeveId: input.sleeveId,
       vertical: input.vertical,
       overlay: input.overlay,
+      gatedDuration: input.gatedDuration,
     };
     this.positions = this.positions.filter((p) => p.symbol !== input.symbol);
     this.positions.push(pos);

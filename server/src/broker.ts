@@ -20,6 +20,7 @@ export interface InjectPositionInput {
   sleeveId?: SleeveId;
   vertical?: VerticalMeta;
   overlay?: OverlayMeta;
+  gatedDuration?: boolean;
 }
 
 export interface BrokerClient {
