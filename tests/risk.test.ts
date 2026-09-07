@@ -236,7 +236,7 @@ describe("risk-off blocks new buys, not exits", () => {
   });
 
   it("debit-call auto never sells puts", async () => {
-    setPaperNow(new Date("2026-08-24T14:00:00Z")); // Mon 10:00 ET
+    setPaperNow(new Date("2026-09-03T13:50:00.000Z")); // Thu 09:50 ET — Oct 9 is 36 DTE
     const rights: string[] = [];
     const nowRows = [row("AAPL", { last: 67 })];
     const result = await runAutopilot({

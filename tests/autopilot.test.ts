@@ -387,7 +387,7 @@ describe("runAutopilot toggle", () => {
   });
 
   it("never auto-sells puts, calls, or naked shorts (CSP/CC stay manual)", async () => {
-    setPaperNow(new Date("2026-08-24T14:00:00Z")); // Mon 10:00 ET
+    setPaperNow(new Date("2026-09-03T13:50:00.000Z")); // Thu 09:50 ET — Oct 9 is 36 DTE
     const verts: string[] = [];
     const result = await runAutopilot({
       enabled: true,

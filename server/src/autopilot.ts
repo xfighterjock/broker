@@ -703,7 +703,7 @@ export function formatOptionFetchUnavailable(
 }
 
 /** Empty list vs nonempty-but-outside 30–45 DTE. Null when a band expiry exists. */
-export function expirySkipReason(expiries: OptionExpiry[], now = new Date()): string | null {
+export function expirySkipReason(expiries: OptionExpiry[], now = valuationNow()): string | null {
   if (expiries.length === 0) return "option expiries empty";
   if (pickTargetExpiry(expiries, now)) return null;
   const dtes = expiries
@@ -732,7 +732,7 @@ export async function pickCreditLegAutoPut(opts: {
   qty?: number;
 }): Promise<CreditLegPutPickResult> {
   const qty = opts.qty ?? RISKOFF_CREDIT_LEG_MAX_AUTO_QTY;
-  const now = opts.now ?? new Date();
+  const now = opts.now ?? valuationNow();
   const bandSkip = expirySkipReason(opts.expiries, now);
   if (bandSkip) {
     return { ok: false, reason: bandSkip, noteOiSkip: false };
@@ -1032,12 +1032,12 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
           );
           continue;
         }
-        const expSkip = expirySkipReason(expGot.expiries);
+        const expSkip = expirySkipReason(expGot.expiries, now);
         if (expSkip) {
           ctx.log(`auto paper vertical skip ${intent.symbol}: ${expSkip}`);
           continue;
         }
-        const picked = pickTargetExpiry(expGot.expiries);
+        const picked = pickTargetExpiry(expGot.expiries, now);
         if (!picked) {
           ctx.log(`auto paper vertical skip ${intent.symbol}: no 30–45 DTE expiry`);
           continue;
@@ -1132,6 +1132,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
             last: intent.last,
             expiries: expGot.expiries,
             fetchChain: ctx.fetchChain,
+            now,
           });
           if (!ladder.ok) {
             ctx.log(`auto paper vertical skip ${intent.symbol}: ${ladder.reason}`);
@@ -1146,12 +1147,12 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
             );
           }
         } else {
-          const expSkip = expirySkipReason(expGot.expiries);
+          const expSkip = expirySkipReason(expGot.expiries, now);
           if (expSkip) {
             ctx.log(`auto paper vertical skip ${intent.symbol}: ${expSkip}`);
             continue;
           }
-          const picked = pickTargetExpiry(expGot.expiries);
+          const picked = pickTargetExpiry(expGot.expiries, now);
           if (!picked) {
             ctx.log(`auto paper vertical skip ${intent.symbol}: no 30–45 DTE expiry`);
             continue;

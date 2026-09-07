@@ -357,7 +357,7 @@ export function defaultSleeves(): Record<SleeveId, SleeveCard> {
         "30–45 DTE put debit verticals: HYG/LQD/JNK when that name is below its own 200dma (credit-leg; not spyAbove200); SPY/QQQ/IWM only after an equity 200dma break (SPY below). Prefer HYG, then LQD, then JNK inside the auto cap. Skip missing bid/ask. GLD/UUP/TLT/IEF/XLU/XLP/DBMF 63d total return vs BIL; hold the winner if it beats T-bills, else BIL/cash. Exact RS tie keeps the held name if it is still eligible, else GLD > UUP > duration > defensives > trend. Flatten the ETF on RISK ON; flatten equity-index puts while SPY is still above 200dma; flatten a credit-leg put when that name is back above 200 or RISK ON. Gated duration is not an RS pick: long TLT (IEF fallback) only on RISK OFF + SPY below 200 + dollar veto clear; flatten on RISK ON, SPY back above 200, dollar veto, missing checks, or sleeve loss cap. Stay flat if the RS overlay already holds TLT or IEF.",
       instruments: RISKOFF_QUOTE_STRIP.join(" / "),
       structure:
-        "put debit verticals + 63d RS ETF overlay (40%) + gated TLT/IEF duration (20%); no naked short vol",
+        "put debit verticals + 63d RS ETF overlay (40%, GLD/UUP/TLT/IEF/XLU/XLP/DBMF/BIL) + gated TLT/IEF duration (20%); no naked short vol",
       killRules: "max debit lost / DTE / sleeve loss cap; ETF rotates only when the winner changes; gated duration exits on SPY/dollar/RISK ON",
       status: "paper",
       paper: emptyPaperStats(),
