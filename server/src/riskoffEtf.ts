@@ -163,6 +163,7 @@ export function openRiskoffEtfPositions(positions: Position[]): Position[] {
     if (p.side === "Flat" || p.qty <= 0) continue;
     if (p.sleeveId !== "riskoff") continue;
     if (p.vertical || p.overlay) continue;
+    if (p.gatedDuration) continue;
     if (!isRiskoffEtfSymbol(p.symbol)) continue;
     out.push(p);
   }

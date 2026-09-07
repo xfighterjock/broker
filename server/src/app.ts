@@ -1065,6 +1065,7 @@ export function buildApp(deps: AppDeps): express.Express {
       avgPrice: last,
       unrealizedPnl: 0,
       sleeveId: parsed.sleeveId,
+      gatedDuration: parsed.gatedDuration === true,
     });
     const stop = deps.broker.injectOrder({
       symbol: v.mapped,
@@ -1240,18 +1241,20 @@ export function buildApp(deps: AppDeps): express.Express {
         },
         fetchExpiries: async (symbol: string) => {
           const got = await fetchOptionExpiries(symbol);
-          return got.ok ? got.data.expiries : [];
+          if (!got.ok) return { ok: false as const, error: got.error, status: got.status };
+          return { ok: true as const, expiries: got.data.expiries };
         },
         fetchChain: async (symbol: string, expiry: string) => {
           const ymd = parseYmd(expiry);
-          if (!ymd) return [];
+          if (!ymd) return { ok: false as const, error: "expiry must be YYYY-MM-DD", status: 400 };
           const got = await fetchOptionChain({
             symbol,
             expiryYear: ymd.year,
             expiryMonth: ymd.month,
             expiryDay: ymd.day,
           });
-          return got.ok ? got.data.legs : [];
+          if (!got.ok) return { ok: false as const, error: got.error, status: got.status };
+          return { ok: true as const, legs: got.data.legs };
         },
         place: async (buy: AutoBuy) => {
           if (buy.sleeveId === "day") {
@@ -1272,6 +1275,7 @@ export function buildApp(deps: AppDeps): express.Express {
               qty: buy.qty,
               stopPrice: buy.stopPrice,
               thesis: buy.thesis,
+              gatedDuration: buy.gatedDuration === true,
             });
           }
           const quotes = await fetchDelayedQuotes([buy.symbol]);

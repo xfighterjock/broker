@@ -43,6 +43,8 @@ export type PaperOrderBody = {
   qty: number;
   stopPrice: number;
   thesis: string;
+  /** Risk-off gated duration lot (TLT/IEF). Distinct from the 63d RS overlay. */
+  gatedDuration?: boolean;
 };
 
 export type PaperCloseBody = {
@@ -215,6 +217,7 @@ export function parsePaperOrder(body: unknown): PaperOrderBody | { error: string
     qty,
     stopPrice,
     thesis,
+    ...(b.gatedDuration === true ? { gatedDuration: true as const } : {}),
   };
 }
 

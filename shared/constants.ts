@@ -185,6 +185,16 @@ export const RISKOFF_ETF_STOP_MUL = 0.92;
  * apply when held is ineligible (≤ BIL) or missing.
  */
 export const RISKOFF_ETF_RS_HYSTERESIS = 0.005;
+/**
+ * Gated TLT/IEF duration long — a separate risk-off book rule, not another
+ * 63d RS pick. 20% of the $100k book so it does not crowd out the 40% overlay.
+ * Combined overlay + duration = 60%; puts keep the rest. Paper only.
+ */
+export const RISKOFF_DURATION_SYMBOLS = ["TLT", "IEF"] as const;
+export type RiskoffDurationSymbol = (typeof RISKOFF_DURATION_SYMBOLS)[number];
+export const RISKOFF_DURATION_NOTIONAL_FRAC = 0.20;
+/** Same disaster stop as the 63d RS overlay. */
+export const RISKOFF_DURATION_STOP_MUL = RISKOFF_ETF_STOP_MUL;
 /** Prefer 30–45 DTE, always above OPTIONS_DTE_EXIT. */
 export const OPTIONS_DTE_TARGET_MIN = 30;
 export const OPTIONS_DTE_TARGET_MAX = 45;

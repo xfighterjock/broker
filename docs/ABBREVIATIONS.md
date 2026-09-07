@@ -44,13 +44,17 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **dma** — Daily moving average. See 20dma / 200dma.
 
+**dollar veto** — RISK ON fails when UUP's 20-session return is missing or greater than +3% (RISK_UUP_VETO_FRAC). Exposed as dollarVeto on GET /api/public/risk. Also required clear (dollarVeto === false) before the risk-off gated TLT/IEF duration long may open; missing check fails closed.
+
+**duration** — Treasury-bond exposure (TLT long-duration, IEF intermediate). Two distinct paper programs: (1) TLT/IEF as 63d RS overlay candidates vs BIL; (2) gated duration — a separate TLT/IEF long only on RISK OFF + SPY below 200dma + dollar veto clear (RISKOFF_DURATION_NOTIONAL_FRAC 20%). Not another RS pick.
+
 **E\*TRADE** — Broker API used for live option chains and OAuth only. Never orders. Production base api.etrade.com.
 
 **ES** — CME E-mini S&P 500 futures. Gated root. Yahoo ES=F. On the momentum quote strip.
 
 **ET** — America/New_York clock. Gate windows, 15:50 vertical cutoff, session marks, E*TRADE renew window, flatten times.
 
-**ETF** — Exchange-traded fund. Risk-off overlay is one of GLD/UUP/TLT/IEF/XLU/XLP/DBMF/BIL sized at RISKOFF_ETF_NOTIONAL_FRAC (40% of the $100k book); gate names are SPY/ACWI/HYG/UUP.
+**ETF** — Exchange-traded fund. Risk-off 63d RS overlay is one of GLD/UUP/TLT/IEF/XLU/XLP/DBMF/BIL sized at RISKOFF_ETF_NOTIONAL_FRAC (40% of the $100k book). Gated duration is a separate TLT/IEF long at RISKOFF_DURATION_NOTIONAL_FRAC (20%). Gate names are SPY/ACWI/HYG/UUP.
 
 **EVENT_GATE_OPS_TOKEN** — Optional long-lived HTTPS ops bearer (VPS `/opt/broker/.env`, never git). When set, `Authorization: Bearer` matching the env value authenticates a narrow ops scope: GET /api/status, GET/PUT /api/freeze, GET /api/health, GET /api/sleeves, POST /api/paper/auto, POST /api/flatten, POST /api/gate/enable (print-day vetoes: flatten + GATE OFF). Same GATE route also GATE ON (`{ enabled: true }` or omitted, defaults ON) — no separate disable path. Not a users-table session. Paper orders, PIN, mock inject, cancel-stops, user admin stay 401. When unset, behavior unchanged. Agents freeze-save, status-check, toggle AUTO, flatten, and GATE OFF at https://broker.logikmancer.com without the Mac.
 
@@ -78,7 +82,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **HYG** — iShares iBoxx $ High Yield Corporate Bond ETF. RISK ON 200dma leg. First credit-leg put debit on the riskoff sleeve when HYG is below its own 200dma. AUTO tries ATM first, then ±2 strikes, then up to two more 30-45 DTE expiries; each candidate still needs OI >= 100 on each leg, a round-trip within 25% of the entry debit, and a hard 3-contract cap (RISKOFF_HYG_* / RISKOFF_CREDIT_LEG_* aliases). Paper only.
 
-**IEF** — iShares 7-10 Year Treasury Bond ETF. Intermediate-duration candidate on the risk-off 63d RS overlay (after TLT in the duration bucket).
+**IEF** — iShares 7-10 Year Treasury Bond ETF. Intermediate-duration candidate on the risk-off 63d RS overlay (after TLT in the duration bucket). Also the fallback for gated duration when TLT is unquoted or sizes to 0.
 
 **iOS Event Gate** — Native SwiftUI app in ios/ (bundle com.logikmancer.mybroker). Phone Event Gate client: essentials (GATE, RISK, AUTO PAPER chips, Flatten, sleeve P/L, E*TRADE PIN) plus FCM. Users-table login + optional Face ID / Touch ID unlock of the Keychain session. Web `/m` remains for browsers. Push notification glyph is the AppIcon (same auto-agent artwork as the web favicon).
 
@@ -140,13 +144,15 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **RISK ON** — Badge iff SPY, ACWI, and HYG are above 200dma and UUP 20d is not greater than +3%. Missing series fail closed to RISK OFF.
 
-**RISKOFF_ETF_NOTIONAL_FRAC** — Fraction of the $100k risk-off mock book for the defensive ETF RS overlay long. 0.40 (~$40k). Paper step toward half the sleeve; not a full 50%. Puts keep the rest. Lookback, stop, and flatten rules are unchanged (RISKOFF_ETF_LOOKBACK_DAYS 63, RISKOFF_ETF_STOP_MUL 0.92).
+**RISKOFF_DURATION_NOTIONAL_FRAC** — Fraction of the $100k risk-off mock book for the gated TLT/IEF duration long. 0.20 (~$20k). Mild so it does not crowd out the 40% RS overlay (combined 60%; puts keep the rest). Same disaster stop as the overlay (RISKOFF_DURATION_STOP_MUL = 0.92). Paper only. Distinct from the 63d RS pick.
+
+**RISKOFF_ETF_NOTIONAL_FRAC** — Fraction of the $100k risk-off mock book for the defensive ETF RS overlay long. 0.40 (~$40k). Paper step toward half the sleeve; not a full 50%. Puts keep the rest (and the 20% gated duration sleeve when that program is on). Lookback, stop, and flatten rules are unchanged (RISKOFF_ETF_LOOKBACK_DAYS 63, RISKOFF_ETF_STOP_MUL 0.92).
 
 **RISKOFF_ETF_RS_HYSTERESIS** — Mild absolute 63d total-return margin (0.005 / 50bp) on the risk-off ETF overlay. A challenger must beat the held name by this much before rotate, so tiny GLD↔DBMF (etc.) edges do not churn. Exact RS ties still use preference order. Does not apply when held is ineligible (≤ BIL) or missing.
 
 **risk_flip** — FCM eventType when the global RISK ON/OFF badge changes. Last-known state is in memory and Redis `risk:on` so a restart does not false-flip.
 
-**RS** — Relative strength. Momentum score vs SPY; risk-off ETF overlay is 63-session total return of GLD/UUP/TLT/IEF/XLU/XLP/DBMF vs BIL, sized at RISKOFF_ETF_NOTIONAL_FRAC. Mild 50bp hysteresis (RISKOFF_ETF_RS_HYSTERESIS) so tiny GLD↔DBMF (etc.) edges do not rotate.
+**RS** — Relative strength. Momentum score vs SPY; risk-off ETF overlay is 63-session total return of GLD/UUP/TLT/IEF/XLU/XLP/DBMF vs BIL, sized at RISKOFF_ETF_NOTIONAL_FRAC. Mild 50bp hysteresis (RISKOFF_ETF_RS_HYSTERESIS) so tiny GLD↔DBMF (etc.) edges do not rotate. Gated TLT/IEF duration is not an RS pick.
 
 **SDS** — ProShares UltraShort S&P 500. Not a live risk-off expression.
 
@@ -180,13 +186,13 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **TA** — Technical analysis. Momentum/ownership entries come from the S&P scan filters and scores, not from the event clock.
 
-**TLT** — iShares 20+ Year Treasury Bond ETF. Long-duration candidate on the risk-off 63d RS overlay (first in the duration bucket). Also on momentum and ownership quote strips.
+**TLT** — iShares 20+ Year Treasury Bond ETF. Long-duration candidate on the risk-off 63d RS overlay (first in the duration bucket). Preferred name for gated duration (IEF fallback) when RISK OFF, SPY is below 200dma, and the dollar veto is clear. Also on momentum and ownership quote strips.
 
 **TRADING_MODE** — Process env. mock is required; live is refused. TradovateDemoBroker is a stub pinned to demo.tradovateapi.com.
 
 **Tradovate** — Futures broker. Demo stub only (demo.tradovateapi.com). Order/position calls are not wired; gate uses MockBroker. Live host URLs throw.
 
-**UUP** — Invesco DB US Dollar Index Bullish Fund. RISK ON dollar veto if 20-session return is missing or greater than +3%. Also a 63d RS candidate on the risk-off ETF overlay (second preference after GLD).
+**UUP** — Invesco DB US Dollar Index Bullish Fund. RISK ON dollar veto if 20-session return is missing or greater than +3%. Also a 63d RS candidate on the risk-off ETF overlay (second preference after GLD). Dollar veto must be clear for the gated TLT/IEF duration long.
 
 **uPnL** — Unrealized profit and loss on open mock positions. Marks from delayed last (or vertical/overlay MTM).
 

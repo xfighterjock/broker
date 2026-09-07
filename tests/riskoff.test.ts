@@ -340,7 +340,7 @@ describe("decidePutVerticalIntents", () => {
 });
 
 describe("runAutopilot risk-off puts vs risk-on calls", () => {
-  beforeEach(() => setPaperNow(new Date("2026-08-24T14:00:00Z")));
+  beforeEach(() => setPaperNow(new Date("2026-09-03T13:50:00.000Z")));
   afterEach(() => setPaperNow(null));
 
   const putChain: OptionLeg[] = [
@@ -861,7 +861,7 @@ const putChainForAuto: OptionLeg[] = [
 ];
 
 describe("risk-off ETF relative-strength expression", () => {
-  beforeEach(() => setPaperNow(new Date("2026-08-24T14:00:00Z")));
+  beforeEach(() => setPaperNow(new Date("2026-09-03T13:50:00.000Z")));
   afterEach(() => setPaperNow(null));
   it("uses a 63-session lookback and fails closed without an exact series", () => {
     expect(RISKOFF_ETF_LOOKBACK_DAYS).toBe(63);
