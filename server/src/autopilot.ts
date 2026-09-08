@@ -9,6 +9,8 @@ import {
   RISKOFF_CREDIT_LEG_MAX_AUTO_QTY,
   RISKOFF_CREDIT_LEG_MAX_ROUNDTRIP_SLIPPAGE_FRAC,
   RISKOFF_CREDIT_LEG_MIN_OPEN_INTEREST,
+  RISKOFF_CREDIT_LEG_MONTHLY_DTE_MAX,
+  RISKOFF_CREDIT_LEG_MONTHLY_DTE_MIN,
   RISKOFF_CREDIT_LEG_STRIKE_OFFSETS,
   RISKOFF_CREDIT_LEG_SYMBOLS,
   RISKOFF_HYG_MAX_AUTO_QTY,
@@ -661,6 +663,58 @@ export function pickTargetExpiry(expiries: OptionExpiry[], now = new Date()): Op
   return pickTargetExpiries(expiries, now, 1)[0] ?? null;
 }
 
+/** Calendar day of the 3rd Friday in UTC (standard monthly options expiry). */
+export function thirdFridayUtcDay(year: number, month: number): number {
+  const first = new Date(Date.UTC(year, month - 1, 1));
+  const firstDow = first.getUTCDay();
+  const firstFriday = 1 + ((5 - firstDow + 7) % 7);
+  return firstFriday + 14;
+}
+
+/**
+ * Standard monthly = 3rd Friday of the month, or an expiry E*TRADE/Massive
+ * already tagged MONTHLY (holiday-moved Thursday, legacy Saturday after).
+ */
+export function isStandardMonthlyExpiry(e: OptionExpiry): boolean {
+  if ((e.expiryType ?? "").toUpperCase() === "MONTHLY") return true;
+  if (!Number.isFinite(e.year) || !Number.isFinite(e.month) || !Number.isFinite(e.day)) {
+    return false;
+  }
+  return e.day === thirdFridayUtcDay(e.year, e.month);
+}
+
+/**
+ * Credit-leg AUTO only. When the 30–45 band is empty, the nearest 3rd-Friday
+ * monthly with DTE in (OPTIONS_DTE_EXIT, RISKOFF_CREDIT_LEG_MONTHLY_DTE_MAX]
+ * and DTE >= RISKOFF_CREDIT_LEG_MONTHLY_DTE_MIN. Closest to the 30–45 midpoint
+ * first; closer to today on a tie. One expiry — not a weekly ladder.
+ */
+export function pickCreditLegMonthlyFallbackExpiry(
+  expiries: OptionExpiry[],
+  now = new Date(),
+): OptionExpiry | null {
+  const scored: Array<{ e: OptionExpiry; dte: number }> = [];
+  for (const e of expiries) {
+    if (!isStandardMonthlyExpiry(e)) continue;
+    const dte = daysToExpiry(e.expiry, now);
+    if (!Number.isFinite(dte)) continue;
+    if (dte <= OPTIONS_DTE_EXIT) continue;
+    if (dte < RISKOFF_CREDIT_LEG_MONTHLY_DTE_MIN || dte > RISKOFF_CREDIT_LEG_MONTHLY_DTE_MAX) {
+      continue;
+    }
+    scored.push({ e, dte });
+  }
+  if (!scored.length) return null;
+  const mid = (OPTIONS_DTE_TARGET_MIN + OPTIONS_DTE_TARGET_MAX) / 2;
+  scored.sort((a, b) => {
+    const da = Math.abs(a.dte - mid);
+    const db = Math.abs(b.dte - mid);
+    if (da !== db) return da - db;
+    return a.dte - b.dte;
+  });
+  return scored[0].e;
+}
+
 export type CreditLegPutPick = {
   expiry: string;
   long: OptionLeg;
@@ -668,6 +722,8 @@ export type CreditLegPutPick = {
   offset: number;
   expiryIndex: number;
   expiryCount: number;
+  monthlyFallback: boolean;
+  dte: number;
 };
 
 export type CreditLegPutPickResult =
@@ -721,7 +777,9 @@ function formatStrikeOffset(offset: number): string {
 /**
  * Credit-leg AUTO: strike ladder (±RISKOFF_CREDIT_LEG_STRIKE_OFFSETS) on the
  * first 30–45 DTE expiry, then the next couple of expiries in the same band.
- * First pair that clears checkCreditLegAutoLiquidity wins. Paper only.
+ * If that band is empty, one standard monthly in 21–60 DTE (above
+ * OPTIONS_DTE_EXIT). First pair that clears checkCreditLegAutoLiquidity wins.
+ * Paper only. Does not apply to SPY/QQQ/IWM or options-sleeve calls.
  */
 export async function pickCreditLegAutoPut(opts: {
   symbol: string;
@@ -733,11 +791,21 @@ export async function pickCreditLegAutoPut(opts: {
 }): Promise<CreditLegPutPickResult> {
   const qty = opts.qty ?? RISKOFF_CREDIT_LEG_MAX_AUTO_QTY;
   const now = opts.now ?? valuationNow();
-  const bandSkip = expirySkipReason(opts.expiries, now);
-  if (bandSkip) {
-    return { ok: false, reason: bandSkip, noteOiSkip: false };
+  if (opts.expiries.length === 0) {
+    return { ok: false, reason: "option expiries empty", noteOiSkip: false };
   }
-  const candidates = pickTargetExpiries(opts.expiries, now);
+  let candidates = pickTargetExpiries(opts.expiries, now);
+  let monthlyFallback = false;
+  if (!candidates.length) {
+    const monthly = pickCreditLegMonthlyFallbackExpiry(opts.expiries, now);
+    if (monthly) {
+      candidates = [monthly];
+      monthlyFallback = true;
+    } else {
+      const bandSkip = expirySkipReason(opts.expiries, now) ?? "no 30–45 DTE expiry";
+      return { ok: false, reason: `${bandSkip}; no monthly 21–60`, noteOiSkip: false };
+    }
+  }
   let lastReason = "no liquid put debit";
   let sawLiquidityFail = false;
   for (let ei = 0; ei < candidates.length; ei++) {
@@ -760,6 +828,7 @@ export async function pickCreditLegAutoPut(opts: {
       }
       const gate = checkCreditLegAutoLiquidity(opts.symbol, cand.long, cand.short, qty);
       if (gate.ok) {
+        const dte = daysToExpiry(picked.expiry, now);
         return {
           ok: true,
           pick: {
@@ -769,6 +838,8 @@ export async function pickCreditLegAutoPut(opts: {
             offset: cand.offset,
             expiryIndex: ei,
             expiryCount: candidates.length,
+            monthlyFallback,
+            dte: Number.isFinite(dte) ? dte : 0,
           },
         };
       }
@@ -1141,6 +1212,11 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
           }
           pair = { long: ladder.pick.long, short: ladder.pick.short };
           expiry = ladder.pick.expiry;
+          if (ladder.pick.monthlyFallback) {
+            ctx.log(
+              `auto paper put debit monthly-fallback ${intent.symbol} ${pair.long.strike}/${pair.short.strike} P ${expiry} (DTE ${ladder.pick.dte})`,
+            );
+          }
           if (ladder.pick.offset !== 0 || ladder.pick.expiryIndex !== 0) {
             ctx.log(
               `auto paper put debit ladder ${intent.symbol} ${pair.long.strike}/${pair.short.strike} P ${expiry} (offset ${formatStrikeOffset(ladder.pick.offset)}, expiry ${ladder.pick.expiryIndex + 1}/${ladder.pick.expiryCount})`,

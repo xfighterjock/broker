@@ -18,7 +18,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **argon2id** — Password hash for the `users` table. Never stored in plaintext.
 
-**ATM** — At the money. Auto debit verticals pick the strike closest to last (pickAtmCallDebit / pickAtmPutDebit). Credit-leg HYG/LQD/JNK AUTO puts try ATM first, then walk ±2 strikes and the next 30-45 DTE expiries when ATM fails the OI/close-value gate. SPY/QQQ/IWM riskoff puts and options-sleeve calls stay ATM-only.
+**ATM** — At the money. Auto debit verticals pick the strike closest to last (pickAtmCallDebit / pickAtmPutDebit). Credit-leg HYG/LQD/JNK AUTO puts try ATM first, then walk ±2 strikes and the next 30-45 DTE expiries when ATM fails the OI/close-value gate; if that band is empty, one 3rd-Friday monthly in 21–60 DTE (paper only, same gates). SPY/QQQ/IWM riskoff puts and options-sleeve calls stay ATM-only and 30-45 DTE only.
 
 **auth_needed** — FCM eventType when E*TRADE transitions to `needs_pin`. Deduped as `auth_needed:etrade:needs_pin`.
 
@@ -40,7 +40,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **DBMF** — iMGP DBi Managed Futures Strategy ETF. Multi-asset trend candidate on the risk-off 63d RS overlay (trend bucket, after defensives XLU/XLP).
 
-**DTE** — Days to expiration. Auto verticals target 30-45 DTE and exit at 21 DTE (OPTIONS_DTE_EXIT). Credit-leg AUTO may try up to 3 expiries in that band (closest to midpoint first) when the first expiry's strikes fail the liquidity gate.
+**DTE** — Days to expiration. Auto verticals target 30-45 DTE and exit at 21 DTE (OPTIONS_DTE_EXIT). Credit-leg AUTO may try up to 3 expiries in that band (closest to midpoint first) when the first expiry's strikes fail the liquidity gate. Paper-only credit-leg fallback: if the 30-45 band is empty, one standard monthly (3rd Friday) in 21–60 DTE (RISKOFF_CREDIT_LEG_MONTHLY_DTE_MIN/MAX). Equity-index puts and options-sleeve calls do not use that fallback.
 
 **dma** — Daily moving average. See 20dma / 200dma.
 
@@ -82,7 +82,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **holiday** — NYSE full-day cash close. Status `marketSession.closedReason` (`holiday` / `weekend` / `early_close`). Web and iOS show a muted closed strip. Does not change GateMode, flatten books, or pause AUTO.
 
-**HYG** — iShares iBoxx $ High Yield Corporate Bond ETF. RISK ON 200dma leg. First credit-leg put debit on the riskoff sleeve when HYG is below its own 200dma. AUTO tries ATM first, then ±2 strikes, then up to two more 30-45 DTE expiries; each candidate still needs OI >= 100 on each leg, a round-trip within 25% of the entry debit, and a hard 3-contract cap (RISKOFF_HYG_* / RISKOFF_CREDIT_LEG_* aliases). Paper only.
+**HYG** — iShares iBoxx $ High Yield Corporate Bond ETF. RISK ON 200dma leg. First credit-leg put debit on the riskoff sleeve when HYG is below its own 200dma. AUTO tries ATM first, then ±2 strikes, then up to two more 30-45 DTE expiries; if that band is empty, one 3rd-Friday monthly in 21–60 DTE (paper only). Each candidate still needs OI >= 100 on each leg, a round-trip within 25% of the entry debit, and a hard 3-contract cap (RISKOFF_HYG_* / RISKOFF_CREDIT_LEG_* aliases). Paper only.
 
 **IEF** — iShares 7-10 Year Treasury Bond ETF. Intermediate-duration candidate on the risk-off 63d RS overlay (after TLT in the duration bucket). Also the fallback for gated duration when TLT is unquoted or sizes to 0.
 
@@ -128,7 +128,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **OAuth** — E*TRADE 1.0a handshake. In-app Authorize + PIN; in-process renew during the cash session.
 
-**OI** — Open interest. Options-chain leg field. HYG/LQD/JNK auto put-debit entries refuse either leg below RISKOFF_HYG_MIN_OPEN_INTEREST (100), including every ladder candidate (nearby strikes / next 30-45 DTE expiry); no OI floor on manual entries or SPY/QQQ/IWM/options auto verticals.
+**OI** — Open interest. Options-chain leg field. HYG/LQD/JNK auto put-debit entries refuse either leg below RISKOFF_HYG_MIN_OPEN_INTEREST (100), including every ladder candidate (nearby strikes / next 30-45 DTE expiry / credit-leg monthly 21–60 fallback); no OI floor on manual entries or SPY/QQQ/IWM/options auto verticals.
 
 **OTM** — Out of the money. Put debit shorts a lower strike; call debit shorts a higher strike.
 
