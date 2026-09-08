@@ -4,17 +4,23 @@ import { defaultSleeves } from "../shared/types";
 import {
   checkHygAutoLiquidity,
   creditLegStrikeOffsetOrder,
+  isStandardMonthlyExpiry,
   pickAtmPutDebit,
   pickCreditLegAutoPut,
+  pickCreditLegMonthlyFallbackExpiry,
   pickCreditLegPutDebitCandidates,
   pickTargetExpiries,
   pickTargetExpiry,
   runAutopilot,
+  thirdFridayUtcDay,
   type AutoVertical,
 } from "../server/src/autopilot";
 import * as eventGateAlerts from "../server/src/eventGateAlerts";
 import {
+  OPTIONS_DTE_EXIT,
   RISKOFF_CREDIT_LEG_EXPIRY_CANDIDATES,
+  RISKOFF_CREDIT_LEG_MONTHLY_DTE_MAX,
+  RISKOFF_CREDIT_LEG_MONTHLY_DTE_MIN,
   RISKOFF_CREDIT_LEG_STRIKE_OFFSETS,
   RISKOFF_HYG_MAX_AUTO_QTY,
   RISKOFF_HYG_MAX_ROUNDTRIP_SLIPPAGE_FRAC,
@@ -315,6 +321,15 @@ describe("credit-leg put debit ladder helpers", () => {
     expect(pickTargetExpiry(list, now)?.expiry).toBe(picked[0].expiry);
     expect(picked).toHaveLength(RISKOFF_CREDIT_LEG_EXPIRY_CANDIDATES);
   });
+
+  it("standard monthly is 3rd Friday, including untagged calendar day", () => {
+    expect(RISKOFF_CREDIT_LEG_MONTHLY_DTE_MIN).toBe(OPTIONS_DTE_EXIT);
+    expect(RISKOFF_CREDIT_LEG_MONTHLY_DTE_MAX).toBe(60);
+    expect(thirdFridayUtcDay(2026, 10)).toBe(16);
+    expect(isStandardMonthlyExpiry(expiry("2026-10-16", "WEEKLY"))).toBe(true);
+    expect(isStandardMonthlyExpiry(expiry("2026-10-23", "WEEKLY"))).toBe(false);
+    expect(isStandardMonthlyExpiry(expiry("2026-10-09", "MONTHLY"))).toBe(true);
+  });
 });
 
 describe("runAutopilot: HYG liquid-strike / expiry ladder", () => {
@@ -540,5 +555,223 @@ describe("pickCreditLegAutoPut", () => {
     expect(result.pick.offset).toBe(-1);
     expect(result.pick.long.strike).toBe(78.5);
     expect(result.pick.short.strike).toBe(78);
+    expect(result.pick.monthlyFallback).toBe(false);
+  });
+});
+
+/** 2026-08-28: 30–45 DTE is Sep 27–Oct 12. Oct 16 3rd Friday is 49 DTE. */
+const gapNow = new Date("2026-08-28T13:50:00.000Z");
+const sep11w = expiry("2026-09-11", "WEEKLY");
+const sep25w = expiry("2026-09-25", "WEEKLY");
+const oct16m = expiry("2026-10-16", "WEEKLY"); // 3rd Friday; type WEEKLY on purpose
+const oct23w = expiry("2026-10-23", "WEEKLY");
+const nov20m = expiry("2026-11-20", "MONTHLY");
+const gapOutsideBand = [sep11w, sep25w, oct16m, oct23w, nov20m];
+
+describe("credit-leg monthly DTE fallback", () => {
+  it("picks the 3rd-Friday monthly near 50 DTE when the 30–45 band is empty", () => {
+    expect(pickTargetExpiries(gapOutsideBand, gapNow)).toEqual([]);
+    expect(pickCreditLegMonthlyFallbackExpiry(gapOutsideBand, gapNow)?.expiry).toBe("2026-10-16");
+  });
+
+  it("prefers the monthly closer to the 30–45 midpoint, then closer to today", () => {
+    // From 2026-08-10: Sep 18 = 39 DTE, Oct 16 = 67 DTE (>60). Only Sep 18 in 21–60.
+    const early = new Date("2026-08-10T13:50:00.000Z");
+    const sep18 = expiry("2026-09-18");
+    const oct16Monthly = expiry("2026-10-16");
+    expect(pickCreditLegMonthlyFallbackExpiry([sep18, oct16Monthly], early)?.expiry).toBe("2026-09-18");
+    // Tie vs midpoint: 25 and 50 DTE are both 12.5 from 37.5; closer-to-today wins.
+    const tieNow = new Date("2026-09-21T13:50:00.000Z");
+    const tagged50 = expiry("2026-11-10", "MONTHLY");
+    expect(pickCreditLegMonthlyFallbackExpiry([oct16Monthly, tagged50], tieNow)?.expiry).toBe("2026-10-16");
+  });
+
+  it("selects the ~50 DTE monthly ATM when no 30–45 expiry exists", async () => {
+    const chain = hygChainAroundAtm("2026-10-16");
+    const result = await pickCreditLegAutoPut({
+      symbol: "HYG",
+      last: 79,
+      expiries: gapOutsideBand,
+      fetchChain: async (_symbol, exp) => hygChainAroundAtm(exp),
+      now: gapNow,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.pick.expiry).toBe("2026-10-16");
+    expect(result.pick.monthlyFallback).toBe(true);
+    expect(result.pick.offset).toBe(0);
+    expect(result.pick.dte).toBe(49);
+    expect(result.pick.long.strike).toBe(79);
+    expect(chain[0].expiry).toBe("2026-10-16");
+  });
+
+  it("still prefers a 30–45 DTE expiry when the band is populated", async () => {
+    const result = await pickCreditLegAutoPut({
+      symbol: "HYG",
+      last: 79,
+      expiries: [oct9, oct16m, nov20m],
+      fetchChain: async (_symbol, exp) => hygChainAroundAtm(exp),
+      now: gapNow,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.pick.expiry).toBe("2026-10-09");
+    expect(result.pick.monthlyFallback).toBe(false);
+  });
+
+  it("skips with no-band / no-monthly when nothing is in 21–60", async () => {
+    const result = await pickCreditLegAutoPut({
+      symbol: "HYG",
+      last: 79,
+      expiries: [sep11w, sep25w, oct23w, nov20m],
+      fetchChain: async () => hygChainAroundAtm("2026-11-20"),
+      now: gapNow,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toMatch(/no 30–45 DTE expiry/);
+    expect(result.reason).toMatch(/no monthly 21–60/);
+    expect(result.noteOiSkip).toBe(false);
+  });
+});
+
+describe("runAutopilot: credit-leg monthly DTE fallback", () => {
+  beforeEach(() => setPaperNow(gapNow));
+  afterEach(() => {
+    setPaperNow(null);
+    vi.restoreAllMocks();
+  });
+
+  it("places HYG on the ~50 DTE monthly and logs monthly-fallback", async () => {
+    const placed: AutoVertical[] = [];
+    const logs: string[] = [];
+    const result = await runAutopilot({
+      enabled: true,
+      getPositions: () => [],
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [],
+      featureRows: [],
+      scanReady: true,
+      riskOn: false,
+      riskChecks: { spyAbove200: true, hygAbove200: false },
+      riskoffQuotes: [{ symbol: "HYG", last: 79 }],
+      place: async () => ({ ok: true }),
+      close: async () => ({ ok: true }),
+      placeVertical: async (v: AutoVertical) => {
+        placed.push(v);
+        return { ok: true };
+      },
+      fetchExpiries: async () => gapOutsideBand,
+      fetchChain: async (_symbol, exp) => hygChainAroundAtm(exp),
+      log: (line) => logs.push(line),
+    });
+    expect(placed).toHaveLength(1);
+    expect(placed[0]).toMatchObject({
+      symbol: "HYG",
+      expiry: "2026-10-16",
+      longStrike: 79,
+      shortStrike: 78.5,
+      qty: 3,
+    });
+    expect(result.verticals[0].expiry).toBe("2026-10-16");
+    expect(logs.some((l) => /put debit monthly-fallback HYG 79\/78\.5 P 2026-10-16 \(DTE 49\)/.test(l))).toBe(
+      true,
+    );
+  });
+
+  it("does not place when no monthly is in 21–60", async () => {
+    const placed: AutoVertical[] = [];
+    const logs: string[] = [];
+    await runAutopilot({
+      enabled: true,
+      getPositions: () => [],
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [],
+      featureRows: [],
+      scanReady: true,
+      riskOn: false,
+      riskChecks: { spyAbove200: true, hygAbove200: false },
+      riskoffQuotes: [{ symbol: "HYG", last: 79 }],
+      place: async () => ({ ok: true }),
+      close: async () => ({ ok: true }),
+      placeVertical: async (v: AutoVertical) => {
+        placed.push(v);
+        return { ok: true };
+      },
+      fetchExpiries: async () => [sep11w, oct23w, nov20m],
+      fetchChain: async () => hygChainAroundAtm("2026-11-20"),
+      log: (line) => logs.push(line),
+    });
+    expect(placed).toEqual([]);
+    expect(logs.some((l) => /vertical skip HYG: no 30–45 DTE expiry/.test(l))).toBe(true);
+    expect(logs.some((l) => /no monthly 21–60/.test(l))).toBe(true);
+  });
+
+  it("keeps fetch failures as option expiries unavailable (no fallback)", async () => {
+    const skip = vi.spyOn(eventGateAlerts, "noteCreditLegOiSkip").mockResolvedValue(null);
+    const placed: AutoVertical[] = [];
+    const logs: string[] = [];
+    await runAutopilot({
+      enabled: true,
+      getPositions: () => [],
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [],
+      featureRows: [],
+      scanReady: true,
+      riskOn: false,
+      riskChecks: { spyAbove200: true, hygAbove200: false },
+      riskoffQuotes: [{ symbol: "HYG", last: 79 }],
+      place: async () => ({ ok: true }),
+      close: async () => ({ ok: true }),
+      placeVertical: async (v: AutoVertical) => {
+        placed.push(v);
+        return { ok: true };
+      },
+      fetchExpiries: async () => ({ ok: false, error: "E*TRADE auth expired", status: 401 }),
+      fetchChain: async () => hygChainAroundAtm("2026-10-16"),
+      log: (line) => logs.push(line),
+    });
+    expect(placed).toEqual([]);
+    expect(skip).not.toHaveBeenCalled();
+    expect(logs.some((l) => /vertical skip HYG: option expiries unavailable: E\*TRADE auth expired \(status 401\)/.test(l))).toBe(
+      true,
+    );
+    expect(logs.some((l) => /monthly-fallback/.test(l))).toBe(false);
+    expect(logs.some((l) => /no 30–45 DTE expiry/.test(l))).toBe(false);
+  });
+
+  it("does not widen SPY equity-index puts off the 30–45 band", async () => {
+    const placed: AutoVertical[] = [];
+    const logs: string[] = [];
+    const spyChain: OptionLeg[] = [
+      { ...equityPutLeg(500, 6.1, 6.3), expiry: "2026-10-16" },
+      { ...equityPutLeg(490, 3.4, 3.6), expiry: "2026-10-16" },
+    ];
+    await runAutopilot({
+      enabled: true,
+      getPositions: () => [],
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [],
+      featureRows: [],
+      scanReady: true,
+      riskOn: false,
+      riskChecks: { spyAbove200: false, hygAbove200: true },
+      riskoffQuotes: [
+        { symbol: "SPY", last: 500 },
+        { symbol: "QQQ", last: 400 },
+      ],
+      place: async () => ({ ok: true }),
+      close: async () => ({ ok: true }),
+      placeVertical: async (v: AutoVertical) => {
+        placed.push(v);
+        return { ok: true };
+      },
+      fetchExpiries: async () => gapOutsideBand,
+      fetchChain: async () => spyChain,
+      log: (line) => logs.push(line),
+    });
+    expect(placed).toEqual([]);
+    expect(logs.some((l) => /vertical skip SPY: no 30–45 DTE expiry/.test(l))).toBe(true);
+    expect(logs.some((l) => /monthly-fallback/.test(l))).toBe(false);
   });
 });

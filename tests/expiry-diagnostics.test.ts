@@ -195,6 +195,7 @@ describe("option expiry / chain fetch diagnostics", () => {
       log: (line) => bandLogs.push(line),
     });
     expect(bandLogs.some((l) => /vertical skip HYG: no 30–45 DTE expiry/.test(l))).toBe(true);
+    expect(bandLogs.some((l) => /no monthly 21–60/.test(l))).toBe(true);
     expect(bandLogs.some((l) => /option expiries empty/.test(l))).toBe(false);
   });
 

@@ -131,7 +131,10 @@ export const RISKOFF_CREDIT_LEG_MAX_AUTO_QTY = RISKOFF_HYG_MAX_AUTO_QTY;
  * stay ATM-only.
  */
 export const RISKOFF_CREDIT_LEG_STRIKE_OFFSETS = 2;
-/** Credit-leg AUTO: try this many 30–45 DTE expiries (closest to band midpoint first; same scoring as pickTargetExpiry). */
+/**
+ * Credit-leg AUTO: try this many 30–45 DTE expiries (closest to band midpoint first; same scoring as pickTargetExpiry).
+ * Empty band may then use one standard monthly in RISKOFF_CREDIT_LEG_MONTHLY_DTE_MIN..MAX (paper only).
+ */
 export const RISKOFF_CREDIT_LEG_EXPIRY_CANDIDATES = 3;
 /**
  * Risk-off quote strip (visibility). Puts are SPY/QQQ/IWM + HYG/LQD/JNK.
@@ -206,6 +209,14 @@ export const OPTIONS_DEBIT_TARGET_FRAC = 0.01;
 export const OPTIONS_DEBIT_CAP_FRAC = 0.02;
 /** Close the vertical when calendar DTE is at or below this. */
 export const OPTIONS_DTE_EXIT = 21;
+/**
+ * Credit-leg AUTO paper puts only (HYG/LQD/JNK). When the 30–45 DTE band is
+ * empty, try one standard monthly (3rd Friday) in this window. Floor reuses
+ * OPTIONS_DTE_EXIT so we do not invent a conflicting flatten. Equity-index
+ * puts and options-sleeve calls stay 30–45 only.
+ */
+export const RISKOFF_CREDIT_LEG_MONTHLY_DTE_MIN = OPTIONS_DTE_EXIT;
+export const RISKOFF_CREDIT_LEG_MONTHLY_DTE_MAX = 60;
 export const OPTIONS_PROFIT_TAKE_FRAC = 0.5;
 export const OPTIONS_DEBIT_STOP_FRAC = 0.5;
 /** Refuse a debit vertical when net debit / width exceeds this (equal-to-half is OK). */
