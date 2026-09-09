@@ -211,8 +211,11 @@ describe("vertical exit blotter price: immediate close credit, not close + entry
       expect(shortFill?.price).toBeCloseTo(0.22);
 
       // Move the chain to the incident's worse quote and force a fresh fetch.
+      // GET /api/quotes awaits markPaperQuiet (status only kicks it).
       resetEtradeCache();
       stub.setClosed();
+      const marked = await fetch(`${srv.url}/api/quotes?sleeve=riskoff`);
+      expect(marked.status).toBe(200);
       const afterClose = await fetch(`${srv.url}/api/status`);
       expect(afterClose.status).toBe(200);
       const closedSnap = (await afterClose.json()) as StatusSnapshot;
