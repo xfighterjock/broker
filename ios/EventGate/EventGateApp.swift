@@ -27,9 +27,13 @@ struct EventGateApp: App {
                 }
                 .task {
                     // First frame already showed login or last-session essentials.
+                    // Do not share this task with Firebase — configure/attach must
+                    // not serialize the first GET /api/status on the MainActor.
                     if auth.unlocked {
                         status.startPolling()
                     }
+                }
+                .task {
                     appDelegate.startFirebaseAfterFirstFrame(application: UIApplication.shared)
                 }
         }

@@ -6,6 +6,7 @@ import {
   BROKER_REQUEST_TIMEOUT_SEC,
   BROKER_RESOURCE_TIMEOUT_SEC,
   NSURL_ERROR_TIMED_OUT,
+  hangUntilAborted,
   isTimeoutError,
   performWithTimeout,
   shouldRetryTransport,
@@ -33,6 +34,10 @@ const authSwift = readFileSync(
   resolve("ios/EventGate/AuthController.swift"),
   "utf8",
 );
+const essentialsSwift = readFileSync(
+  resolve("ios/EventGate/EssentialsView.swift"),
+  "utf8",
+);
 const activityView = readFileSync(
   resolve("ios/EventGate/ActivityLogView.swift"),
   "utf8",
@@ -50,29 +55,62 @@ function launchMethod(src: string): string {
   return src.slice(start, end);
 }
 
-describe("BrokerTransport timeout safety net", () => {
-  it("does not retry a blackholed first request on the same route", () => {
+describe("BrokerTransport hard-cancel of a blackholed connect", () => {
+  it("retries a cancelled first attempt once on a fresh session", () => {
     expect(isTimeoutError({ code: "timedOut" })).toBe(true);
     expect(isTimeoutError({ code: NSURL_ERROR_TIMED_OUT, domain: "NSURLErrorDomain" })).toBe(
       true,
     );
-    expect(shouldRetryTransport({ code: "timedOut" }, 1)).toBe(false);
-    expect(BROKER_EXTRA_ATTEMPTS_ON_TIMEOUT).toBe(0);
+    expect(isTimeoutError({ code: "cancelled" })).toBe(true);
+    expect(shouldRetryTransport({ code: "timedOut" }, 1)).toBe(true);
+    expect(shouldRetryTransport({ code: "timedOut" }, 2)).toBe(false);
+    expect(BROKER_EXTRA_ATTEMPTS_ON_TIMEOUT).toBe(1);
   });
 
-  it("surfaces a transport timeout on the first attempt", async () => {
+  it("cancels a hung connect and retries once on a fresh session", async () => {
+    const sessions: number[] = [];
     let calls = 0;
-    await expect(
-      performWithTimeout(async () => {
+    const started = Date.now();
+    const result = await performWithTimeout(
+      async ({ sessionId, signal }) => {
         calls += 1;
-        const err = new Error("The request timed out.");
-        Object.assign(err, { code: "timedOut" });
-        throw err;
-      }),
-    ).rejects.toThrow("The request timed out.");
-    expect(calls).toBe(1);
+        sessions.push(sessionId);
+        if (calls === 1) return hangUntilAborted(signal);
+        return { ok: true };
+      },
+      { timeoutMs: 40 },
+    );
+    expect(result).toEqual({ ok: true });
+    expect(calls).toBe(2);
+    expect(sessions).toEqual([1, 2]);
+    expect(Date.now() - started).toBeLessThan(500);
+  });
 
-    expect(await performWithTimeout(async () => ({ ok: true }))).toEqual({ ok: true });
+  it("fails after two cancelled attempts instead of waiting for a path-update", async () => {
+    let calls = 0;
+    const started = Date.now();
+    await expect(
+      performWithTimeout(
+        async ({ signal }) => {
+          calls += 1;
+          return hangUntilAborted(signal);
+        },
+        { timeoutMs: 30 },
+      ),
+    ).rejects.toThrow("The request timed out.");
+    expect(calls).toBe(2);
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
+  it("does not retry a successful first attempt", async () => {
+    let calls = 0;
+    expect(
+      await performWithTimeout(async () => {
+        calls += 1;
+        return { ok: true };
+      }, { timeoutMs: 40 }),
+    ).toEqual({ ok: true });
+    expect(calls).toBe(1);
   });
 });
 
@@ -91,6 +129,31 @@ describe("iOS cold start first paint", () => {
     expect(appSwift).toContain(".task");
   });
 
+  it("does not block the MainActor on Firebase configure or APNs/FCM attach", () => {
+    expect(delegateSwift).toContain("Task.detached");
+    expect(delegateSwift).toMatch(
+      /Task\.detached[\s\S]*FirebaseApp\.configure/,
+    );
+    expect(delegateSwift).not.toMatch(
+      /@MainActor\s*\n\s*func startFirebaseAfterFirstFrame/,
+    );
+    const taskBlocks = appSwift.split(".task");
+    expect(
+      taskBlocks.some(
+        (block) =>
+          block.includes("status.startPolling") &&
+          !block.includes("startFirebaseAfterFirstFrame"),
+      ),
+    ).toBe(true);
+    expect(
+      taskBlocks.some(
+        (block) =>
+          block.includes("startFirebaseAfterFirstFrame") &&
+          !block.includes("status.startPolling"),
+      ),
+    ).toBe(true);
+  });
+
   it("paints login or last session without waiting on status or FCM", () => {
     expect(authSwift).toContain("restoreSessionOnLaunch()");
     expect(authSwift).toMatch(
@@ -104,23 +167,29 @@ describe("iOS cold start first paint", () => {
     expect(appSwift).toContain("status.startPolling()");
     expect(statusSwift).not.toContain("/api/activity");
     expect(activityView).toContain("await activity.reload()");
+    expect(essentialsSwift).toContain("Waiting for live status");
+    expect(essentialsSwift).toContain("status.lastError");
   });
 
-  it("uses a dedicated URLSession with short timeouts as a safety net, not shared", () => {
+  it("cancels the URLSession task after a few seconds and retries on a fresh session", () => {
     expect(existsSync(resolve("ios/EventGate/BrokerTransport.swift"))).toBe(true);
     expect(transportSwift).toContain("protocol BrokerHTTPPerforming");
     expect(transportSwift).toContain("URLSessionConfiguration.ephemeral");
     expect(transportSwift).toContain("waitsForConnectivity = false");
+    expect(transportSwift).toContain("extraAttemptsOnTimeout = 1");
     expect(transportSwift).toContain(
       `static let requestTimeout: TimeInterval = ${BROKER_REQUEST_TIMEOUT_SEC}`,
     );
     expect(transportSwift).toContain(
       `static let resourceTimeout: TimeInterval = ${BROKER_RESOURCE_TIMEOUT_SEC}`,
     );
-    expect(transportSwift).not.toContain("extraAttemptsOnTimeout");
-    expect(transportSwift).not.toContain("shouldRetry");
+    expect(transportSwift).toContain("Task.sleep");
+    expect(transportSwift).toContain("invalidateAndCancel");
+    expect(transportSwift).toContain("task?.cancel()");
+    expect(transportSwift).toContain("makeSession()");
+    expect(transportSwift).toMatch(/for attempt in 1\.\.\.attempts/);
     expect(transportSwift).not.toMatch(/URLSession\.shared\.(data|download|upload)/);
-    expect(BROKER_REQUEST_TIMEOUT_SEC).toBeLessThanOrEqual(15);
+    expect(BROKER_REQUEST_TIMEOUT_SEC).toBeLessThanOrEqual(10);
     expect(BROKER_RESOURCE_TIMEOUT_SEC).toBeGreaterThanOrEqual(
       BROKER_REQUEST_TIMEOUT_SEC,
     );

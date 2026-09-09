@@ -71,7 +71,7 @@ Xcode may rewrite `aps-environment` to `production` for a Release / App Store pr
 
 Simulator notes: `registerForRemoteNotifications` fails; you will not get a real APNs token or a deliverable FCM push. Use a device.
 
-Cold start paints Sign in or last-session essentials immediately (Keychain + cached status). `FirebaseApp.configure()` / APNs / FCM attach after that first frame. GET `/api/status` fills in behind the chrome; a 10s URLSession timeout is only a safety net if the first request of this process is blackholed on the current route (wifi ↔ cellular path-update unsticks it). Swiping the app closed kills the process — this is not a leftover socket. GET `/api/activity` still loads only when you open Activity.
+Cold start paints Sign in or last-session essentials immediately (Keychain + cached status). `FirebaseApp.configure()` / APNs / FCM attach after that first frame off the MainActor (they must not stall GET `/api/status`). Live status fills in behind the chrome. `URLRequest.timeoutInterval` does not abort a TCP/TLS connect that never completes, so a racing Task cancels the `URLSessionTask` after 8s and retries once on a fresh session. If both attempts fail, essentials stay up with a visible error instead of waiting for a wifi ↔ cellular path-update. Swiping the app closed kills the process — this is not a leftover socket. GET `/api/activity` still loads only when you open Activity.
 
 ## 5. Backend contract
 

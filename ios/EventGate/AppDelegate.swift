@@ -17,15 +17,21 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     }
 
     /// Call after the first frame so login / last-session chrome is already on screen.
-    @MainActor
+    /// Returns immediately: configure and APNs/FCM attach must not block the
+    /// MainActor or the first GET `/api/status`.
     func startFirebaseAfterFirstFrame(application: UIApplication) {
         guard !firebaseStarted else { return }
         firebaseStarted = true
-        if FirebaseApp.app() == nil {
-            FirebaseApp.configure()
+        Task.detached(priority: .utility) { [weak self] in
+            if FirebaseApp.app() == nil {
+                FirebaseApp.configure()
+            }
+            guard let self else { return }
+            await MainActor.run {
+                Messaging.messaging().delegate = self
+                PushController.shared.attach(application: application)
+            }
         }
-        Messaging.messaging().delegate = self
-        PushController.shared.attach(application: application)
     }
 
     func application(
