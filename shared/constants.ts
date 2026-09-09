@@ -189,6 +189,14 @@ export const RISKOFF_ETF_STOP_MUL = 0.92;
  */
 export const RISKOFF_ETF_RS_HYSTERESIS = 0.005;
 /**
+ * Absolute-trend filter on the 63d RS overlay winner (not BIL). After RS +
+ * hysteresis, the chosen candidate must be above its own 200dma (same Massive
+ * daily series as the 63d returns). At/below 200 or missing 200 → park in BIL.
+ * Not a re-rank: do not fall through to the next RS name. BIL itself is never
+ * 200-filtered. Independent of credit-leg 200dma puts and gated TLT/IEF.
+ */
+export const RISKOFF_ETF_REQUIRE_ABOVE_200 = true;
+/**
  * Gated TLT/IEF duration long — a separate risk-off book rule, not another
  * 63d RS pick. 20% of the $100k book so it does not crowd out the 40% overlay.
  * Combined overlay + duration = 60%; puts keep the rest. Paper only.

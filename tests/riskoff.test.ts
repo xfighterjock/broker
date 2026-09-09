@@ -31,6 +31,7 @@ import {
   RISKOFF_ETF_CANDIDATES,
   RISKOFF_ETF_LOOKBACK_DAYS,
   RISKOFF_ETF_NOTIONAL_FRAC,
+  RISKOFF_ETF_REQUIRE_ABOVE_200,
   RISKOFF_ETF_RS_HYSTERESIS,
   RISKOFF_ETF_STOP_MUL,
   RISKOFF_ETF_SYMBOLS,
@@ -38,11 +39,15 @@ import {
   type RiskoffEtfSymbol,
 } from "../shared/constants";
 import {
+  above200FromCloses,
   decideRiskoffEtf,
+  emptyRiskoffEtfAbove200,
   emptyRiskoffEtfReturns,
   periodReturn,
   pickRiskoffEtfWinner,
+  riskoffEtfAbove200FromBars,
   sizeRiskoffEtfShares,
+  type RiskoffEtfAbove200,
   type RiskoffEtfReturns,
 } from "../server/src/riskoffEtf";
 import { sleeveBook } from "../server/src/paper";
@@ -811,6 +816,17 @@ function etfRs(overrides: Partial<Record<RiskoffEtfSymbol, number | null>>): Ris
   return out;
 }
 
+function etfAbove200(
+  overrides: Partial<Record<RiskoffEtfSymbol, boolean | null>> = {},
+): RiskoffEtfAbove200 {
+  const out = emptyRiskoffEtfAbove200();
+  for (const s of RISKOFF_ETF_SYMBOLS) out[s] = s === "BIL" ? null : true;
+  for (const [k, v] of Object.entries(overrides) as Array<[RiskoffEtfSymbol, boolean | null]>) {
+    out[k] = v;
+  }
+  return out;
+}
+
 const gldWins = etfRs({ GLD: 0.12, UUP: 0.04 });
 const uupWins = etfRs({ GLD: 0.03, UUP: 0.11 });
 const bothTrail = etfRs({ GLD: -0.02, UUP: -0.04 });
@@ -877,6 +893,7 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(DEFAULT_SLEEVE_EQUITY_USD * RISKOFF_ETF_NOTIONAL_FRAC).toBe(40_000);
     expect(RISKOFF_ETF_STOP_MUL).toBe(0.92);
     expect(RISKOFF_ETF_LOOKBACK_DAYS).toBe(63);
+    expect(RISKOFF_ETF_REQUIRE_ABOVE_200).toBe(true);
     const qty = sizeRiskoffEtfShares(180);
     expect(qty).toBe(Math.floor((DEFAULT_SLEEVE_EQUITY_USD * 0.4) / 180));
     expect(qty * 180).toBeLessThanOrEqual(DEFAULT_SLEEVE_EQUITY_USD * 0.4);
@@ -886,6 +903,7 @@ describe("risk-off ETF relative-strength expression", () => {
       sleeve: defaultSleeves().riskoff,
       returns: gldWins,
       quotes: allEtfQuotes,
+      above200: etfAbove200(),
     });
     expect(decided.buy?.symbol).toBe("GLD");
     expect(decided.buy?.qty).toBe(qty);
@@ -938,6 +956,7 @@ describe("risk-off ETF relative-strength expression", () => {
       sleeve: defaultSleeves().riskoff,
       returns: dbmfTinyLead,
       quotes: allEtfQuotes,
+      above200: etfAbove200(),
     });
     expect(hold.winner).toBe("GLD");
     expect(hold.buy).toBeNull();
@@ -957,6 +976,7 @@ describe("risk-off ETF relative-strength expression", () => {
       sleeve: defaultSleeves().riskoff,
       returns: dbmfClearLead,
       quotes: allEtfQuotes,
+      above200: etfAbove200(),
     });
     expect(rotate.winner).toBe("DBMF");
     expect(rotate.sells.map((s) => s.symbol)).toEqual(["GLD"]);
@@ -977,6 +997,148 @@ describe("risk-off ETF relative-strength expression", () => {
     const exactTie = etfRs({ GLD: 0.1, DBMF: 0.1 });
     expect(pickRiskoffEtfWinner(exactTie, "GLD")).toBe("GLD");
     expect(pickRiskoffEtfWinner(exactTie, "DBMF")).toBe("DBMF");
+  });
+
+  it("computes 200dma from the same overlay closes and fails closed when short", () => {
+    expect(above200FromCloses(Array.from({ length: 199 }, () => 100))).toBeNull();
+    const flat = Array.from({ length: 200 }, () => 100);
+    expect(above200FromCloses(flat)).toBe(false);
+    const above = [...flat];
+    above[above.length - 1] = 110;
+    expect(above200FromCloses(above)).toBe(true);
+    const below = [...flat];
+    below[below.length - 1] = 90;
+    expect(above200FromCloses(below)).toBe(false);
+    const bars = { GLD: above.map((close) => ({ close, volume: 1 })) };
+    expect(riskoffEtfAbove200FromBars(bars).GLD).toBe(true);
+    expect(riskoffEtfAbove200FromBars(bars).UUP).toBeNull();
+  });
+
+  it("parks in BIL when the RS winner is at or below its 200dma — no re-rank", () => {
+    expect(pickRiskoffEtfWinner(gldWins, null, etfAbove200({ GLD: false }))).toBe("BIL");
+    const xlpAlsoEligible = etfRs({ GLD: 0.12, XLP: 0.08 });
+    expect(pickRiskoffEtfWinner(xlpAlsoEligible)).toBe("GLD");
+    expect(pickRiskoffEtfWinner(xlpAlsoEligible, null, etfAbove200({ GLD: false, XLP: true }))).toBe(
+      "BIL",
+    );
+    const book = paperBook([etfPos("GLD", 100, 180)]);
+    const decided = decideRiskoffEtf({
+      riskOn: false,
+      positions: book.getPositions(),
+      sleeve: defaultSleeves().riskoff,
+      returns: gldWins,
+      quotes: allEtfQuotes,
+      above200: etfAbove200({ GLD: false }),
+    });
+    expect(decided.winner).toBe("BIL");
+    expect(decided.sells.map((s) => s.symbol)).toEqual(["GLD"]);
+    expect(decided.buy?.symbol).toBe("BIL");
+    expect(decided.buy?.symbol).not.toBe("GLD");
+    expect(decided.reason).toBe("GLD below 200dma: overlay cash");
+    expect(decided.buy?.thesis).toBe("GLD below 200dma: overlay cash");
+  });
+
+  it("keeps the RS winner when that name is above its 200dma, including hysteresis holds", () => {
+    expect(pickRiskoffEtfWinner(gldWins, null, etfAbove200())).toBe("GLD");
+    const dbmfTinyLead = etfRs({ GLD: 0.1, DBMF: 0.104 });
+    expect(pickRiskoffEtfWinner(dbmfTinyLead, "GLD", etfAbove200())).toBe("GLD");
+    const hold = decideRiskoffEtf({
+      riskOn: false,
+      positions: [etfPos("GLD", 100, 180)],
+      sleeve: defaultSleeves().riskoff,
+      returns: gldWins,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+    });
+    expect(hold.winner).toBe("GLD");
+    expect(hold.reason).toBe("hold GLD");
+    expect(hold.buy).toBeNull();
+    expect(hold.sells).toEqual([]);
+  });
+
+  it("parks in BIL when the winner's 200dma is missing", () => {
+    expect(pickRiskoffEtfWinner(gldWins, null, etfAbove200({ GLD: null }))).toBe("BIL");
+    expect(pickRiskoffEtfWinner(gldWins, null, emptyRiskoffEtfAbove200())).toBe("BIL");
+    const decided = decideRiskoffEtf({
+      riskOn: false,
+      positions: [etfPos("GLD", 100, 180)],
+      sleeve: defaultSleeves().riskoff,
+      returns: gldWins,
+      quotes: allEtfQuotes,
+    });
+    expect(decided.winner).toBe("BIL");
+    expect(decided.sells.map((s) => s.symbol)).toEqual(["GLD"]);
+    expect(decided.buy?.symbol).toBe("BIL");
+    expect(decided.reason).toBe("GLD 200dma missing: overlay cash");
+  });
+
+  it("never 200-filters BIL as the RS cash benchmark", () => {
+    expect(pickRiskoffEtfWinner(bothTrail, null, etfAbove200({ BIL: false }))).toBe("BIL");
+    expect(pickRiskoffEtfWinner(bothTrail, null, etfAbove200({ BIL: null }))).toBe("BIL");
+    const buyBil = decideRiskoffEtf({
+      riskOn: false,
+      positions: [],
+      sleeve: defaultSleeves().riskoff,
+      returns: bothTrail,
+      quotes: allEtfQuotes,
+      above200: etfAbove200({ BIL: false }),
+    });
+    expect(buyBil.winner).toBe("BIL");
+    expect(buyBil.buy?.symbol).toBe("BIL");
+    expect(buyBil.reason).toBe("buy BIL");
+    expect(buyBil.buy?.thesis).toMatch(/winner BIL/);
+    const holdBil = decideRiskoffEtf({
+      riskOn: false,
+      positions: [etfPos("BIL", 400, 91)],
+      sleeve: defaultSleeves().riskoff,
+      returns: bothTrail,
+      quotes: allEtfQuotes,
+      above200: etfAbove200({ BIL: false }),
+    });
+    expect(holdBil.winner).toBe("BIL");
+    expect(holdBil.reason).toBe("hold BIL");
+    expect(holdBil.buy).toBeNull();
+  });
+
+  it("autopilot: RS winner GLD below 200 → sell GLD, park in BIL, no GLD buy", async () => {
+    const book = paperBook([etfPos("GLD", 100, 180)]);
+    const result = await runAutopilot({
+      enabled: true,
+      getPositions: book.getPositions,
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [],
+      featureRows: [],
+      scanReady: true,
+      riskOn: false,
+      riskoffEtfReturns: gldWins,
+      riskoffEtfAbove200: etfAbove200({ GLD: false }),
+      riskoffEtfQuotes: allEtfQuotes,
+      place: book.place,
+      close: book.close,
+      log: () => {},
+    });
+    expect(result.sold.map((s) => s.symbol)).toEqual(["GLD"]);
+    expect(result.bought.map((b) => b.symbol)).toEqual(["BIL"]);
+    expect(result.bought.some((b) => b.symbol === "GLD")).toBe(false);
+    expect(book.getPositions().map((p) => p.symbol)).toEqual(["BIL"]);
+  });
+
+  it("absolute trend overrides a hysteresis hold when GLD is below 200dma", () => {
+    const dbmfTinyLead = etfRs({ GLD: 0.1, DBMF: 0.104 });
+    expect(pickRiskoffEtfWinner(dbmfTinyLead, "GLD")).toBe("GLD");
+    expect(pickRiskoffEtfWinner(dbmfTinyLead, "GLD", etfAbove200({ GLD: false }))).toBe("BIL");
+    const flatten = decideRiskoffEtf({
+      riskOn: false,
+      positions: [etfPos("GLD", 100, 180)],
+      sleeve: defaultSleeves().riskoff,
+      returns: dbmfTinyLead,
+      quotes: allEtfQuotes,
+      above200: etfAbove200({ GLD: false }),
+    });
+    expect(flatten.winner).toBe("BIL");
+    expect(flatten.sells.map((s) => s.symbol)).toEqual(["GLD"]);
+    expect(flatten.buy?.symbol).toBe("BIL");
+    expect(flatten.reason).toBe("GLD below 200dma: overlay cash");
   });
 
   it("sizes a 40% stake well under the $100k sleeve (short of half)", () => {
@@ -1011,6 +1173,7 @@ describe("risk-off ETF relative-strength expression", () => {
         { symbol: "HYG", last: 77 },
       ],
       riskoffEtfReturns: gldWins,
+      riskoffEtfAbove200: etfAbove200(),
       riskoffEtfQuotes: etfQuotes({ GLD: 180, UUP: 28, BIL: 91 }),
       place: book.place,
       close: book.close,
@@ -1055,6 +1218,7 @@ describe("risk-off ETF relative-strength expression", () => {
         { symbol: "QQQ", last: 400 },
       ],
       riskoffEtfReturns: gldWins,
+      riskoffEtfAbove200: etfAbove200(),
       riskoffEtfQuotes: etfQuotes({ GLD: 180, UUP: 28, BIL: 91 }),
       place: book.place,
       close: book.close,
@@ -1081,6 +1245,7 @@ describe("risk-off ETF relative-strength expression", () => {
       scanReady: true,
       riskOn: false,
       riskoffEtfReturns: tltWins,
+      riskoffEtfAbove200: etfAbove200(),
       riskoffEtfQuotes: allEtfQuotes,
       place: book.place,
       close: book.close,
@@ -1104,6 +1269,7 @@ describe("risk-off ETF relative-strength expression", () => {
       scanReady: true,
       riskOn: false,
       riskoffEtfReturns: dbmfWins,
+      riskoffEtfAbove200: etfAbove200(),
       riskoffEtfQuotes: allEtfQuotes,
       place: book.place,
       close: book.close,
@@ -1127,6 +1293,7 @@ describe("risk-off ETF relative-strength expression", () => {
       scanReady: true,
       riskOn: false,
       riskoffEtfReturns: uupWins,
+      riskoffEtfAbove200: etfAbove200(),
       riskoffEtfQuotes: etfQuotes({ GLD: 180, UUP: 28, BIL: 91 }),
       place: book.place,
       close: book.close,
@@ -1149,6 +1316,7 @@ describe("risk-off ETF relative-strength expression", () => {
       sleeve: defaultSleeves().riskoff,
       returns: uupWins,
       quotes: etfQuotes({ GLD: 180, UUP: 28, BIL: 91 }),
+      above200: etfAbove200(),
     });
     expect(rotate.sells.map((s) => s.symbol)).toEqual(["GLD"]);
     expect(rotate.buy?.symbol).toBe("UUP");
@@ -1217,6 +1385,7 @@ describe("risk-off ETF relative-strength expression", () => {
         { symbol: "HYG", last: 77 },
       ],
       riskoffEtfReturns: gldWins,
+      riskoffEtfAbove200: etfAbove200(),
       riskoffEtfQuotes: etfQuotes({ GLD: 180, UUP: 28, BIL: 91 }),
       place: book.place,
       close: book.close,
@@ -1290,6 +1459,7 @@ describe("risk-off ETF relative-strength expression", () => {
       scanReady: true,
       riskOn: false,
       riskoffEtfReturns: gldWins,
+      riskoffEtfAbove200: etfAbove200(),
       riskoffEtfQuotes: etfQuotes({ GLD: 180, UUP: 28, BIL: 91 }),
       place: book.place,
       close: book.close,
@@ -1305,6 +1475,7 @@ describe("risk-off ETF relative-strength expression", () => {
       sleeve: defaultSleeves().riskoff,
       returns: gldWins,
       quotes: etfQuotes({ GLD: 180, UUP: 28, BIL: 91 }),
+      above200: etfAbove200(),
     });
     expect(decided.buy).toBeNull();
     expect(decided.winner).toBe("GLD");
@@ -1317,6 +1488,7 @@ describe("risk-off ETF relative-strength expression", () => {
       sleeve: defaultSleeves().riskoff,
       returns: gldWins,
       quotes: etfQuotes({ GLD: 180, UUP: 28, BIL: 91 }),
+      above200: etfAbove200(),
     });
     expect(holdOld.buy).toBeNull();
     expect(holdOld.sells).toEqual([]);
@@ -1399,6 +1571,7 @@ describe("flatten risk-off puts while SPY is above 200dma", () => {
         { symbol: "HYG", last: 77 },
       ],
       riskoffEtfReturns: gldWins,
+      riskoffEtfAbove200: etfAbove200(),
       riskoffEtfQuotes: etfQuotes({ GLD: 180, UUP: 28, BIL: 91 }),
       place: book.place,
       close: book.close,

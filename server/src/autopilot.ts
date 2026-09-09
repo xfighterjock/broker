@@ -31,6 +31,7 @@ import { pointValueFor } from "./paper";
 import {
   decideRiskoffEtf,
   openRiskoffEtfPositions,
+  type RiskoffEtfAbove200,
   type RiskoffEtfReturns,
 } from "./riskoffEtf";
 import {
@@ -888,6 +889,11 @@ export type AutopilotCtx = {
   riskoffQuotes?: Array<{ symbol: string; last: number }>;
   /** 63d total returns for the risk-off ETF overlay vs BIL. Missing/null → fail closed to cash. */
   riskoffEtfReturns?: RiskoffEtfReturns | null;
+  /**
+   * Own-200 map from the same Massive dailies as riskoffEtfReturns.
+   * Candidate winner not known above 200 → park overlay in BIL.
+   */
+  riskoffEtfAbove200?: Partial<RiskoffEtfAbove200> | null;
   /** Delayed lasts used to size/rotate the risk-off ETF long. */
   riskoffEtfQuotes?: Array<{ symbol: string; last: number }>;
   /** Underlying -> ET ymd of last 50% debit stop. Same-day skip. */
@@ -977,6 +983,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
         sleeve: ctx.getSleeves().riskoff,
         returns: ctx.riskoffEtfReturns ?? null,
         quotes: ctx.riskoffEtfQuotes ?? [],
+        above200: ctx.riskoffEtfAbove200 ?? null,
       })
     : { sells: [] as AutoSell[], buy: null as AutoBuy | null, winner: null };
   let overlayRotated: { from: string; to: string } | null = null;

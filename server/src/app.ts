@@ -127,7 +127,7 @@ import {
   notifyDayFlatten,
   notifyVetoConfirm,
 } from "./eventGateAlerts";
-import { fetchRiskoffEtfReturns } from "./riskoffEtf";
+import { fetchRiskoffEtfOverlay } from "./riskoffEtf";
 import {
   applyOverlayMarks,
   detectOverlaySettlements,
@@ -1194,8 +1194,8 @@ export function buildApp(deps: AppDeps): express.Express {
           .filter((q) => q.last !== null && Number.isFinite(q.last) && q.last > 0)
           .map((q) => ({ symbol: q.symbol, last: q.last as number }));
       }
-      const [riskoffEtfReturns, etfQuoteRows] = await Promise.all([
-        fetchRiskoffEtfReturns(),
+      const [riskoffEtfOverlay, etfQuoteRows] = await Promise.all([
+        fetchRiskoffEtfOverlay(),
         fetchDelayedQuotes([...RISKOFF_ETF_SYMBOLS]).catch(() => []),
       ]);
       const riskoffEtfQuotes = etfQuoteRows
@@ -1216,7 +1216,8 @@ export function buildApp(deps: AppDeps): express.Express {
           jnkAbove200: risk.creditLegAbove200.jnkAbove200,
         },
         riskoffQuotes,
-        riskoffEtfReturns,
+        riskoffEtfReturns: riskoffEtfOverlay?.returns ?? null,
+        riskoffEtfAbove200: riskoffEtfOverlay?.above200 ?? null,
         riskoffEtfQuotes,
         verticalStopCooldown: memory.verticalStopCooldown,
         now: new Date(),

@@ -13,8 +13,10 @@ import {
   riskoffDurationAllowed,
 } from "../server/src/riskoffDuration";
 import {
+  emptyRiskoffEtfAbove200,
   emptyRiskoffEtfReturns,
   sizeRiskoffEtfShares,
+  type RiskoffEtfAbove200,
   type RiskoffEtfReturns,
 } from "../server/src/riskoffEtf";
 import {
@@ -51,6 +53,17 @@ function etfRs(overrides: Partial<Record<RiskoffEtfSymbol, number | null>>): Ris
   for (const s of RISKOFF_ETF_SYMBOLS) out[s] = 0;
   out.BIL = 0.01;
   for (const [k, v] of Object.entries(overrides) as Array<[RiskoffEtfSymbol, number | null]>) {
+    out[k] = v;
+  }
+  return out;
+}
+
+function etfAbove200(
+  overrides: Partial<Record<RiskoffEtfSymbol, boolean | null>> = {},
+): RiskoffEtfAbove200 {
+  const out = emptyRiskoffEtfAbove200();
+  for (const s of RISKOFF_ETF_SYMBOLS) out[s] = s === "BIL" ? null : true;
+  for (const [k, v] of Object.entries(overrides) as Array<[RiskoffEtfSymbol, boolean | null]>) {
     out[k] = v;
   }
   return out;
@@ -122,6 +135,7 @@ describe("gated TLT/IEF duration", () => {
       riskOn: false,
       riskChecks: { spyAbove200: false, dollarVeto: false },
       riskoffEtfReturns: gldWins,
+      riskoffEtfAbove200: etfAbove200(),
       riskoffEtfQuotes: allEtfQuotes,
       place: book.place,
       close: book.close,
@@ -176,6 +190,7 @@ describe("gated TLT/IEF duration", () => {
       riskOn: false,
       riskChecks: { spyAbove200: true, hygAbove200: false, dollarVeto: false },
       riskoffEtfReturns: gldWins,
+      riskoffEtfAbove200: etfAbove200(),
       riskoffEtfQuotes: allEtfQuotes,
       place: book.place,
       close: book.close,
@@ -211,6 +226,7 @@ describe("gated TLT/IEF duration", () => {
       riskOn: false,
       riskChecks: { spyAbove200: false, dollarVeto: true },
       riskoffEtfReturns: gldWins,
+      riskoffEtfAbove200: etfAbove200(),
       riskoffEtfQuotes: allEtfQuotes,
       place: book.place,
       close: book.close,
@@ -233,6 +249,7 @@ describe("gated TLT/IEF duration", () => {
       riskOn: true,
       riskChecks: { spyAbove200: true, dollarVeto: false },
       riskoffEtfReturns: gldWins,
+      riskoffEtfAbove200: etfAbove200(),
       riskoffEtfQuotes: allEtfQuotes,
       place: book.place,
       close: book.close,
@@ -273,6 +290,7 @@ describe("gated TLT/IEF duration", () => {
       riskOn: false,
       riskChecks: { spyAbove200: false, dollarVeto: false },
       riskoffEtfReturns: tltWins,
+      riskoffEtfAbove200: etfAbove200(),
       riskoffEtfQuotes: allEtfQuotes,
       place: book.place,
       close: book.close,
