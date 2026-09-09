@@ -7,6 +7,7 @@ struct EventGateApp: App {
     @StateObject private var push = PushController.shared
     @StateObject private var auth = AuthController()
     @StateObject private var status = StatusController()
+    @StateObject private var activity = ActivityLogController()
 
     var body: some Scene {
         WindowGroup {
@@ -15,6 +16,7 @@ struct EventGateApp: App {
                 .environmentObject(push)
                 .environmentObject(auth)
                 .environmentObject(status)
+                .environmentObject(activity)
                 .preferredColorScheme(.dark)
         }
     }

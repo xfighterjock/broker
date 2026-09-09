@@ -70,13 +70,15 @@ import {
 import type { AppConfig } from "./config";
 import type { DbPool } from "./db";
 import {
+  clampActivityLimit,
   insertFreeze,
   insertGateLog,
   insertSessionLog,
   latestFreeze,
   loadEvents,
-  recentGateLog,
-  recentSessionLogs,
+  pageGateLog,
+  pageMemoryLogs,
+  parseActivityBefore,
   stampKnowledgeTime,
 } from "./db";
 import { GateEngine } from "./gate";
@@ -1388,20 +1390,6 @@ export function buildApp(deps: AppDeps): express.Express {
         /* keep memory */
       }
     }
-    let actionLog = deps.engine.getLogs();
-    let sessionLog = memory.sessionLog;
-    if (deps.pool) {
-      try {
-        const [g, s] = await Promise.all([
-          recentGateLog(deps.pool, 200),
-          recentSessionLogs(deps.pool, 200),
-        ]);
-        if (g.length) actionLog = g;
-        if (s.length) sessionLog = s;
-      } catch {
-        /* keep memory */
-      }
-    }
     const sleeveBooks = await sleeveBooksWithSession();
     void considerClockAlerts(clock, freeze);
     void considerSleeveLossWarn(memory.sleeves, sleeveBooks, now);
@@ -1414,8 +1402,8 @@ export function buildApp(deps: AppDeps): express.Express {
       freeze,
       knowledgeTime,
       checklist: memory.checklist,
-      sessionLog,
-      actionLog,
+      sessionLog: [],
+      actionLog: [],
       gateEnabled: deps.engine.enabled,
       dailyLossUsd: deps.engine.dailyLossUsd,
       qtyCap: MAX_QTY,
@@ -1616,16 +1604,26 @@ export function buildApp(deps: AppDeps): express.Express {
     });
   });
 
-  app.get("/api/log", async (_req, res) => {
+  async function readActivityPage(req: express.Request) {
+    const limit = clampActivityLimit(req.query.limit);
+    const before = parseActivityBefore(req.query.before);
     if (deps.pool) {
       try {
-        res.json({ log: await recentGateLog(deps.pool, 200) });
-        return;
+        return await pageGateLog(deps.pool, { limit, before });
       } catch {
-        /* fall through */
+        /* fall through to in-process engine.log */
       }
     }
-    res.json({ log: deps.engine.getLogs() });
+    return pageMemoryLogs(deps.engine.getLogs(), { limit, before });
+  }
+
+  app.get("/api/activity", async (req, res) => {
+    res.json(await readActivityPage(req));
+  });
+
+  app.get("/api/log", async (req, res) => {
+    const page = await readActivityPage(req);
+    res.json({ ...page, log: page.entries });
   });
 
   app.get("/api/freeze", async (_req, res) => {

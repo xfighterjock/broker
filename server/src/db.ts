@@ -2,7 +2,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
-import type { CalendarEvent } from "../../shared/types";
+import {
+  ACTIVITY_LOG_PAGE_DEFAULT,
+  ACTIVITY_LOG_PAGE_MAX,
+  ACTIVITY_LOG_RETENTION_DAYS,
+} from "../../shared/constants";
+import type { ActivityLogPage, CalendarEvent } from "../../shared/types";
 import { noteServiceDown } from "./eventGateAlerts";
 
 const { Pool } = pg;
@@ -208,4 +213,82 @@ export async function recentSessionLogs(
       kind: r.event_type as string,
       message: r.notes as string,
     }));
+}
+
+export function clampActivityLimit(raw: unknown): number {
+  const n = typeof raw === "number" ? raw : Number(Array.isArray(raw) ? raw[0] : raw);
+  if (!Number.isFinite(n)) return ACTIVITY_LOG_PAGE_DEFAULT;
+  return Math.min(ACTIVITY_LOG_PAGE_MAX, Math.max(1, Math.floor(n)));
+}
+
+export function parseActivityBefore(raw: unknown): number | null {
+  const v = Array.isArray(raw) ? raw[0] : raw;
+  if (v === undefined || v === null || v === "") return null;
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n)) return null;
+  const i = Math.floor(n);
+  return i > 0 ? i : null;
+}
+
+export function pageMemoryLogs(
+  logs: { ts: string; message: string }[],
+  opts: { limit: number; before: number | null },
+): ActivityLogPage {
+  const limit = clampActivityLimit(opts.limit);
+  const before = opts.before != null && opts.before > 0 ? Math.floor(opts.before) : null;
+  const numbered = logs.map((e, i) => ({
+    id: i + 1,
+    ts: e.ts,
+    message: e.message,
+  }));
+  const newestFirst = numbered.slice().reverse();
+  const filtered = before != null ? newestFirst.filter((e) => e.id < before) : newestFirst;
+  const hasMore = filtered.length > limit;
+  const entries = filtered.slice(0, limit);
+  return {
+    entries,
+    nextBefore: hasMore ? (entries[entries.length - 1]?.id ?? null) : null,
+    hasMore,
+  };
+}
+
+export async function pageGateLog(
+  pool: DbPool,
+  opts: { limit: number; before: number | null },
+): Promise<ActivityLogPage> {
+  const limit = clampActivityLimit(opts.limit);
+  const before = opts.before != null && opts.before > 0 ? Math.floor(opts.before) : null;
+  const extra = limit + 1;
+  const result =
+    before != null
+      ? await pool.query(
+          `SELECT id, ts, line FROM gate_log WHERE id < $1 ORDER BY id DESC LIMIT $2`,
+          [before, extra],
+        )
+      : await pool.query(`SELECT id, ts, line FROM gate_log ORDER BY id DESC LIMIT $1`, [extra]);
+  const rows = result.rows as Array<{ id: number | string; ts: Date | string; line: string }>;
+  const hasMore = rows.length > limit;
+  const sliced = hasMore ? rows.slice(0, limit) : rows;
+  const entries = sliced.map((r) => ({
+    id: Number(r.id),
+    ts: new Date(r.ts).toISOString(),
+    message: String(r.line),
+  }));
+  return {
+    entries,
+    nextBefore: hasMore ? (entries[entries.length - 1]?.id ?? null) : null,
+    hasMore,
+  };
+}
+
+/** Delete gate_log and session_logs older than `days` (default 90). Same journal, not a second store. */
+export async function purgeExpiredLogs(
+  pool: DbPool,
+  now: Date = new Date(),
+  days: number = ACTIVITY_LOG_RETENTION_DAYS,
+): Promise<{ gateLog: number; sessionLogs: number }> {
+  const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
+  const g = await pool.query(`DELETE FROM gate_log WHERE ts < $1`, [cutoff]);
+  const s = await pool.query(`DELETE FROM session_logs WHERE ts < $1`, [cutoff]);
+  return { gateLog: g.rowCount ?? 0, sessionLogs: s.rowCount ?? 0 };
 }

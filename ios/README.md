@@ -1,6 +1,6 @@
 # Event Gate iOS (essentials + FCM)
 
-Native phone client for Event Gate. Home screen mirrors web `/m` (MobileEssentials): clock/mode, US cash closed/holiday strip (`marketSession` from GET `/api/status`), GATE, RISK ON/OFF, AUTO PAPER master + D/M/O/Ow/R chips, Flatten (same confirm copy), sleeve P/L, optional E*TRADE PIN. Settings holds credentials/session tools and FCM register/revoke/test. Rebuild the Xcode target after pulling — no App Store release is required for this strip.
+Native phone client for Event Gate. Home screen mirrors web `/m` (MobileEssentials): clock/mode, US cash closed/holiday strip (`marketSession` from GET `/api/status`), GATE, RISK ON/OFF, AUTO PAPER master + D/M/O/Ow/R chips, Flatten (same confirm copy), sleeve P/L, optional E*TRADE PIN. Toolbar Activity is a paged log (GET `/api/activity`, newest first, older pages on scroll). Settings holds credentials/session tools and FCM register/revoke/test. Rebuild the Xcode target after pulling — no App Store release is required for this strip.
 
 Web `/m` remains for browsers. This app talks to the same JSON APIs with a users-table session (Bearer in Keychain). It does not wrap the SPA in WKWebView.
 
@@ -63,7 +63,7 @@ Xcode may rewrite `aps-environment` to `production` for a Release / App Store pr
 3. Allow notifications when prompted.
 4. Sign in with the users-table username/password (not nginx htpasswd, not `GATE_PASSWORD`). Session token stays in the Keychain.
 5. Base URL defaults to `https://broker.logikmancer.com`.
-6. Home screen is essentials. Settings (gear) has Face ID / Touch ID unlock, FCM Register / Revoke / Test, and Sign out.
+6. Home screen is essentials. Toolbar **Activity** is the paged log (newest first). Settings (gear) has Face ID / Touch ID unlock, FCM Register / Revoke / Test, and Sign out.
 7. When an FCM token appears (redacted `abcd…wxyz`), tap **Register** if auto-register did not already fire after login.
 8. Tap **Refresh status** — expect `enabled` / `configured` and at least one active token.
 9. Tap **Send test**. A banner should arrive on the phone. Backend test payload is title `Event Gate test notification`, `deepLinkRoute` `/status` (opens essentials). The lock-screen / Notification Center icon must be the Event Gate AppIcon (teal robot + amber sparkline), not a generic placeholder. If an older generic icon remains after this rebuild, delete the app and reinstall — iOS caches notification icons.
@@ -80,7 +80,8 @@ Production `AUTH_MODE=users`. nginx terminates TLS and does **not** require htpa
 | POST | `/api/auth/login` | `{ username, password }` → `{ token }` |
 | POST | `/api/auth/logout` | (revokes bearer) |
 | GET | `/api/auth/status` | — |
-| GET | `/api/status` | essentials snapshot |
+| GET | `/api/status` | essentials snapshot (no activity history) |
+| GET | `/api/activity` | paged activity log `?limit=&before=` (newest first) |
 | POST | `/api/gate/enable` | `{ enabled }` |
 | POST | `/api/paper/auto` | `{ enabled }` or `{ sleeveId, enabled }` |
 | POST | `/api/flatten` | `{}` |

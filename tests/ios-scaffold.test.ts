@@ -64,16 +64,20 @@ describe("iOS Event Gate scaffold", () => {
       essentials, content, settings, login, api, format,
       readFileSync(resolve("ios/EventGate/AuthController.swift"), "utf8"),
       readFileSync(resolve("ios/EventGate/StatusController.swift"), "utf8"),
+      readFileSync(resolve("ios/EventGate/ActivityLogView.swift"), "utf8"),
+      readFileSync(resolve("ios/EventGate/ActivityLogController.swift"), "utf8"),
     ].join("\n");
 
     expect(content).toContain("EssentialsView()");
     expect(content).toContain("SettingsView()");
+    expect(content).toContain("ActivityLogView()");
     expect(content).toContain("LoginView()");
     expect(settings).toContain("Register");
     expect(settings).toContain("Revoke");
     expect(login).toContain("Sign in");
     expect(api).toContain("/api/auth/login");
     expect(api).toContain("/api/status");
+    expect(api).toContain("/api/activity");
     expect(api).toContain("/api/gate/enable");
     expect(api).toContain("/api/paper/auto");
     expect(api).toContain("/api/flatten");
@@ -94,6 +98,19 @@ describe("iOS Event Gate scaffold", () => {
     expect(format).toContain("US cash market closed");
     expect(essentials).toContain("marketSessionBanner");
     expect(essentials).toContain("market-closed");
+    const activityView = readFileSync(resolve("ios/EventGate/ActivityLogView.swift"), "utf8");
+    const activityCtl = readFileSync(resolve("ios/EventGate/ActivityLogController.swift"), "utf8");
+    const statusCtl = readFileSync(resolve("ios/EventGate/StatusController.swift"), "utf8");
+    const pbx = readFileSync(resolve("ios/EventGate.xcodeproj/project.pbxproj"), "utf8");
+    expect(activityView).toContain("loadMore");
+    expect(activityView).toContain("entries.last");
+    expect(activityCtl).toContain("activityLog");
+    expect(activityCtl).toContain("before");
+    expect(activityCtl).toContain("pageLimit");
+    expect(statusCtl).not.toContain("/api/activity");
+    expect(statusCtl).not.toContain("activityLog");
+    expect(pbx).toContain("ActivityLogView.swift");
+    expect(pbx).toContain("ActivityLogController.swift");
   });
 
   it("gitignore blocks the real plist and Xcode userdata", () => {

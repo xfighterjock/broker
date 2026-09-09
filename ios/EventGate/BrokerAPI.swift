@@ -23,6 +23,14 @@ struct BrokerAPI {
         try await get("/api/status")
     }
 
+    func activityLog(limit: Int, before: Int?) async throws -> ActivityLogPage {
+        var path = "/api/activity?limit=\(limit)"
+        if let before {
+            path += "&before=\(before)"
+        }
+        return try await get(path)
+    }
+
     func setGate(enabled: Bool) async throws -> StatusSnapshot {
         try await post("/api/gate/enable", json: ["enabled": enabled])
     }
