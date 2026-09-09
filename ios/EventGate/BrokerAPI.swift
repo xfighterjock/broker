@@ -8,7 +8,7 @@ struct BrokerAPI {
     init(
         baseURL: String,
         bearerToken: String?,
-        http: any BrokerHTTPPerforming = BrokerTransport.session
+        http: any BrokerHTTPPerforming = URLSession.shared
     ) {
         self.baseURL = baseURL
         self.bearerToken = bearerToken
@@ -113,12 +113,7 @@ struct BrokerAPI {
     }
 
     private func send<T: Decodable>(_ path: String, method: String, body: Data?, authorized: Bool) async throws -> T {
-        let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let root = URL(string: trimmed),
-              let scheme = root.scheme?.lowercased(),
-              scheme == "https" || scheme == "http",
-              let url = URL(string: path, relativeTo: root)?.absoluteURL
-        else {
+        guard let url = BrokerTransport.resolveURL(baseURL: baseURL, path: path) else {
             throw BrokerAPIError.invalidBaseURL
         }
 
@@ -143,11 +138,11 @@ struct BrokerAPI {
         do {
             (data, response) = try await BrokerTransport.data(for: request, using: http)
         } catch {
-            throw BrokerAPIError.transport(error.localizedDescription)
+            throw BrokerAPIError.transport(BrokerTransport.transportMessage(error, url: url))
         }
 
         guard let http = response as? HTTPURLResponse else {
-            throw BrokerAPIError.transport("Non-HTTP response")
+            throw BrokerAPIError.transport("Non-HTTP response (\(url.absoluteString))")
         }
         if http.statusCode == 401 {
             throw BrokerAPIError.httpStatus(401, summarizeBody(data))

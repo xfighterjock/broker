@@ -84,9 +84,12 @@ describe("iOS Event Gate scaffold", () => {
     expect(api).toContain("Authorization");
     expect(api).toContain("Bearer");
     expect(api).not.toContain("basicAuthHeader");
-    expect(api).not.toContain("URLSession.shared");
+    expect(api).toContain("URLSession.shared");
     expect(readFileSync(resolve("ios/EventGate/BrokerTransport.swift"), "utf8")).toContain(
-      "waitsForConnectivity = false",
+      "URLComponents",
+    );
+    expect(readFileSync(resolve("ios/EventGate/BrokerTransport.swift"), "utf8")).not.toContain(
+      "URLSessionConfiguration.ephemeral",
     );
     expect(dumped).not.toContain("WKWebView");
     const flatten =

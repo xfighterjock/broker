@@ -4,11 +4,13 @@ import { describe, expect, it } from "vitest";
 import {
   BROKER_EXTRA_ATTEMPTS_ON_TIMEOUT,
   BROKER_REQUEST_TIMEOUT_SEC,
-  BROKER_RESOURCE_TIMEOUT_SEC,
+  DEFAULT_BASE_URL,
   NSURL_ERROR_TIMED_OUT,
   isTimeoutError,
   performWithTimeout,
+  resolveBrokerURL,
   shouldRetryTransport,
+  transportMessage,
 } from "./ios-broker-transport";
 
 const transportSwift = readFileSync(
@@ -33,6 +35,10 @@ const authSwift = readFileSync(
   resolve("ios/EventGate/AuthController.swift"),
   "utf8",
 );
+const settingsSwift = readFileSync(
+  resolve("ios/EventGate/AppSettings.swift"),
+  "utf8",
+);
 const activityView = readFileSync(
   resolve("ios/EventGate/ActivityLogView.swift"),
   "utf8",
@@ -50,8 +56,8 @@ function launchMethod(src: string): string {
   return src.slice(start, end);
 }
 
-describe("BrokerTransport timeout safety net", () => {
-  it("does not retry a blackholed first request on the same route", () => {
+describe("BrokerTransport does not retry a timeout", () => {
+  it("does not cancel-and-retry a request on the same route", () => {
     expect(isTimeoutError({ code: "timedOut" })).toBe(true);
     expect(isTimeoutError({ code: NSURL_ERROR_TIMED_OUT, domain: "NSURLErrorDomain" })).toBe(
       true,
@@ -73,6 +79,39 @@ describe("BrokerTransport timeout safety net", () => {
     expect(calls).toBe(1);
 
     expect(await performWithTimeout(async () => ({ ok: true }))).toEqual({ ok: true });
+  });
+});
+
+describe("BrokerTransport absolute URL", () => {
+  it("builds https://broker.logikmancer.com/api/status from the default base", () => {
+    expect(DEFAULT_BASE_URL).toBe("https://broker.logikmancer.com");
+    expect(resolveBrokerURL(DEFAULT_BASE_URL, "/api/status")).toBe(
+      "https://broker.logikmancer.com/api/status",
+    );
+    expect(resolveBrokerURL(`${DEFAULT_BASE_URL}/`, "/api/status")).toBe(
+      "https://broker.logikmancer.com/api/status",
+    );
+    expect(resolveBrokerURL(`${DEFAULT_BASE_URL}/old/path`, "/api/status")).toBe(
+      "https://broker.logikmancer.com/api/status",
+    );
+    expect(resolveBrokerURL(DEFAULT_BASE_URL, "/api/activity?limit=50")).toBe(
+      "https://broker.logikmancer.com/api/activity?limit=50",
+    );
+  });
+
+  it("rejects a relative-URL footgun and a host without a scheme", () => {
+    expect(resolveBrokerURL(DEFAULT_BASE_URL, "api/status")).toBeNull();
+    expect(resolveBrokerURL("broker.logikmancer.com", "/api/status")).toBeNull();
+    expect(resolveBrokerURL("ftp://broker.logikmancer.com", "/api/status")).toBeNull();
+    expect(resolveBrokerURL("  ", "/api/status")).toBeNull();
+  });
+
+  it("puts the absolute URL into a timeout transport error", () => {
+    const url = resolveBrokerURL(DEFAULT_BASE_URL, "/api/status");
+    expect(url).toBe("https://broker.logikmancer.com/api/status");
+    expect(transportMessage("The request timed out.", url!)).toBe(
+      "The request timed out. (https://broker.logikmancer.com/api/status)",
+    );
   });
 });
 
@@ -106,35 +145,38 @@ describe("iOS cold start first paint", () => {
     expect(activityView).toContain("await activity.reload()");
   });
 
-  it("uses a dedicated URLSession with short timeouts as a safety net, not shared", () => {
+  it("uses URLSession.shared and puts the requested URL in transport errors", () => {
     expect(existsSync(resolve("ios/EventGate/BrokerTransport.swift"))).toBe(true);
     expect(transportSwift).toContain("protocol BrokerHTTPPerforming");
-    expect(transportSwift).toContain("URLSessionConfiguration.ephemeral");
-    expect(transportSwift).toContain("waitsForConnectivity = false");
+    expect(transportSwift).toContain("URLComponents");
+    expect(transportSwift).toContain("func resolveURL");
+    expect(transportSwift).toContain("func transportMessage");
+    expect(transportSwift).toContain("url.absoluteString");
     expect(transportSwift).toContain(
       `static let requestTimeout: TimeInterval = ${BROKER_REQUEST_TIMEOUT_SEC}`,
     );
-    expect(transportSwift).toContain(
-      `static let resourceTimeout: TimeInterval = ${BROKER_RESOURCE_TIMEOUT_SEC}`,
-    );
+    expect(transportSwift).not.toContain("URLSessionConfiguration.ephemeral");
+    expect(transportSwift).not.toContain("makeSession");
+    expect(transportSwift).not.toContain("static let session");
+    expect(transportSwift).not.toContain("waitsForConnectivity =");
     expect(transportSwift).not.toContain("extraAttemptsOnTimeout");
     expect(transportSwift).not.toContain("shouldRetry");
-    expect(transportSwift).not.toMatch(/URLSession\.shared\.(data|download|upload)/);
     expect(BROKER_REQUEST_TIMEOUT_SEC).toBeLessThanOrEqual(15);
-    expect(BROKER_RESOURCE_TIMEOUT_SEC).toBeGreaterThanOrEqual(
-      BROKER_REQUEST_TIMEOUT_SEC,
-    );
 
+    expect(settingsSwift).toContain(`defaultBaseURL = "${DEFAULT_BASE_URL}"`);
     expect(apiSwift).toContain("var http: any BrokerHTTPPerforming");
-    expect(apiSwift).toContain("http: any BrokerHTTPPerforming = BrokerTransport.session");
+    expect(apiSwift).toContain("http: any BrokerHTTPPerforming = URLSession.shared");
+    expect(apiSwift).toContain("BrokerTransport.resolveURL");
     expect(apiSwift).toContain("BrokerTransport.data(for: request, using: http)");
     expect(apiSwift).toContain("BrokerTransport.applyTimeouts");
+    expect(apiSwift).toContain("BrokerTransport.transportMessage");
     expect(apiSwift).toContain("Authorization");
     expect(apiSwift).toContain("Bearer");
     expect(apiSwift).toContain("/api/status");
     expect(apiSwift).toContain("/api/auth/login");
     expect(apiSwift).toContain("JSONDecoder().decode");
-    expect(apiSwift).not.toContain("URLSession.shared");
+    expect(apiSwift).not.toContain("BrokerTransport.session");
+    expect(apiSwift).not.toContain("URL(string: path, relativeTo:");
     expect(apiSwift).not.toContain("waitsForConnectivity = true");
     expect(pbx).toContain("BrokerTransport.swift");
   });
