@@ -7,7 +7,7 @@ import {
   BROKER_RESOURCE_TIMEOUT_SEC,
   NSURL_ERROR_TIMED_OUT,
   isTimeoutError,
-  performWithTimeoutRetry,
+  performWithTimeout,
   shouldRetryTransport,
 } from "./ios-broker-transport";
 
@@ -24,6 +24,15 @@ const contentSwift = readFileSync(
   resolve("ios/EventGate/ContentView.swift"),
   "utf8",
 );
+const appSwift = readFileSync(resolve("ios/EventGate/EventGateApp.swift"), "utf8");
+const delegateSwift = readFileSync(
+  resolve("ios/EventGate/AppDelegate.swift"),
+  "utf8",
+);
+const authSwift = readFileSync(
+  resolve("ios/EventGate/AuthController.swift"),
+  "utf8",
+);
 const activityView = readFileSync(
   resolve("ios/EventGate/ActivityLogView.swift"),
   "utf8",
@@ -33,70 +42,71 @@ const pbx = readFileSync(
   "utf8",
 );
 
-describe("BrokerTransport timeout/retry helper", () => {
-  it("retries once on transport timeout and not on other errors", () => {
+function launchMethod(src: string): string {
+  const start = src.indexOf("didFinishLaunchingWithOptions");
+  const end = src.indexOf("startFirebaseAfterFirstFrame");
+  expect(start).toBeGreaterThanOrEqual(0);
+  expect(end).toBeGreaterThan(start);
+  return src.slice(start, end);
+}
+
+describe("BrokerTransport timeout safety net", () => {
+  it("does not retry a blackholed first request on the same route", () => {
     expect(isTimeoutError({ code: "timedOut" })).toBe(true);
     expect(isTimeoutError({ code: NSURL_ERROR_TIMED_OUT, domain: "NSURLErrorDomain" })).toBe(
       true,
     );
-    expect(isTimeoutError({ code: "networkConnectionLost" })).toBe(false);
-
-    expect(shouldRetryTransport({ code: "timedOut" }, 1)).toBe(true);
-    expect(shouldRetryTransport({ code: "timedOut" }, 2)).toBe(false);
-    expect(shouldRetryTransport({ code: "cannotConnectToHost" }, 1)).toBe(false);
-    expect(BROKER_EXTRA_ATTEMPTS_ON_TIMEOUT).toBe(1);
+    expect(shouldRetryTransport({ code: "timedOut" }, 1)).toBe(false);
+    expect(BROKER_EXTRA_ATTEMPTS_ON_TIMEOUT).toBe(0);
   });
 
-  it("performs one automatic retry on timeout then surfaces the error", async () => {
-    const calls: string[] = [];
-    const ok = await performWithTimeoutRetry(async () => {
-      calls.push("try");
-      if (calls.length === 1) {
-        const err = new Error("The request timed out.");
-        Object.assign(err, { code: "timedOut" });
-        throw err;
-      }
-      return { ok: true, path: "/api/status" };
-    });
-    expect(ok).toEqual({ ok: true, path: "/api/status" });
-    expect(calls).toHaveLength(2);
-
-    const twice: string[] = [];
+  it("surfaces a transport timeout on the first attempt", async () => {
+    let calls = 0;
     await expect(
-      performWithTimeoutRetry(async () => {
-        twice.push("try");
+      performWithTimeout(async () => {
+        calls += 1;
         const err = new Error("The request timed out.");
         Object.assign(err, { code: "timedOut" });
         throw err;
       }),
     ).rejects.toThrow("The request timed out.");
-    expect(twice).toHaveLength(2);
-  });
+    expect(calls).toBe(1);
 
-  it("does not retry HTTP/auth failures or non-timeout transport errors", async () => {
-    let hostCalls = 0;
-    await expect(
-      performWithTimeoutRetry(async () => {
-        hostCalls += 1;
-        const err = new Error("Could not connect to the server.");
-        Object.assign(err, { code: "cannotConnectToHost" });
-        throw err;
-      }),
-    ).rejects.toThrow("Could not connect to the server.");
-    expect(hostCalls).toBe(1);
-
-    let httpCalls = 0;
-    const http = await performWithTimeoutRetry(async () => {
-      httpCalls += 1;
-      return { status: 200, gateEnabled: true };
-    });
-    expect(http).toEqual({ status: 200, gateEnabled: true });
-    expect(httpCalls).toBe(1);
+    expect(await performWithTimeout(async () => ({ ok: true }))).toEqual({ ok: true });
   });
 });
 
-describe("iOS BrokerAPI session wiring", () => {
-  it("uses an injectable dedicated URLSession with short timeouts, not shared", () => {
+describe("iOS cold start first paint", () => {
+  it("does not configure Firebase or attach push before the window", () => {
+    const launch = launchMethod(delegateSwift);
+    expect(launch).toContain("UNUserNotificationCenter.current().delegate = self");
+    expect(launch).not.toContain("FirebaseApp.configure");
+    expect(launch).not.toContain("PushController.shared.attach");
+    expect(launch).not.toContain("registerForRemoteNotifications");
+    expect(delegateSwift).toContain("startFirebaseAfterFirstFrame");
+    expect(delegateSwift).toMatch(
+      /func startFirebaseAfterFirstFrame[\s\S]*FirebaseApp\.configure/,
+    );
+    expect(appSwift).toContain("startFirebaseAfterFirstFrame");
+    expect(appSwift).toContain(".task");
+  });
+
+  it("paints login or last session without waiting on status or FCM", () => {
+    expect(authSwift).toContain("restoreSessionOnLaunch()");
+    expect(authSwift).toMatch(
+      /init\(\) \{[\s\S]*evaluateBiometrics\(\)[\s\S]*restoreSessionOnLaunch\(\)/,
+    );
+    expect(statusSwift).toContain("lastSnapshotKey");
+    expect(statusSwift).toContain("JSONDecoder().decode(StatusSnapshot.self");
+    expect(contentSwift).not.toContain("restoreSessionOnLaunch");
+    expect(contentSwift).not.toContain("activity.reload");
+    expect(contentSwift).toContain("status.startPolling()");
+    expect(appSwift).toContain("status.startPolling()");
+    expect(statusSwift).not.toContain("/api/activity");
+    expect(activityView).toContain("await activity.reload()");
+  });
+
+  it("uses a dedicated URLSession with short timeouts as a safety net, not shared", () => {
     expect(existsSync(resolve("ios/EventGate/BrokerTransport.swift"))).toBe(true);
     expect(transportSwift).toContain("protocol BrokerHTTPPerforming");
     expect(transportSwift).toContain("URLSessionConfiguration.ephemeral");
@@ -107,11 +117,8 @@ describe("iOS BrokerAPI session wiring", () => {
     expect(transportSwift).toContain(
       `static let resourceTimeout: TimeInterval = ${BROKER_RESOURCE_TIMEOUT_SEC}`,
     );
-    expect(transportSwift).toContain(
-      `static let extraAttemptsOnTimeout = ${BROKER_EXTRA_ATTEMPTS_ON_TIMEOUT}`,
-    );
-    expect(transportSwift).toContain("urlError.code == .timedOut");
-    expect(transportSwift).toContain("shouldRetry");
+    expect(transportSwift).not.toContain("extraAttemptsOnTimeout");
+    expect(transportSwift).not.toContain("shouldRetry");
     expect(transportSwift).not.toMatch(/URLSession\.shared\.(data|download|upload)/);
     expect(BROKER_REQUEST_TIMEOUT_SEC).toBeLessThanOrEqual(15);
     expect(BROKER_RESOURCE_TIMEOUT_SEC).toBeGreaterThanOrEqual(
@@ -129,15 +136,6 @@ describe("iOS BrokerAPI session wiring", () => {
     expect(apiSwift).toContain("JSONDecoder().decode");
     expect(apiSwift).not.toContain("URLSession.shared");
     expect(apiSwift).not.toContain("waitsForConnectivity = true");
-
     expect(pbx).toContain("BrokerTransport.swift");
-  });
-
-  it("does not block first paint on GET /api/activity", () => {
-    expect(contentSwift).not.toContain("activity.reload");
-    expect(contentSwift).toContain("status.startPolling()");
-    expect(statusSwift).not.toContain("/api/activity");
-    expect(statusSwift).toContain("refreshInFlight");
-    expect(activityView).toContain("await activity.reload()");
   });
 });

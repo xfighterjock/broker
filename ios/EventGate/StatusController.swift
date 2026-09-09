@@ -18,6 +18,15 @@ final class StatusController: ObservableObject {
     private var timer: Timer?
     private var refreshInFlight = false
 
+    private static let lastSnapshotKey = "eventgate.lastStatusSnapshot"
+
+    init() {
+        if let data = UserDefaults.standard.data(forKey: Self.lastSnapshotKey),
+           let cached = try? JSONDecoder().decode(StatusSnapshot.self, from: data) {
+            snapshot = cached
+        }
+    }
+
     func bind(settings: AppSettings, auth: AuthController) {
         self.settings = settings
         self.auth = auth
@@ -44,8 +53,7 @@ final class StatusController: ObservableObject {
         refreshInFlight = true
         defer { refreshInFlight = false }
         do {
-            snapshot = try await api.gateStatus()
-            lastError = nil
+            applySnapshot(try await api.gateStatus())
         } catch {
             handle(error, label: "Status")
         }
@@ -118,7 +126,7 @@ final class StatusController: ObservableObject {
             lastAuthorizeURL = nil
             authorizeOpened = false
             lastError = nil
-            snapshot = try await api.gateStatus()
+            applySnapshot(try await api.gateStatus())
         } catch {
             handle(error, label: "E*TRADE PIN")
         }
@@ -129,8 +137,7 @@ final class StatusController: ObservableObject {
         busy = true
         defer { busy = false }
         do {
-            snapshot = try await work()
-            lastError = nil
+            applySnapshot(try await work())
         } catch {
             handle(error, label: "Update")
         }
@@ -139,6 +146,14 @@ final class StatusController: ObservableObject {
     private func makeAPI() -> BrokerAPI? {
         guard let settings, let auth, auth.hasSession else { return nil }
         return BrokerAPI(baseURL: settings.baseURL, bearerToken: auth.sessionToken)
+    }
+
+    private func applySnapshot(_ snap: StatusSnapshot) {
+        snapshot = snap
+        lastError = nil
+        if let data = try? JSONEncoder().encode(snap) {
+            UserDefaults.standard.set(data, forKey: Self.lastSnapshotKey)
+        }
     }
 
     private func handle(_ error: Error, label: String) {

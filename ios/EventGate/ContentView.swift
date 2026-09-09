@@ -42,7 +42,6 @@ struct ContentView: View {
             activity.bind(settings: settings, auth: auth)
             push.bind(settings: settings, auth: auth)
             push.refreshPermission()
-            auth.restoreSessionOnLaunch()
             if auth.hasSession && auth.biometricEnabled && auth.canUseBiometrics && !auth.unlocked {
                 Task { await auth.unlockWithBiometrics() }
             }

@@ -26,6 +26,7 @@ struct EssentialsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(Color(red: 0.05, green: 0.06, blue: 0.09), for: .navigationBar)
         .onAppear {
+            // Chrome is already on screen (cached snapshot and/or placeholders).
             status.startPolling()
         }
         .onDisappear {
@@ -96,7 +97,7 @@ struct EssentialsView: View {
     private var metaLine: String {
         guard let snap else {
             if let err = status.lastError, !err.isEmpty { return "Unavailable" }
-            return "Loading…"
+            return "Waiting for live status"
         }
         var parts = ["\(snap.broker.mode.uppercased()) · \(snap.broker.name)"]
         if let type = snap.clock?.focusEvent?.type, !type.isEmpty { parts.append(type) }

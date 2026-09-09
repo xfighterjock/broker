@@ -4,15 +4,28 @@ import UIKit
 import UserNotifications
 
 final class AppDelegate: NSObject, UIApplicationDelegate {
+    private var firebaseStarted = false
+
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
-        FirebaseApp.configure()
+        // Do not configure Firebase or register APNs here. That work issues the
+        // process's first network calls and would run before the first frame.
         UNUserNotificationCenter.current().delegate = self
+        return true
+    }
+
+    /// Call after the first frame so login / last-session chrome is already on screen.
+    @MainActor
+    func startFirebaseAfterFirstFrame(application: UIApplication) {
+        guard !firebaseStarted else { return }
+        firebaseStarted = true
+        if FirebaseApp.app() == nil {
+            FirebaseApp.configure()
+        }
         Messaging.messaging().delegate = self
         PushController.shared.attach(application: application)
-        return true
     }
 
     func application(

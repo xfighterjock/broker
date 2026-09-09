@@ -103,13 +103,13 @@ struct EtradeStartResult: Decodable {
     let error: String?
 }
 
-struct CalendarEventSnap: Decodable {
+struct CalendarEventSnap: Codable {
     let id: String?
     let type: String?
     let flattenEt: String?
 }
 
-struct ClockSnapshot: Decodable {
+struct ClockSnapshot: Codable {
     let nowEt: String?
     let mode: String?
     let countdownLabel: String?
@@ -117,7 +117,7 @@ struct ClockSnapshot: Decodable {
     let focusEvent: CalendarEventSnap?
 }
 
-struct MarketSessionSnap: Decodable {
+struct MarketSessionSnap: Codable {
     let cashOpen: Bool?
     let closedReason: String?
     let holidayName: String?
@@ -125,7 +125,7 @@ struct MarketSessionSnap: Decodable {
     let nextOpenEt: String?
 }
 
-struct RiskChecks: Decodable {
+struct RiskChecks: Codable {
     let spyAbove200: Bool?
     let acwiAbove200: Bool?
     let hygAbove200: Bool?
@@ -133,14 +133,14 @@ struct RiskChecks: Decodable {
     let dollarVeto: Bool?
 }
 
-struct SleeveBook: Decodable {
+struct SleeveBook: Codable {
     let equityUsd: Double?
     let pnlUsd: Double?
     let totalPnlUsd: Double?
     let dailyPnlUsd: Double?
 }
 
-struct BrokerPosition: Decodable {
+struct BrokerPosition: Codable {
     let id: String?
     let symbol: String?
     let qty: Double?
@@ -148,13 +148,13 @@ struct BrokerPosition: Decodable {
     let sleeveId: String?
 }
 
-struct BrokerSnapshot: Decodable {
+struct BrokerSnapshot: Codable {
     let name: String
     let mode: String
     let positions: [BrokerPosition]?
 }
 
-struct StatusSnapshot: Decodable {
+struct StatusSnapshot: Codable {
     let clock: ClockSnapshot?
     let marketSession: MarketSessionSnap?
     let gateEnabled: Bool

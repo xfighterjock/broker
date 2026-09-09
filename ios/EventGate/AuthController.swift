@@ -26,6 +26,8 @@ final class AuthController: ObservableObject {
         sessionToken = KeychainStore.get(account: Self.tokenAccount)
         biometricEnabled = UserDefaults.standard.bool(forKey: Self.biometricKey)
         evaluateBiometrics()
+        // Local Keychain only — first paint is already login or last session.
+        restoreSessionOnLaunch()
     }
 
     var hasSession: Bool {
