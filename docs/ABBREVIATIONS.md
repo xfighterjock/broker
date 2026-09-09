@@ -56,7 +56,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **ETF** — Exchange-traded fund. Risk-off 63d RS overlay is one of GLD/UUP/TLT/IEF/XLU/XLP/DBMF/BIL sized at RISKOFF_ETF_NOTIONAL_FRAC (40% of the $100k book); the RS winner must also be above its own 200dma or the overlay parks in BIL. Gated duration is a separate TLT/IEF long at RISKOFF_DURATION_NOTIONAL_FRAC (20%). Gate names are SPY/ACWI/HYG/UUP.
 
-**EVENT_GATE_OPS_TOKEN** — Optional long-lived HTTPS ops bearer (VPS `/opt/broker/.env`, never git). When set, `Authorization: Bearer` matching the env value authenticates a narrow ops scope: GET /api/status, GET/PUT /api/freeze, GET /api/health, GET /api/sleeves, POST /api/paper/auto, POST /api/flatten, POST /api/gate/enable (print-day vetoes: flatten + GATE OFF). Same GATE route also GATE ON (`{ enabled: true }` or omitted, defaults ON) — no separate disable path. Not a users-table session. Paper orders, PIN, mock inject, cancel-stops, user admin stay 401. When unset, behavior unchanged. Agents freeze-save, status-check, toggle AUTO, flatten, and GATE OFF at https://broker.logikmancer.com without the Mac.
+**EVENT_GATE_OPS_TOKEN** — Optional long-lived HTTPS ops bearer (VPS `/opt/broker/.env`, never git). When set, `Authorization: Bearer` matching the env value authenticates a narrow ops scope: GET /api/status, GET/PUT /api/freeze, GET /api/health, GET /api/sleeves, POST /api/paper/auto, POST /api/flatten, POST /api/paper/reset, POST /api/gate/enable (print-day vetoes: flatten + GATE OFF; paper sleeve reset without a delayed last). Same GATE route also GATE ON (`{ enabled: true }` or omitted, defaults ON) — no separate disable path. Not a users-table session. Paper orders, PIN, mock inject, cancel-stops, user admin stay 401. When unset, behavior unchanged. Agents freeze-save, status-check, toggle AUTO, flatten, reset one mock sleeve, and GATE OFF at https://broker.logikmancer.com without the Mac.
 
 **Face ID** — iOS LocalAuthentication unlock of a Keychain session. Optional. Not a remote password. Touch ID is the same path.
 
@@ -64,7 +64,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **FCM** — Firebase Cloud Messaging. Event Gate push provider (HTTP v1 via Firebase Admin SDK on the VPS; Firebase iOS SDK in `ios/`). Disabled by default until `PUSH_FCM_ENABLED=1` and credentials are configured. The iOS client registers tokens with a users-table bearer; it does not hold the Admin service-account JSON. Live eventTypes: `risk_flip`, `service_fault`, `auth_needed`, `pre_arm`, `freeze_missing`, `day_fill`, `day_flatten`, `day_loss_cap`, `veto_confirm`, `overlay_rotation`, `credit_put_opened`, `credit_put_stopped`, `credit_put_risk_on_flatten`, `oi_skip_streak`, `etrade_renew_failed`, `sleeve_loss_warn`, plus test `paper_guard`.
 
-**Flatten** — Close gated day-sleeve names (POST /api/flatten) or a sleeve position. Print-day veto with GATE OFF. Does not flatten other sleeves from the event clock.
+**Flatten** — Close gated day-sleeve names (POST /api/flatten) or a sleeve position (POST /api/paper/close, needs a delayed last). Print-day veto with GATE OFF. Does not flatten other sleeves from the event clock. Not a sleeve reset — that is POST /api/paper/reset.
 
 **FOMC** — Federal Open Market Committee. Seed events FOMC_STATEMENT and FOMC_PC; flatten 15:30 ET when type contains FOMC.
 
@@ -173,6 +173,8 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 **SH** — ProShares Short S&P 500. Not a live risk-off expression.
 
 **SJB** — ProShares Short High Yield. Risk-off quote-strip visibility only — not a traded inverse (HYG/LQD/JNK puts are the credit-leg instead).
+
+**sleeve reset** — POST `/api/paper/reset` `{ sleeveId }`. MockBroker only. One sleeve back to a clean $100k book: no open position, no working stop, empty blotter, journal realized 0, session mark aligned so daily and total P/L are 0. Does not need a delayed last (unlike POST /api/paper/close). Does not flatten other sleeves, does not toggle AUTO PAPER, does not change GATE. Refuses when the process is not MockBroker. Never a live or E*TRADE order. EVENT_GATE_OPS_TOKEN may call it. Do not stop event-gate or edit Redis (`mock:positions`, `mock:orders`, `sleeves:cards`, `sleeves:blotter`, `sleeves:session_marks`) to wipe a stuck premarket lot.
 
 **SMA** — Simple moving average. 20- and 200-day windows in scan/risk features.
 

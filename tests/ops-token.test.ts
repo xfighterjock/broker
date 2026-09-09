@@ -121,7 +121,7 @@ describe("EVENT_GATE_OPS_TOKEN helpers", () => {
     expect(eventGateOpsToken()).toBeUndefined();
   });
 
-  it("allowlists freeze/status/AUTO/flatten/GATE toggle and denies trading mutations", () => {
+  it("allowlists freeze/status/AUTO/flatten/sleeve-reset/GATE toggle and denies trading mutations", () => {
     expect(opsRouteAllowed("GET", "/status")).toBe(true);
     expect(opsRouteAllowed("GET", "/freeze")).toBe(true);
     expect(opsRouteAllowed("PUT", "/freeze")).toBe(true);
@@ -129,6 +129,7 @@ describe("EVENT_GATE_OPS_TOKEN helpers", () => {
     expect(opsRouteAllowed("GET", "/sleeves")).toBe(true);
     expect(opsRouteAllowed("POST", "/paper/auto")).toBe(true);
     expect(opsRouteAllowed("POST", "/flatten")).toBe(true);
+    expect(opsRouteAllowed("POST", "/paper/reset")).toBe(true);
     expect(opsRouteAllowed("POST", "/gate/enable")).toBe(true);
     expect(opsRouteAllowed("POST", "/paper/order")).toBe(false);
     expect(opsRouteAllowed("POST", "/cancel-stops")).toBe(false);
@@ -249,6 +250,56 @@ describe("EVENT_GATE_OPS_TOKEN HTTPS ops scope", () => {
       const mes = snap.broker?.positions?.find((p) => p.symbol === "MESU6");
       expect(mes?.side).toBe("Flat");
       expect(mes?.qty).toBe(0);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it("lets the ops bearer POST /api/paper/reset on MockBroker", async () => {
+    const dir = await seededUsers();
+    const { app, broker, engine } = makeApp(dir, testCfg(), { engineEnabled: true });
+    broker.injectPosition({
+      symbol: "XLP",
+      qty: 500,
+      side: "Long",
+      avgPrice: 80,
+      unrealizedPnl: -40,
+      sleeveId: "riskoff",
+    });
+    broker.injectOrder({
+      symbol: "XLP",
+      type: "StopMarket",
+      side: "Sell",
+      qty: 500,
+      stopPrice: 73.6,
+      sleeveId: "riskoff",
+    });
+    expect(engine.enabled).toBe(true);
+    const srv = await listen(app);
+    try {
+      const reset = await fetch(`${srv.url}/api/paper/reset`, {
+        method: "POST",
+        headers: { ...opsHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ sleeveId: "riskoff" }),
+      });
+      expect(reset.status).toBe(200);
+      const snap = (await reset.json()) as {
+        gateEnabled?: boolean;
+        autoPaperBySleeve?: { riskoff?: boolean };
+        sleeveBooks?: { riskoff?: { equityUsd: number; realizedPnlUsd: number; unrealizedPnlUsd: number } };
+        broker?: { positions?: { symbol: string; side: string; qty: number }[]; orders?: { symbol: string; state: string }[] };
+      };
+      expect(snap.gateEnabled).toBe(true);
+      expect(engine.enabled).toBe(true);
+      expect(snap.autoPaperBySleeve?.riskoff).toBe(true);
+      expect(snap.sleeveBooks?.riskoff?.equityUsd).toBe(100_000);
+      expect(snap.sleeveBooks?.riskoff?.realizedPnlUsd).toBe(0);
+      expect(snap.sleeveBooks?.riskoff?.unrealizedPnlUsd).toBe(0);
+      const xlp = snap.broker?.positions?.find((p) => p.symbol === "XLP");
+      expect(xlp).toBeUndefined();
+      const working = snap.broker?.orders?.filter((o) => o.symbol === "XLP" && o.state === "Working");
+      expect(working ?? []).toHaveLength(0);
+      expect(JSON.stringify(snap)).not.toContain(OPS_TOKEN);
     } finally {
       await srv.close();
     }

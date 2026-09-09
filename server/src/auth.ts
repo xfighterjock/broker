@@ -19,7 +19,7 @@ declare global {
   namespace Express {
     interface Request {
       eventGateUser?: { id: number; username: string };
-      /** Narrow freeze/status/AUTO/flatten/GATE-toggle scope from EVENT_GATE_OPS_TOKEN. Not a full user session. */
+      /** Narrow freeze/status/AUTO/flatten/GATE-toggle/sleeve-reset scope from EVENT_GATE_OPS_TOKEN. Not a full user session. */
       eventGateOps?: boolean;
     }
   }
@@ -134,6 +134,7 @@ export function opsRouteAllowed(method: string, path: string): boolean {
   if (m === "GET" && path === "/sleeves") return true;
   if (m === "GET" && path === "/essentials") return true;
   if (m === "POST" && path === "/paper/auto") return true;
+  if (m === "POST" && path === "/paper/reset") return true;
   if (m === "POST" && path === "/flatten") return true;
   // Single GATE toggle (no separate disable route). Veto is { enabled: false };
   // { enabled: true } or omitted enabled (handler defaults ON) also GATE ON.
