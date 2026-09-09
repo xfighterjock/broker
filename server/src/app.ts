@@ -24,6 +24,7 @@ import {
   defaultSleeves,
   emptyChecklist,
   emptyFreeze,
+  emptyPaperStats,
   parseAutoPaperBody,
   parseAutoPaperRedis,
   serializeAutoPaperBySleeve,
@@ -84,6 +85,7 @@ import type { RedisClient } from "./redis";
 import { fetchDelayedQuotes, fetchYahooFiveMinuteBars, mapTicker, symbolsForSleeve } from "./quotes";
 import { attachScanReady, getScan, getScanFeaturesCache, rankMomentum } from "./scan";
 import {
+  alignedZeroSessionMark,
   allSleeveBooks,
   applyExitStats,
   applySessionPnl,
@@ -91,9 +93,11 @@ import {
   detectStopHits,
   lastFromQuotes,
   makeFill,
+  nySessionDate,
   oppositeSide,
   parsePaperClose,
   parsePaperOrder,
+  parsePaperReset,
   positionSideFor,
   rollSessionMarks,
   signedPnl,
@@ -1159,6 +1163,35 @@ export function buildApp(deps: AppDeps): express.Express {
     return { ok: true };
   }
 
+  async function resetPaperSleeve(
+    sleeveId: SleeveId,
+  ): Promise<{ ok: true } | { ok: false; error: string; status?: number }> {
+    const mockErr = assertMockOnly();
+    if (mockErr) return { ok: false, error: mockErr, status: 403 };
+    await ensureSleeves();
+    await ensureBlotter();
+    await ensureSessionMarks();
+    await ensureAutoPaper();
+    const realized = memory.sleeves[sleeveId].paper.realizedPnlUsd;
+    deps.broker.resetSleeve(sleeveId);
+    if (realized !== 0) deps.broker.addRealizedPnl(-realized);
+    memory.sleeves[sleeveId] = {
+      ...memory.sleeves[sleeveId],
+      paper: emptyPaperStats(),
+      updatedAt: new Date().toISOString(),
+    };
+    memory.blotter = memory.blotter.filter((f) => f.sleeveId !== sleeveId);
+    memory.sessionMarks[sleeveId] = alignedZeroSessionMark(nySessionDate());
+    await persistSleeves();
+    await persistBlotter();
+    await persistSessionMarks();
+    sessionNote("paper_reset", `${sleeveId} reset to starting equity (mock, no fill)`);
+    deps.engine.log(
+      `paper sleeve reset ${sleeveId} (MockBroker, no delayed last, not Tradovate, not live, AUTO/GATE unchanged)`,
+    );
+    return { ok: true };
+  }
+
   let autoRunning = false;
   async function runWiredAutopilot(): Promise<void> {
     if (autoRunning) return;
@@ -2076,6 +2109,21 @@ export function buildApp(deps: AppDeps): express.Express {
     if (!closed.ok) {
       const status = closed.status ?? (closed.error.includes("MockBroker only") ? 403 : 400);
       res.status(status).json({ error: closed.error });
+      return;
+    }
+    await publishStatus();
+    res.json(await snapshot());
+  });
+
+  app.post("/api/paper/reset", async (req, res) => {
+    const parsed = parsePaperReset(req.body);
+    if ("error" in parsed) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+    const reset = await resetPaperSleeve(parsed.sleeveId);
+    if (!reset.ok) {
+      res.status(reset.status ?? 400).json({ error: reset.error });
       return;
     }
     await publishStatus();

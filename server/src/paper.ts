@@ -233,6 +233,20 @@ export function parsePaperClose(body: unknown): PaperCloseBody | { error: string
   return { sleeveId: sleeveRaw as SleeveId, symbol, reason };
 }
 
+export type PaperResetBody = {
+  sleeveId: SleeveId;
+};
+
+/** POST /api/paper/reset — mock sleeve wipe, no fill price. */
+export function parsePaperReset(body: unknown): PaperResetBody | { error: string } {
+  const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
+  const sleeveRaw = String(b.sleeveId ?? "");
+  if (!(SLEEVE_IDS as readonly string[]).includes(sleeveRaw)) {
+    return { error: `sleeveId must be ${(SLEEVE_IDS as readonly string[]).join("|")}` };
+  }
+  return { sleeveId: sleeveRaw as SleeveId };
+}
+
 export function oppositeSide(side: Side): Side {
   return side === "Buy" ? "Sell" : "Buy";
 }
@@ -316,6 +330,15 @@ export function positionBelongsToSleeve(sleeveId: SleeveId, tagged?: SleeveId): 
   if (tagged === sleeveId) return true;
   if (!tagged && sleeveId === "day") return true;
   return false;
+}
+
+export function orderBelongsToSleeve(sleeveId: SleeveId, tagged?: SleeveId): boolean {
+  return positionBelongsToSleeve(sleeveId, tagged);
+}
+
+/** Same-day mark at a clean $100k book so daily and total P/L both read 0. */
+export function alignedZeroSessionMark(sessionDate: string): SessionMark {
+  return { sessionDate, realizedPnlUsd: 0, unrealizedPnlUsd: 0 };
 }
 
 export function sleeveBook(

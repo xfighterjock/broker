@@ -7,6 +7,7 @@ import type {
   InjectOrderInput,
   InjectPositionInput,
 } from "./broker";
+import { orderBelongsToSleeve, positionBelongsToSleeve } from "./paper";
 import type { RedisClient } from "./redis";
 
 function nid(prefix: string): string {
@@ -224,6 +225,36 @@ export class MockBroker implements BrokerClient {
     existing.qty = newQty;
     this.persist();
     return { ...existing };
+  }
+
+  /**
+   * Drop this sleeve's mock lots and cancel its working orders. No fill price.
+   * Other sleeves stay on the book. Used by POST /api/paper/reset.
+   */
+  resetSleeve(sleeveId: SleeveId): { removed: Position[]; cancelled: WorkingOrder[] } {
+    const removed: Position[] = [];
+    const flattening = new Set<string>();
+    this.positions = this.positions.filter((p) => {
+      if (!positionBelongsToSleeve(sleeveId, p.sleeveId)) return true;
+      flattening.add(p.symbol.toUpperCase());
+      if (p.root) flattening.add(p.root);
+      removed.push({ ...p });
+      return false;
+    });
+    const live = new Set(["Working", "Submitted", "Accepted"]);
+    const cancelled: WorkingOrder[] = [];
+    for (const o of this.orders) {
+      if (!live.has(o.state)) continue;
+      if (o.sleeveId !== undefined && o.sleeveId !== sleeveId) continue;
+      const tagged = orderBelongsToSleeve(sleeveId, o.sleeveId);
+      const bySym =
+        flattening.has(o.symbol.toUpperCase()) || (o.root !== null && flattening.has(o.root));
+      if (!tagged && !bySym) continue;
+      o.state = "Cancelled";
+      cancelled.push({ ...o });
+    }
+    this.persist();
+    return { removed, cancelled };
   }
 
   reduceLongStock(sleeveId: SleeveId, symbol: string, qty: number): Position | null {
