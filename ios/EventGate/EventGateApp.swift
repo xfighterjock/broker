@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 @main
 struct EventGateApp: App {
@@ -18,6 +19,19 @@ struct EventGateApp: App {
                 .environmentObject(status)
                 .environmentObject(activity)
                 .preferredColorScheme(.dark)
+                .onAppear {
+                    auth.bind(settings: settings)
+                    status.bind(settings: settings, auth: auth)
+                    activity.bind(settings: settings, auth: auth)
+                    push.bind(settings: settings, auth: auth)
+                }
+                .task {
+                    // First frame already showed login or last-session essentials.
+                    if auth.unlocked {
+                        status.startPolling()
+                    }
+                    appDelegate.startFirebaseAfterFirstFrame(application: UIApplication.shared)
+                }
         }
     }
 }
