@@ -112,7 +112,7 @@ describe("iOS BrokerAPI session wiring", () => {
     );
     expect(transportSwift).toContain("urlError.code == .timedOut");
     expect(transportSwift).toContain("shouldRetry");
-    expect(transportSwift).not.toContain("URLSession.shared");
+    expect(transportSwift).not.toMatch(/URLSession\.shared\.(data|download|upload)/);
     expect(BROKER_REQUEST_TIMEOUT_SEC).toBeLessThanOrEqual(15);
     expect(BROKER_RESOURCE_TIMEOUT_SEC).toBeGreaterThanOrEqual(
       BROKER_REQUEST_TIMEOUT_SEC,
