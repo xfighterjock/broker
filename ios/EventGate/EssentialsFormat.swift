@@ -151,6 +151,19 @@ enum EssentialsFormat {
     static func isValidEtradeAuthorizeURL(_ url: String) -> Bool {
         url.hasPrefix(etradeAuthorizePrefix)
     }
+
+    static func formatActivityTs(_ iso: String) -> String {
+        let withFrac = ISO8601DateFormatter()
+        withFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        guard let date = withFrac.date(from: iso) ?? plain.date(from: iso) else { return iso }
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        fmt.timeZone = TimeZone(identifier: "America/New_York")
+        fmt.dateFormat = "EEE MM-dd HH:mm:ss"
+        return fmt.string(from: date) + " ET"
+    }
 }
 
 struct SleevePnlRow: Identifiable {

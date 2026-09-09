@@ -132,6 +132,8 @@ describe("EVENT_GATE_OPS_TOKEN helpers", () => {
     expect(opsRouteAllowed("POST", "/paper/reset")).toBe(true);
     expect(opsRouteAllowed("POST", "/gate/enable")).toBe(true);
     expect(opsRouteAllowed("POST", "/paper/order")).toBe(false);
+    expect(opsRouteAllowed("GET", "/activity")).toBe(false);
+    expect(opsRouteAllowed("GET", "/log")).toBe(false);
     expect(opsRouteAllowed("POST", "/cancel-stops")).toBe(false);
     expect(opsRouteAllowed("POST", "/mock/inject-stop")).toBe(false);
     expect(opsRouteAllowed("POST", "/etrade/oauth/pin")).toBe(false);

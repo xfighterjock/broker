@@ -206,6 +206,20 @@ export interface ActionLogEntry {
   message: string;
 }
 
+/** One row from GET /api/activity (gate_log / engine.log). Newest-first pages. */
+export interface ActivityLogEntry {
+  id: number;
+  ts: string;
+  message: string;
+}
+
+export interface ActivityLogPage {
+  entries: ActivityLogEntry[];
+  /** Pass as `before` to fetch the next older page. Null when hasMore is false. */
+  nextBefore: number | null;
+  hasMore: boolean;
+}
+
 export interface BrokerSnapshot {
   name: string;
   mode: "mock" | "demo";
@@ -530,6 +544,11 @@ export interface StatusSnapshot {
   freeze: FreezeCard;
   knowledgeTime: string | null;
   checklist: Checklist;
+  /**
+   * Always empty on GET `/api/status` (status payload must stay small for iOS).
+   * History is GET `/api/activity` (paged, newest first) from the existing gate_log journal.
+   * Kept on the snapshot type so old clients still decode.
+   */
   sessionLog: SessionLogEntry[];
   actionLog: ActionLogEntry[];
   gateEnabled: boolean;

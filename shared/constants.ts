@@ -75,6 +75,12 @@ export const DEFAULT_SLEEVE_EQUITY_USD = 100_000;
 /** Extra autopilot pass for sells while the scan cache is warm. */
 export const AUTO_PAPER_INTERVAL_MS = 5 * 60 * 1000;
 
+/** Drop gate_log and session_logs rows older than this. Nominal 3 months. */
+export const ACTIVITY_LOG_RETENTION_DAYS = 90;
+/** First page / scroll page size for GET /api/activity. */
+export const ACTIVITY_LOG_PAGE_DEFAULT = 50;
+export const ACTIVITY_LOG_PAGE_MAX = 100;
+
 export const REDIS_CHANNELS = {
   log: "eventgate:log",
   status: "eventgate:status",

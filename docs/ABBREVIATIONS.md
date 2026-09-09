@@ -14,6 +14,8 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **ACWI** — iShares MSCI ACWI ETF (global equities). One of three 200dma legs on the RISK ON badge.
 
+**activity log** — Phone (and desktop) feed of the existing `gate_log` journal (`engine.log`). GET `/api/activity?limit=&before=` pages newest first; `before` is a `gate_log.id` cursor. Default `limit` 50, max 100. Not on GET `/api/status` (`actionLog` / `sessionLog` there are empty). Rows older than `ACTIVITY_LOG_RETENTION_DAYS` (90) are deleted from `gate_log` and `session_logs`. Paper/mock activity only. GET `/api/log` is the same page with a `log` alias. Not on EVENT_GATE_OPS_TOKEN.
+
 **APNs** — Apple Push Notification service. iOS devices receive remote notifications through APNs while Firebase maps delivery through FCM tokens. Firebase Console still needs an APNs Authentication Key (`.p8`) uploaded for the Event Gate iOS app; that key is not in git.
 
 **argon2id** — Password hash for the `users` table. Never stored in plaintext.
@@ -86,7 +88,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **IEF** — iShares 7-10 Year Treasury Bond ETF. Intermediate-duration candidate on the risk-off 63d RS overlay (after TLT in the duration bucket). Also the fallback for gated duration when TLT is unquoted or sizes to 0.
 
-**iOS Event Gate** — Native SwiftUI app in ios/ (bundle com.logikmancer.mybroker). Phone Event Gate client: essentials (clock, US cash closed/holiday strip, GATE, RISK, AUTO PAPER chips, Flatten, sleeve P/L, E*TRADE PIN) plus FCM. Users-table login + optional Face ID / Touch ID unlock of the Keychain session. Web `/m` remains for browsers. Push notification glyph is the AppIcon (same auto-agent artwork as the web favicon).
+**iOS Event Gate** — Native SwiftUI app in ios/ (bundle com.logikmancer.mybroker). Phone Event Gate client: essentials (clock, US cash closed/holiday strip, GATE, RISK, AUTO PAPER chips, Flatten, sleeve P/L, E*TRADE PIN), paged Activity log, plus FCM. Users-table login + optional Face ID / Touch ID unlock of the Keychain session. Web `/m` remains for browsers. Push notification glyph is the AppIcon (same auto-agent artwork as the web favicon).
 
 **IWM** — iShares Russell 2000 ETF. Options quote strip; optional third equity-index put on riskoff when SPY is below 200dma and IWM is quoted.
 
@@ -234,7 +236,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **NinjaTrader** — Futures platform. README notes a live NT API add-on is not required for mock. This repo is not an NT order router.
 
-**Postgres** — Database for calendar events, freeze snapshots, `users` + `user_sessions`, iOS FCM device tokens, and push-alert dedupe.
+**Postgres** — Database for calendar events, freeze snapshots, `users` + `user_sessions`, iOS FCM device tokens, push-alert dedupe, and the activity journal (`gate_log`, plus `session_logs`). Activity rows older than 90 days are deleted.
 
 **nginx** — TLS reverse proxy in front of 127.0.0.1:3001. No htpasswd on /api or the SPA; app auth is the users table. GET /api/public/risk stays unauthenticated.
 

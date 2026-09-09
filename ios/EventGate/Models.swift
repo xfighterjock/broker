@@ -167,6 +167,18 @@ struct StatusSnapshot: Decodable {
     let sleeveBooks: [String: SleeveBook]?
 }
 
+struct ActivityLogEntry: Decodable, Identifiable, Equatable {
+    let id: Int
+    let ts: String
+    let message: String
+}
+
+struct ActivityLogPage: Decodable, Equatable {
+    let entries: [ActivityLogEntry]
+    let nextBefore: Int?
+    let hasMore: Bool
+}
+
 enum TokenRedaction {
     /// Matches server `redactToken`: first 4 + ellipsis + last 4, or `***` if short.
     static func redact(_ token: String) -> String {

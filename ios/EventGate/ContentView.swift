@@ -5,6 +5,7 @@ struct ContentView: View {
     @EnvironmentObject private var push: PushController
     @EnvironmentObject private var auth: AuthController
     @EnvironmentObject private var status: StatusController
+    @EnvironmentObject private var activity: ActivityLogController
 
     var body: some View {
         Group {
@@ -13,6 +14,14 @@ struct ContentView: View {
                     EssentialsView()
                         .navigationTitle("Event Gate")
                         .toolbar {
+                            ToolbarItem(placement: .topBarTrailing) {
+                                NavigationLink {
+                                    ActivityLogView()
+                                } label: {
+                                    Image(systemName: "list.bullet.rectangle")
+                                }
+                                .accessibilityLabel("Activity")
+                            }
                             ToolbarItem(placement: .topBarTrailing) {
                                 NavigationLink {
                                     SettingsView()
@@ -30,6 +39,7 @@ struct ContentView: View {
         .onAppear {
             auth.bind(settings: settings)
             status.bind(settings: settings, auth: auth)
+            activity.bind(settings: settings, auth: auth)
             push.bind(settings: settings, auth: auth)
             push.refreshPermission()
             auth.restoreSessionOnLaunch()

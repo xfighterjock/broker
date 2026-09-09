@@ -14,6 +14,7 @@ import {
   type SleeveBook,
   type SleeveId,
   type StatusSnapshot,
+  type ActivityLogEntry,
 } from "../../shared/types";
 import { api } from "./api";
 import {
@@ -339,6 +340,7 @@ export default function App() {
   const [sleeveDraft, setSleeveDraft] = useState<SleeveCard | null>(null);
   const [quotes, setQuotes] = useState<DelayedQuote[]>([]);
   const [paperPrefill, setPaperPrefill] = useState<PaperPrefill | null>(null);
+  const [activityLog, setActivityLog] = useState<ActivityLogEntry[]>([]);
   const essentials = useEssentialsView();
 
   const apply = useCallback((s: StatusSnapshot) => {
@@ -358,6 +360,15 @@ export default function App() {
     }
   }, [apply]);
 
+  const refreshActivity = useCallback(async () => {
+    try {
+      const page = (await api("/api/activity?limit=50")) as { entries?: ActivityLogEntry[] };
+      if (Array.isArray(page.entries)) setActivityLog(page.entries);
+    } catch {
+      /* status still applies; activity is a separate page */
+    }
+  }, []);
+
   useEffect(() => {
     let cancel = false;
     let ws: WebSocket | null = null;
@@ -371,13 +382,17 @@ export default function App() {
           return;
         }
         await refresh();
+        await refreshActivity();
         const proto = location.protocol === "https:" ? "wss" : "ws";
         ws = new WebSocket(`${proto}://${location.host}/ws`);
         ws.onmessage = (ev) => {
           try {
             const msg = JSON.parse(ev.data);
             if (msg.type === "status" && msg.payload) apply(msg.payload);
-            if (msg.type === "log") void refresh();
+            if (msg.type === "log") {
+              void refresh();
+              void refreshActivity();
+            }
           } catch {
             /* ignore */
           }
@@ -397,7 +412,7 @@ export default function App() {
       clearInterval(t);
       ws?.close();
     };
-  }, [apply, refresh]);
+  }, [apply, refresh, refreshActivity]);
 
   useEffect(() => {
     if (authNeeded || essentials) return;
@@ -922,10 +937,10 @@ export default function App() {
       <div className="log-wrap">
         <h2>[EventGate] log</h2>
         <div className="log">
-          {[...state.actionLog].slice(-200).reverse().map((e, i) => (
-            <div key={i}>{e.ts}  {e.message}</div>
+          {activityLog.map((e) => (
+            <div key={e.id}>{e.ts}  {e.message}</div>
           ))}
-          {state.actionLog.length === 0 && <div className="muted">empty</div>}
+          {activityLog.length === 0 && <div className="muted">empty</div>}
         </div>
         {err && <div className="err" style={{ padding: "4px 14px" }}>{err}</div>}
       </div>

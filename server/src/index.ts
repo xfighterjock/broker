@@ -9,7 +9,7 @@ import { authRequired, buildSessionMiddleware, eventGateOpsToken, gatePassword }
 import { createUserDirectory, maybeBootstrapAdmin } from "./users";
 import { loadConfig } from "./config";
 import { maybeLoadAppDotenv } from "./massive";
-import { createPool, loadEvents, recentGateLog, runMigrations } from "./db";
+import { createPool, loadEvents, purgeExpiredLogs, recentGateLog, runMigrations } from "./db";
 import { GateEngine } from "./gate";
 import { MockBroker } from "./mockBroker";
 import { connectRedis } from "./redis";
@@ -218,6 +218,31 @@ async function main(): Promise<void> {
     if (engine.enabled && !tickHandle) startTicker();
   }, 500);
 
+  const ACTIVITY_RETENTION_MS = 6 * 60 * 60 * 1000;
+  let retentionHandle: ReturnType<typeof setInterval> | null = null;
+  async function runActivityRetention(): Promise<void> {
+    if (!pool) return;
+    try {
+      const n = await purgeExpiredLogs(pool);
+      if (n.gateLog || n.sessionLogs) {
+        console.log(
+          `[EventGate] activity log retention dropped gate_log=${n.gateLog} session_logs=${n.sessionLogs}`,
+        );
+      }
+    } catch (err) {
+      console.warn(
+        "[EventGate] activity log retention skipped",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+  if (pool) {
+    void runActivityRetention();
+    retentionHandle = setInterval(() => {
+      void runActivityRetention();
+    }, ACTIVITY_RETENTION_MS);
+  }
+
   const server = http.createServer(root);
   hub.attach(server, (req, _res, next) => {
     (sessionMw as (req: unknown, res: unknown, next: () => void) => void)(req, {}, next);
@@ -243,6 +268,7 @@ async function main(): Promise<void> {
   const shutdown = async () => {
     clearInterval(enableWatch);
     if (tickHandle) clearInterval(tickHandle);
+    if (retentionHandle) clearInterval(retentionHandle);
     stopEtradeAccessTokenKeepAlive();
     stopAutoPaperLoop();
     server.close();
