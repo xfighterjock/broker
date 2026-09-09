@@ -557,6 +557,17 @@ export function buildApp(deps: AppDeps): express.Express {
     return quietRunning;
   }
 
+  /** Start a paper-stop mark without holding GET /api/status or the WS snapshot. */
+  function kickMarkPaperQuiet(): void {
+    void markPaperQuiet()
+      .then((hits) => {
+        if (hits > 0) void publishStatus();
+      })
+      .catch(() => {
+        /* markPaperQuietInner logs skip/errors; do not fail status */
+      });
+  }
+
   async function markPaperQuietInner(): Promise<number> {
     const positions = deps.broker
       .getPositionsSync()
@@ -1361,7 +1372,8 @@ export function buildApp(deps: AppDeps): express.Express {
     const now = new Date();
     const events = deps.getEvents();
     const clock = computeClock(now, events);
-    await markPaperQuiet();
+    // Quotes/chains can hang; GET /api/quotes already awaits markPaperQuiet.
+    kickMarkPaperQuiet();
     await ensureSleeves();
     await ensureBlotter();
     await ensureAutoPaper();

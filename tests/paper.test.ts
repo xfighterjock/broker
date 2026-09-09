@@ -436,6 +436,89 @@ describe("flatten on stop cross", () => {
   });
 
 
+  it("GET /api/status returns the book while delayed quotes hang, then the kicked mark still flattens", async () => {
+    const { app, broker } = makeTestApp();
+    stubQuotes({ SPY: 500 });
+    const flatten = vi.spyOn(broker, "flattenSymbols");
+    const srv = await listen(app);
+    let releaseHang: ((last: number) => void) | null = null;
+    try {
+      const placed = await fetch(`${srv.url}/api/paper/order`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sleeveId: "momentum",
+          symbol: "SPY",
+          side: "Buy",
+          qty: 1,
+          stopPrice: 400,
+          thesis: "status-must-not-wait",
+        }),
+      });
+      expect(placed.status).toBe(200);
+      const drain = await fetch(`${srv.url}/api/quotes?sleeve=momentum`);
+      expect(drain.status).toBe(200);
+      resetQuoteCache();
+
+      const hang = new Promise<number>((resolve) => {
+        releaseHang = resolve;
+      });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = String(input);
+          if (url.includes("127.0.0.1") || url.includes("localhost")) {
+            return realFetch(input as RequestInfo, init);
+          }
+          if (
+            url.includes("/v2/snapshot/locale/us/markets/stocks/tickers/") ||
+            url.includes("/v8/finance/chart/")
+          ) {
+            const last = await hang;
+            const symbol = url.includes("/tickers/")
+              ? decodeURIComponent(url.split("/tickers/")[1]?.split("?")[0] ?? "SPY").toUpperCase()
+              : "SPY";
+            const body = {
+              status: "OK",
+              ticker: {
+                ticker: symbol,
+                lastTrade: { p: last, t: 1, s: 100 },
+                prevDay: { c: 500, v: 1 },
+                day: { c: last, v: 1 },
+              },
+            };
+            return {
+              ok: true,
+              status: 200,
+              json: async () => body,
+              text: async () => JSON.stringify(body),
+            };
+          }
+          return realFetch(input as RequestInfo, init);
+        }),
+      );
+
+      const t0 = Date.now();
+      const res = await fetch(`${srv.url}/api/status`);
+      expect(Date.now() - t0).toBeLessThan(2_000);
+      expect(res.status).toBe(200);
+      const snap = (await res.json()) as StatusSnapshot;
+      expect(snap.broker.positions.filter((p) => p.side !== "Flat")).toHaveLength(1);
+      expect(flatten).not.toHaveBeenCalled();
+
+      releaseHang?.(399);
+      releaseHang = null;
+      await vi.waitFor(() => {
+        expect(broker.getPositionsSync().filter((p) => p.side !== "Flat")).toHaveLength(0);
+      });
+      expect(flatten).toHaveBeenCalled();
+    } finally {
+      releaseHang?.(399);
+      await srv.close();
+      broker.reset();
+    }
+  });
+
   it("GET /api/quotes flattens the mock position when last crosses the stop", async () => {
     const { app, broker } = makeTestApp();
     stubQuotes(500);
