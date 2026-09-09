@@ -320,39 +320,42 @@ export function riskoffEquityPutsAllowed(
   return riskOn === false && spyAbove200 === false;
 }
 
-/** True when RISK OFF and that credit name is known below its own 200dma. Missing check fails closed. Do not use spyAbove200. */
+/**
+ * True when RISK OFF, SPY is known below 200dma, and that credit name is
+ * known below its own 200dma. Missing spyAbove200 or own-200 fails closed
+ * (no new put). HYG-only OFF (SPY still above 200) does not open HYG/LQD/JNK.
+ */
 export function riskoffCreditLegPutAllowed(
   riskOn: boolean,
   above200?: boolean | null,
+  spyAbove200?: boolean | null,
 ): boolean {
-  return riskOn === false && above200 === false;
+  return riskoffEquityPutsAllowed(riskOn, spyAbove200) && above200 === false;
 }
 
-/** True when RISK OFF and HYG is known below 200dma. Missing check fails closed. */
+/** Same as riskoffCreditLegPutAllowed for HYG. Missing spyAbove200 fails closed. */
 export function riskoffHygPutAllowed(
   riskOn: boolean,
   hygAbove200?: boolean | null,
+  spyAbove200?: boolean | null,
 ): boolean {
-  return riskoffCreditLegPutAllowed(riskOn, hygAbove200);
+  return riskoffCreditLegPutAllowed(riskOn, hygAbove200, spyAbove200);
 }
 
-/** Either the equity-index puts or a credit-leg put (HYG/LQD/JNK) may fire. */
+/** Either the equity-index puts or a credit-leg put (HYG/LQD/JNK) may fire. Both require SPY below 200. */
 export function riskoffPutsAllowed(
   riskOn: boolean,
   checks?: RiskoffPutChecks | null,
 ): boolean {
-  if (riskoffEquityPutsAllowed(riskOn, knownBool(checks?.spyAbove200))) return true;
-  for (const symbol of RISKOFF_CREDIT_LEG_SYMBOLS) {
-    if (riskoffCreditLegPutAllowed(riskOn, creditLegAbove200(symbol, checks))) return true;
-  }
-  return false;
+  return riskoffEquityPutsAllowed(riskOn, knownBool(checks?.spyAbove200));
 }
 
 /**
  * Risk-off put debit intents. Credit-leg names first (HYG, then LQD, then
- * JNK) when that name is below its own 200dma; SPY/QQQ/IWM only when SPY
- * is below 200dma. Missing checks fail closed. Never calls. One per name.
- * Cap MAX_AUTO_RISKOFF_VERTICALS.
+ * JNK) when SPY is below 200dma and that name is below its own 200dma;
+ * SPY/QQQ/IWM only when SPY is below 200dma. Missing spyAbove200 or own-200
+ * fail closed (no new credit-leg put). Never calls. One per name. Cap
+ * MAX_AUTO_RISKOFF_VERTICALS.
  */
 export function decidePutVerticalIntents(
   quotes: Array<{ symbol: string; last: number }>,
@@ -366,7 +369,7 @@ export function decidePutVerticalIntents(
   const spyAbove200 = knownBool(checks?.spyAbove200);
   const wantEquity = riskoffEquityPutsAllowed(riskOn, spyAbove200);
   const creditOrder = RISKOFF_CREDIT_LEG_SYMBOLS.filter((symbol) =>
-    riskoffCreditLegPutAllowed(riskOn, creditLegAbove200(symbol, checks)),
+    riskoffCreditLegPutAllowed(riskOn, creditLegAbove200(symbol, checks), spyAbove200),
   );
   if (!creditOrder.length && !wantEquity) return [];
   const openV = openPositions.filter((p) => isOpen(p) && p.sleeveId === "riskoff" && isVerticalPosition(p));
@@ -405,8 +408,8 @@ export function decidePutVerticalIntents(
 /**
  * Flatten equity-index puts when SPY is back above 200dma.
  * Flatten a credit-leg put (HYG/LQD/JNK) when that name is back above 200dma
- * or RISK ON. Leaves the risk-off ETF long alone. Missing checks do not
- * flatten that name.
+ * or RISK ON. spyAbove200 true does not flatten an existing credit-leg put.
+ * Leaves the risk-off ETF long alone. Missing checks do not flatten that name.
  */
 export function decideRiskoffPutSells(
   positions: Position[],
@@ -868,11 +871,11 @@ export type AutopilotCtx = {
   featureRows: Array<{ symbol: string; above200: boolean }>;
   scanReady: boolean;
   riskOn: boolean;
-  /** From ensureRisk(). Missing spyAbove200 / credit-leg 200 checks fail closed for that name's puts. lqd/jnk are autopilot-internal (not on GET /api/public/risk). */
+  /** From ensureRisk(). Missing spyAbove200 fails closed for equity-index and credit-leg puts. Missing credit-leg 200 also fails closed for that name. lqd/jnk are autopilot-internal (not on GET /api/public/risk). */
   riskChecks?: RiskoffPutChecks | null;
   place: (buy: AutoBuy) => Promise<PlaceResult>;
   close: (sell: AutoSell) => Promise<CloseResult>;
-  /** Paper debit verticals. Call on options when RISK ON; risk-off puts: equity-index if SPY below 200, credit-leg if that name is below its own 200. Never CSP/CC. */
+  /** Paper debit verticals. Call on options when RISK ON; risk-off puts: equity-index and credit-leg only if SPY is below 200 (credit-leg also needs that name below its own 200). Never CSP/CC. */
   placeVertical?: (v: AutoVertical) => Promise<PlaceResult>;
   /**
    * Option expiries. Prefer `{ ok, expiries }` / `{ ok: false, error }` so
