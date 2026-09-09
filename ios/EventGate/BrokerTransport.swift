@@ -7,33 +7,46 @@ protocol BrokerHTTPPerforming: Sendable {
 
 extension URLSession: BrokerHTTPPerforming {}
 
-/// Fail-fast timeouts for Event Gate JSON calls.
+/// Shared-session JSON transport for Event Gate.
 ///
-/// A swipe-closed launch is a new process — not a leftover URLSession from the
-/// previous open. The first request of this process can still be bound to the
-/// current default route and sit with no RST until iOS gets a path-update
-/// (wifi ↔ cellular). Timeouts are a safety net so that blackholed attempt
-/// cannot hold the UI. First paint must not wait on this request, Firebase,
-/// or FCM.
+/// Use `URLSession.shared` so requests share the system connection path
+/// Safari uses. An ephemeral session does not, and is not a connectivity fix.
+/// `waitsForConnectivity` cannot be set on the shared session; its default
+/// is already false. First paint must not wait on this request, Firebase, or FCM.
 enum BrokerTransport {
     static let requestTimeout: TimeInterval = 10
-    static let resourceTimeout: TimeInterval = 15
 
-    static let session: URLSession = makeSession()
+    /// Absolute http(s) URL from a stored base + API path.
+    /// Replaces the base path/query instead of resolving the path as relative.
+    static func resolveURL(baseURL: String, path: String) -> URL? {
+        let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var components = URLComponents(string: trimmed) else { return nil }
+        let scheme = components.scheme?.lowercased()
+        guard scheme == "http" || scheme == "https" else { return nil }
+        guard let host = components.host, !host.isEmpty else { return nil }
 
-    static func makeSession() -> URLSession {
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = requestTimeout
-        config.timeoutIntervalForResource = resourceTimeout
-        config.waitsForConnectivity = false
-        config.requestCachePolicy = .reloadIgnoringLocalCacheData
-        config.urlCache = nil
-        return URLSession(configuration: config)
+        var pathParts = URLComponents()
+        if let queryStart = path.firstIndex(of: "?") {
+            pathParts.path = String(path[..<queryStart])
+            pathParts.query = String(path[path.index(after: queryStart)...])
+        } else {
+            pathParts.path = path
+        }
+        guard pathParts.path.hasPrefix("/") else { return nil }
+
+        components.path = pathParts.path
+        components.query = pathParts.query
+        components.fragment = nil
+        return components.url
     }
 
     static func applyTimeouts(to request: inout URLRequest) {
         request.timeoutInterval = requestTimeout
         request.cachePolicy = .reloadIgnoringLocalCacheData
+    }
+
+    static func transportMessage(_ error: Error, url: URL) -> String {
+        "\(error.localizedDescription) (\(url.absoluteString))"
     }
 
     static func data(
