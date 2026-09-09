@@ -3,6 +3,17 @@ import Foundation
 struct BrokerAPI {
     var baseURL: String
     var bearerToken: String?
+    var http: any BrokerHTTPPerforming
+
+    init(
+        baseURL: String,
+        bearerToken: String?,
+        http: any BrokerHTTPPerforming = BrokerTransport.session
+    ) {
+        self.baseURL = baseURL
+        self.bearerToken = bearerToken
+        self.http = http
+    }
 
     func login(username: String, password: String) async throws -> LoginSuccess {
         try await post("/api/auth/login", json: [
@@ -113,6 +124,7 @@ struct BrokerAPI {
 
         var request = URLRequest(url: url)
         request.httpMethod = method
+        BrokerTransport.applyTimeouts(to: &request)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         // Keep FCM tokens on the VPS default principal so existing registrations stay valid.
         request.setValue(EventGateIdentity.tokenPrincipal, forHTTPHeaderField: "x-remote-user")
@@ -129,7 +141,7 @@ struct BrokerAPI {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: request)
+            (data, response) = try await BrokerTransport.data(for: request, using: http)
         } catch {
             throw BrokerAPIError.transport(error.localizedDescription)
         }

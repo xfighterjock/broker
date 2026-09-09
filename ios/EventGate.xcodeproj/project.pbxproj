@@ -24,6 +24,7 @@
 		01C000000000000000000013 /* EtradePinView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01B000000000000000000013 /* EtradePinView.swift */; };
 		01C000000000000000000014 /* ActivityLogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01B000000000000000000014 /* ActivityLogView.swift */; };
 		01C000000000000000000015 /* ActivityLogController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01B000000000000000000015 /* ActivityLogController.swift */; };
+		01C000000000000000000016 /* BrokerTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01B000000000000000000016 /* BrokerTransport.swift */; };
 		01C00000000000000000000B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 01B00000000000000000000B /* Assets.xcassets */; };
 		01C00000000000000000000C /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = 01B00000000000000000000C /* GoogleService-Info.plist */; };
 		01C0000000000000000000D1 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = 01D000000000000000000002 /* FirebaseCore */; };
@@ -49,6 +50,7 @@
 		01B000000000000000000013 /* EtradePinView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EtradePinView.swift; sourceTree = "<group>"; };
 		01B000000000000000000014 /* ActivityLogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityLogView.swift; sourceTree = "<group>"; };
 		01B000000000000000000015 /* ActivityLogController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityLogController.swift; sourceTree = "<group>"; };
+		01B000000000000000000016 /* BrokerTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrokerTransport.swift; sourceTree = "<group>"; };
 		01B000000000000000000009 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		01B00000000000000000000A /* EventGate.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = EventGate.entitlements; sourceTree = "<group>"; };
 		01B00000000000000000000B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -92,6 +94,7 @@
 				01B000000000000000000003 /* ContentView.swift */,
 				01B000000000000000000004 /* PushController.swift */,
 				01B000000000000000000005 /* BrokerAPI.swift */,
+				01B000000000000000000016 /* BrokerTransport.swift */,
 				01B000000000000000000006 /* KeychainStore.swift */,
 				01B000000000000000000007 /* AppSettings.swift */,
 				01B000000000000000000008 /* Models.swift */,
@@ -206,6 +209,7 @@
 				01C000000000000000000013 /* EtradePinView.swift in Sources */,
 				01C000000000000000000014 /* ActivityLogView.swift in Sources */,
 				01C000000000000000000015 /* ActivityLogController.swift in Sources */,
+				01C000000000000000000016 /* BrokerTransport.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

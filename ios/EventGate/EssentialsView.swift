@@ -94,7 +94,10 @@ struct EssentialsView: View {
     }
 
     private var metaLine: String {
-        guard let snap else { return "Loading…" }
+        guard let snap else {
+            if let err = status.lastError, !err.isEmpty { return "Unavailable" }
+            return "Loading…"
+        }
         var parts = ["\(snap.broker.mode.uppercased()) · \(snap.broker.name)"]
         if let type = snap.clock?.focusEvent?.type, !type.isEmpty { parts.append(type) }
         if let cd = snap.clock?.countdownLabel, !cd.isEmpty { parts.append(cd) }

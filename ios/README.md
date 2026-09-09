@@ -71,6 +71,8 @@ Xcode may rewrite `aps-environment` to `production` for a Release / App Store pr
 
 Simulator notes: `registerForRemoteNotifications` fails; you will not get a real APNs token or a deliverable FCM push. Use a device.
 
+JSON calls (login, GET `/api/status`, and the rest) use a dedicated `URLSession` — not `URLSession.shared` — with a 10-second request timeout, `waitsForConnectivity = false`, and one automatic retry on transport timeout. A dead wifi/cellular path should fail fast with an error instead of hanging until you flip interfaces. GET `/api/activity` still loads only when you open Activity.
+
 ## 5. Backend contract
 
 Production `AUTH_MODE=users`. nginx terminates TLS and does **not** require htpasswd on `/api` or the SPA. Login is `POST /api/auth/login` `{ username, password }`. Token principal for FCM is still `x-remote-user: event-gate` so existing tokens stay on that principal.

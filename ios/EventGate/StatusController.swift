@@ -16,6 +16,7 @@ final class StatusController: ObservableObject {
     private var settings: AppSettings?
     private var auth: AuthController?
     private var timer: Timer?
+    private var refreshInFlight = false
 
     func bind(settings: AppSettings, auth: AuthController) {
         self.settings = settings
@@ -38,7 +39,10 @@ final class StatusController: ObservableObject {
     }
 
     func refresh() async {
+        guard !refreshInFlight else { return }
         guard let api = makeAPI() else { return }
+        refreshInFlight = true
+        defer { refreshInFlight = false }
         do {
             snapshot = try await api.gateStatus()
             lastError = nil
