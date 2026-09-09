@@ -339,11 +339,7 @@ describe("runAutopilot: HYG liquid-strike / expiry ladder", () => {
     vi.restoreAllMocks();
   });
 
-  const quotes = [
-    { symbol: "SPY", last: 500 },
-    { symbol: "QQQ", last: 400 },
-    { symbol: "HYG", last: 79 },
-  ];
+  const quotes = [{ symbol: "HYG", last: 79 }];
 
   it("walks to offset +1 when ATM fails OI but the next pair clears the gate", async () => {
     const placed: AutoVertical[] = [];
@@ -357,7 +353,7 @@ describe("runAutopilot: HYG liquid-strike / expiry ladder", () => {
       featureRows: [],
       scanReady: true,
       riskOn: false,
-      riskChecks: { spyAbove200: true, hygAbove200: false },
+      riskChecks: { spyAbove200: false, hygAbove200: false },
       riskoffQuotes: quotes,
       place: async () => ({ ok: true }),
       close: async () => ({ ok: true }),
@@ -402,7 +398,7 @@ describe("runAutopilot: HYG liquid-strike / expiry ladder", () => {
       featureRows: [],
       scanReady: true,
       riskOn: false,
-      riskChecks: { spyAbove200: true, hygAbove200: false },
+      riskChecks: { spyAbove200: false, hygAbove200: false },
       riskoffQuotes: quotes,
       place: async () => ({ ok: true }),
       close: async () => ({ ok: true }),
@@ -446,7 +442,7 @@ describe("runAutopilot: HYG liquid-strike / expiry ladder", () => {
       featureRows: [],
       scanReady: true,
       riskOn: false,
-      riskChecks: { spyAbove200: true, hygAbove200: false },
+      riskChecks: { spyAbove200: false, hygAbove200: false },
       riskoffQuotes: quotes,
       place: async () => ({ ok: true }),
       close: async () => ({ ok: true }),
@@ -517,7 +513,7 @@ describe("runAutopilot: HYG liquid-strike / expiry ladder", () => {
       featureRows: [],
       scanReady: true,
       riskOn: false,
-      riskChecks: { spyAbove200: true, hygAbove200: false },
+      riskChecks: { spyAbove200: false, hygAbove200: false },
       riskoffQuotes: quotes,
       place: async () => ({ ok: true }),
       close: async () => ({ ok: true }),
@@ -653,7 +649,7 @@ describe("runAutopilot: credit-leg monthly DTE fallback", () => {
       featureRows: [],
       scanReady: true,
       riskOn: false,
-      riskChecks: { spyAbove200: true, hygAbove200: false },
+      riskChecks: { spyAbove200: false, hygAbove200: false },
       riskoffQuotes: [{ symbol: "HYG", last: 79 }],
       place: async () => ({ ok: true }),
       close: async () => ({ ok: true }),
@@ -690,7 +686,7 @@ describe("runAutopilot: credit-leg monthly DTE fallback", () => {
       featureRows: [],
       scanReady: true,
       riskOn: false,
-      riskChecks: { spyAbove200: true, hygAbove200: false },
+      riskChecks: { spyAbove200: false, hygAbove200: false },
       riskoffQuotes: [{ symbol: "HYG", last: 79 }],
       place: async () => ({ ok: true }),
       close: async () => ({ ok: true }),
@@ -719,7 +715,7 @@ describe("runAutopilot: credit-leg monthly DTE fallback", () => {
       featureRows: [],
       scanReady: true,
       riskOn: false,
-      riskChecks: { spyAbove200: true, hygAbove200: false },
+      riskChecks: { spyAbove200: false, hygAbove200: false },
       riskoffQuotes: [{ symbol: "HYG", last: 79 }],
       place: async () => ({ ok: true }),
       close: async () => ({ ok: true }),

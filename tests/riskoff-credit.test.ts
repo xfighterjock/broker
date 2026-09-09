@@ -4,6 +4,7 @@ import { defaultSleeves } from "../shared/types";
 import {
   checkCreditLegAutoLiquidity,
   checkHygAutoLiquidity,
+  decidePutVerticalIntents,
   riskoffCreditLegPutAllowed,
   riskoffEquityPutsAllowed,
   runAutopilot,
@@ -86,15 +87,35 @@ describe("credit-leg liquidity aliases keep the HYG envelope", () => {
   });
 });
 
-describe("credit-leg put allowance is own-200, not spyAbove200", () => {
-  it("LQD/JNK require RISK OFF and own 200 below; missing fails closed", () => {
-    expect(riskoffCreditLegPutAllowed(false, false)).toBe(true);
-    expect(riskoffCreditLegPutAllowed(false, true)).toBe(false);
-    expect(riskoffCreditLegPutAllowed(false, undefined)).toBe(false);
-    expect(riskoffCreditLegPutAllowed(false, null)).toBe(false);
-    expect(riskoffCreditLegPutAllowed(true, false)).toBe(false);
+describe("credit-leg put allowance requires SPY below 200 and own-200", () => {
+  it("LQD/JNK require RISK OFF, spyAbove200 === false, and own 200 below; missing fails closed", () => {
+    expect(riskoffCreditLegPutAllowed(false, false, false)).toBe(true);
+    expect(riskoffCreditLegPutAllowed(false, false, true)).toBe(false);
+    expect(riskoffCreditLegPutAllowed(false, false, undefined)).toBe(false);
+    expect(riskoffCreditLegPutAllowed(false, false, null)).toBe(false);
+    expect(riskoffCreditLegPutAllowed(false, true, false)).toBe(false);
+    expect(riskoffCreditLegPutAllowed(false, undefined, false)).toBe(false);
+    expect(riskoffCreditLegPutAllowed(false, null, false)).toBe(false);
+    expect(riskoffCreditLegPutAllowed(true, false, false)).toBe(false);
     expect(riskoffEquityPutsAllowed(false, true)).toBe(false);
     expect(riskoffEquityPutsAllowed(false, false)).toBe(true);
+  });
+
+  it("options sleeve stays empty even when full OFF would allow credit-leg puts", () => {
+    const quotes = [
+      { symbol: "SPY", last: 500 },
+      { symbol: "HYG", last: 77 },
+      { symbol: "LQD", last: 108 },
+      { symbol: "JNK", last: 76 },
+    ];
+    expect(
+      decidePutVerticalIntents(quotes, [], defaultSleeves().options, false, {
+        spyAbove200: false,
+        hygAbove200: false,
+        lqdAbove200: false,
+        jnkAbove200: false,
+      }),
+    ).toEqual([]);
   });
 });
 
@@ -148,21 +169,37 @@ describe("runAutopilot: LQD/JNK credit-leg puts", () => {
     return { placed, logs, result };
   }
 
-  it("opens LQD in HYG-only OFF when LQD is below its own 200dma", async () => {
+  it("HYG-only OFF (SPY still above 200) does not open a credit-leg put", async () => {
     const { placed, result } = await paperPuts({
-      checks: { spyAbove200: true, hygAbove200: true, lqdAbove200: false },
+      checks: { spyAbove200: true, hygAbove200: false, lqdAbove200: false, jnkAbove200: false },
     });
-    expect(placed.map((p) => p.symbol)).toEqual(["LQD"]);
-    expect(placed[0].qty).toBe(RISKOFF_CREDIT_LEG_MAX_AUTO_QTY);
-    expect(placed[0].thesis).toMatch(/credit-leg/);
-    expect(result.verticals.map((v) => v.symbol)).toEqual(["LQD"]);
+    expect(placed).toEqual([]);
+    expect(result.verticals).toEqual([]);
   });
 
-  it("opens JNK when JNK is below 200 and HYG/LQD are not", async () => {
-    const { placed } = await paperPuts({
-      checks: { spyAbove200: true, hygAbove200: true, lqdAbove200: true, jnkAbove200: false },
+  it("missing spyAbove200 fails closed: no new credit-leg put even if names are below 200", async () => {
+    const { placed, result } = await paperPuts({
+      checks: { hygAbove200: false, lqdAbove200: false, jnkAbove200: false },
     });
-    expect(placed.map((p) => p.symbol)).toEqual(["JNK"]);
+    expect(placed).toEqual([]);
+    expect(result.verticals).toEqual([]);
+  });
+
+  it("full OFF (SPY below 200) opens LQD when LQD is below its own 200dma", async () => {
+    const { placed, result } = await paperPuts({
+      checks: { spyAbove200: false, hygAbove200: true, lqdAbove200: false, jnkAbove200: true },
+    });
+    expect(placed.map((p) => p.symbol)).toEqual(["LQD", "SPY", "QQQ"]);
+    expect(placed[0].qty).toBe(RISKOFF_CREDIT_LEG_MAX_AUTO_QTY);
+    expect(placed[0].thesis).toMatch(/credit-leg/);
+    expect(result.verticals.map((v) => v.symbol)).toEqual(["LQD", "SPY", "QQQ"]);
+  });
+
+  it("opens JNK when JNK is below 200 and HYG/LQD are not (full OFF)", async () => {
+    const { placed } = await paperPuts({
+      checks: { spyAbove200: false, hygAbove200: true, lqdAbove200: true, jnkAbove200: false },
+    });
+    expect(placed.map((p) => p.symbol)).toEqual(["JNK", "SPY", "QQQ"]);
     expect(placed[0].qty).toBe(3);
   });
 
@@ -182,12 +219,12 @@ describe("runAutopilot: LQD/JNK credit-leg puts", () => {
     expect(placed.map((p) => p.symbol)).toEqual(["SPY", "QQQ"]);
   });
 
-  it("skips thin HYG and papers LQD instead of sitting idle (HYG-only OFF)", async () => {
+  it("skips thin HYG and papers LQD instead of sitting idle (full OFF)", async () => {
     const { placed, logs } = await paperPuts({
-      checks: { spyAbove200: true, hygAbove200: false, lqdAbove200: false, jnkAbove200: true },
+      checks: { spyAbove200: false, hygAbove200: false, lqdAbove200: false, jnkAbove200: true },
       chains: { HYG: thin("HYG", 79) },
     });
-    expect(placed.map((p) => p.symbol)).toEqual(["LQD"]);
+    expect(placed.map((p) => p.symbol)).toEqual(["LQD", "SPY"]);
     expect(placed[0].qty).toBe(3);
     expect(logs.some((l) => /HYG/.test(l) && /open interest/i.test(l))).toBe(true);
   });

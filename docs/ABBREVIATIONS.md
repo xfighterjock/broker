@@ -10,7 +10,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **20dma** — 20-day simple moving average. Momentum pullback filter uses last vs this SMA (dist20).
 
-**200dma** — 200-day simple moving average. RISK ON requires SPY, ACWI, and HYG last above it. Momentum/ownership filters and below-200 exits use it too. Risk-off credit-leg puts (HYG/LQD/JNK) each use that name's own 200dma — not spyAbove200 for LQD/JNK. The risk-off ETF RS overlay also requires the 63d winner (not BIL) to be above its own 200dma; else park in BIL. Overlay 200 filter is independent of credit-leg and gated duration.
+**200dma** — 200-day simple moving average. RISK ON requires SPY, ACWI, and HYG last above it. Momentum/ownership filters and below-200 exits use it too. Risk-off credit-leg puts (HYG/LQD/JNK) need SPY below 200dma (spyAbove200 === false; missing fails closed, no new put) and that name below its own 200dma. HYG-only OFF (SPY still above 200) does not open a new credit-leg put. Existing credit verticals are not flattened just because SPY is above 200. The risk-off ETF RS overlay also requires the 63d winner (not BIL) to be above its own 200dma; else park in BIL. Overlay 200 filter is independent of credit-leg and gated duration.
 
 **ACWI** — iShares MSCI ACWI ETF (global equities). One of three 200dma legs on the RISK ON badge.
 
@@ -82,7 +82,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **holiday** — NYSE full-day cash close. Status `marketSession.closedReason` (`holiday` / `weekend` / `early_close`). Web and iOS show a muted closed strip. Does not change GateMode, flatten books, or pause AUTO.
 
-**HYG** — iShares iBoxx $ High Yield Corporate Bond ETF. RISK ON 200dma leg. First credit-leg put debit on the riskoff sleeve when HYG is below its own 200dma. AUTO tries ATM first, then ±2 strikes, then up to two more 30-45 DTE expiries; if that band is empty, one 3rd-Friday monthly in 21–60 DTE (paper only). Each candidate still needs OI >= 100 on each leg, a round-trip within 25% of the entry debit, and a hard 3-contract cap (RISKOFF_HYG_* / RISKOFF_CREDIT_LEG_* aliases). Paper only.
+**HYG** — iShares iBoxx $ High Yield Corporate Bond ETF. RISK ON 200dma leg. First credit-leg put debit on the riskoff sleeve when RISK OFF, SPY is below 200dma, and HYG is below its own 200dma. HYG-only OFF (SPY still above 200) does not open a new HYG put. AUTO tries ATM first, then ±2 strikes, then up to two more 30-45 DTE expiries; if that band is empty, one 3rd-Friday monthly in 21–60 DTE (paper only). Each candidate still needs OI >= 100 on each leg, a round-trip within 25% of the entry debit, and a hard 3-contract cap (RISKOFF_HYG_* / RISKOFF_CREDIT_LEG_* aliases). Paper only.
 
 **IEF** — iShares 7-10 Year Treasury Bond ETF. Intermediate-duration candidate on the risk-off 63d RS overlay (after TLT in the duration bucket). Also the fallback for gated duration when TLT is unquoted or sizes to 0.
 
@@ -90,7 +90,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **IWM** — iShares Russell 2000 ETF. Options quote strip; optional third equity-index put on riskoff when SPY is below 200dma and IWM is quoted.
 
-**JNK** — SPDR Bloomberg High Yield Bond ETF. Credit-leg put debit on the riskoff sleeve when RISK OFF and JNK is below its own 200dma (not spyAbove200). Same ATM-then-ladder + liquidity/size envelope as HYG. After HYG and LQD inside the cap of 3. Paper only.
+**JNK** — SPDR Bloomberg High Yield Bond ETF. Credit-leg put debit on the riskoff sleeve when RISK OFF, SPY is below 200dma, and JNK is below its own 200dma. HYG-only OFF does not open a new JNK put. Same ATM-then-ladder + liquidity/size envelope as HYG. After HYG and LQD inside the cap of 3. Paper only.
 
 **Keychain** — iOS credential store. Event Gate iOS keeps the session bearer, login username, and last registered FCM token (`replaceToken`) here only — never UserDefaults, never git.
 
@@ -98,7 +98,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **Limit** — Limit order type. Gate leaves limits alone unless oversize.
 
-**LQD** — iShares iBoxx $ Investment Grade Corporate Bond ETF. Credit-leg put debit on the riskoff sleeve when RISK OFF and LQD is below its own 200dma (not spyAbove200). Same ATM-then-ladder + liquidity/size envelope as HYG. Tried after HYG (including when HYG fails liquidity) and before JNK. Paper only.
+**LQD** — iShares iBoxx $ Investment Grade Corporate Bond ETF. Credit-leg put debit on the riskoff sleeve when RISK OFF, SPY is below 200dma, and LQD is below its own 200dma. HYG-only OFF does not open a new LQD put. Same ATM-then-ladder + liquidity/size envelope as HYG. Tried after HYG (including when HYG fails liquidity) and before JNK. Paper only.
 
 **M6E** — CME Micro Euro FX futures. Gated root; freeze-card liquid contract; day quote strip M6E=F.
 
@@ -146,7 +146,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **Redis** — Cache/store for gate flags, mock book, sleeves, blotter, session marks, scan, AUTO PAPER (per-sleeve JSON on `paper:auto`), last-known RISK ON/OFF (`risk:on`), and SPA cookie sessions (cookie name `eg.sid`, Redis prefix `eg:sess:`).
 
-**RISK OFF** — Badge when RISK ON is false. Pauses new momentum longs and options call-debits; ownership pauses new adds. May run the riskoff sleeve. Does not bind the day book.
+**RISK OFF** — Badge when RISK ON is false. Pauses new momentum longs and options call-debits; ownership pauses new adds. May run the riskoff sleeve (ETF overlay always; credit-leg and equity-index puts only when SPY is below 200dma). Does not bind the day book.
 
 **RISK ON** — Badge iff SPY, ACWI, and HYG are above 200dma and UUP 20d is not greater than +3%. Missing series fail closed to RISK OFF.
 
@@ -184,7 +184,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **SPCX** — SPAC and New Issue ETF. Overlay thesisSleeve may be tagged spcx (manual CSP/CC). Not auto-traded.
 
-**SPY** — SPDR S&P 500 ETF Trust. RISK ON 200dma leg; scan RS benchmark; risk-off equity-index puts only when SPY is below 200dma; options quote strip.
+**SPY** — SPDR S&P 500 ETF Trust. RISK ON 200dma leg; scan RS benchmark; risk-off equity-index puts and new credit-leg (HYG/LQD/JNK) puts only when SPY is below 200dma (missing spyAbove200 fails closed); options quote strip.
 
 **SR3** — CME Three-Month SOFR futures. Gated root; freeze-card liquid contract; day quote strip SR3=F.
 
