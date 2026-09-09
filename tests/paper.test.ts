@@ -111,6 +111,24 @@ function stubQuotes(lastBySymbol: Record<string, number> | number) {
   stubMarketFetch({ lastBySymbol: map });
 }
 
+/** Hold Massive/Yahoo last quotes until `release` settles. Risk aggs and localhost stay live. */
+function hangDelayedQuoteFetches(release: Promise<void>) {
+  const inner = globalThis.fetch as typeof fetch;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (
+        url.includes("/v2/snapshot/locale/us/markets/stocks/tickers/") ||
+        url.includes("/v8/finance/chart/")
+      ) {
+        await release;
+      }
+      return inner(input as RequestInfo, init);
+    }),
+  );
+}
+
 describe("paper stop side validation", () => {
   it("Buy requires stop below last; Sell requires stop above last", () => {
     expect(stopOnCorrectSide("Buy", 100, 99)).toBe(true);
@@ -473,6 +491,85 @@ describe("flatten on stop cross", () => {
       const exit = snap.paperBlotter.find((f) => f.notes === "stop hit");
       expect(exit).toMatchObject({ symbol: "SPY", side: "Sell", price: 399 });
     } finally {
+      await srv.close();
+      broker.reset();
+    }
+  });
+});
+
+describe("GET /api/status does not wait for paper quote marks", () => {
+  beforeEach(() => {
+    delete process.env.GATE_PASSWORD;
+    resetQuoteCache();
+    resetMassiveCache();
+    resetRiskCache();
+  });
+  afterEach(() => {
+    clearMassiveTestKey();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    resetQuoteCache();
+    resetMassiveCache();
+    resetRiskCache();
+  });
+
+  it("returns the current book when delayed quote fetch is slow or hanging", async () => {
+    const { app, broker } = makeTestApp();
+    stubQuotes(500);
+    const srv = await listen(app);
+    let releaseHang!: () => void;
+    const hang = new Promise<void>((resolve) => {
+      releaseHang = resolve;
+    });
+    try {
+      const placed = await fetch(`${srv.url}/api/paper/order`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sleeveId: "momentum",
+          symbol: "SPY",
+          side: "Buy",
+          qty: 1,
+          stopPrice: 400,
+          thesis: "status-must-not-await-quotes",
+        }),
+      });
+      expect(placed.status).toBe(200);
+      // Let the order's kicked mark finish so GET /api/status starts a fresh pass.
+      await new Promise((r) => setTimeout(r, 50));
+      resetQuoteCache();
+      hangDelayedQuoteFetches(hang);
+      const t0 = Date.now();
+      const res = await fetch(`${srv.url}/api/status`, {
+        signal: AbortSignal.timeout(1500),
+      });
+      expect(Date.now() - t0).toBeLessThan(1500);
+      expect(res.status).toBe(200);
+      const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+      expect(
+        fetchMock.mock.calls.some((c) => {
+          const url = String(c[0]);
+          return (
+            url.includes("/v2/snapshot/locale/us/markets/stocks/tickers/") ||
+            url.includes("/v8/finance/chart/")
+          );
+        }),
+      ).toBe(true);
+      const snap = (await res.json()) as StatusSnapshot;
+      expect(snap.broker.positions.filter((p) => p.side !== "Flat")).toHaveLength(1);
+      expect(snap.broker.orders.some((o) => o.state === "Working" && o.type === "StopMarket")).toBe(
+        true,
+      );
+      expect(snap.clock).toEqual(expect.objectContaining({ mode: expect.any(String) }));
+      expect(snap.paperBlotter.at(-1)).toMatchObject({
+        sleeveId: "momentum",
+        symbol: "SPY",
+        side: "Buy",
+        notes: "status-must-not-await-quotes",
+      });
+      expect(snap.gateEnabled).toBe(false);
+    } finally {
+      releaseHang();
       await srv.close();
       broker.reset();
     }

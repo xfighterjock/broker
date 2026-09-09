@@ -1361,7 +1361,13 @@ export function buildApp(deps: AppDeps): express.Express {
     const now = new Date();
     const events = deps.getEvents();
     const clock = computeClock(now, events);
-    await markPaperQuiet();
+    // Kick, do not await: delayed quotes can hang past the iOS URLSession
+    // default (~60s). GET /api/quotes still awaits this coalesced pass.
+    void markPaperQuiet().catch((err) => {
+      deps.engine.log(
+        `paper quiet mark skip: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
     await ensureSleeves();
     await ensureBlotter();
     await ensureAutoPaper();

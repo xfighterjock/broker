@@ -210,9 +210,14 @@ describe("vertical exit blotter price: immediate close credit, not close + entry
       expect(longFill?.price).toBeCloseTo(0.42);
       expect(shortFill?.price).toBeCloseTo(0.22);
 
-      // Move the chain to the incident's worse quote and force a fresh fetch.
+      // Drain the open's kicked mark, then move the chain and await quotes
+      // (status no longer waits on delayed marks / option chains).
+      const drain = await fetch(`${srv.url}/api/quotes?sleeve=riskoff`);
+      expect(drain.status).toBe(200);
       resetEtradeCache();
       stub.setClosed();
+      const marked = await fetch(`${srv.url}/api/quotes?sleeve=riskoff`);
+      expect(marked.status).toBe(200);
       const afterClose = await fetch(`${srv.url}/api/status`);
       expect(afterClose.status).toBe(200);
       const closedSnap = (await afterClose.json()) as StatusSnapshot;
