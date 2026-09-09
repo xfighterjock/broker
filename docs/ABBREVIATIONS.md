@@ -212,7 +212,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **VXX** — iPath Series B S&P 500 VIX Short-Term Futures ETN. Not a live risk-off expression.
 
-**WS** — WebSocket /ws for live status and log.
+**WS** — WebSocket /ws for live status and log. The status snapshot kicks paper-stop marks in the background and does not wait on delayed quotes or option chains (GET /api/quotes still awaits the mark).
 
 **XcodeGen** — Optional Mac tool. `ios/project.yml` can regenerate `ios/EventGate.xcodeproj`. The checked-in xcodeproj is enough to open on a Mac without installing XcodeGen.
 
