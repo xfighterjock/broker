@@ -3,6 +3,7 @@ import { zonedTimeToUtc } from "../shared/clock";
 import type { Position } from "../shared/types";
 import {
   DAY_STOCH_SYMBOL,
+  dayStochArmed,
   decideDayMomentum,
   gateBlocksDayEntries,
   parseYahooFiveMinuteBars,
@@ -10,6 +11,7 @@ import {
   stochasticKd,
   stopForLong,
   stopForShort,
+  vwapLostSustained,
   type MinuteBar,
 } from "../server/src/dayMomentum";
 
@@ -95,6 +97,36 @@ function series(n: number, close: number): MinuteBar[] {
   return out;
 }
 
+function longSignalBars(): MinuteBar[] {
+  const bars = series(22, 81);
+  bars[21] = { ...bars[21], close: 99, high: 100, low: 80 };
+  return bars;
+}
+
+/** Tight high/low so session VWAP stays near `px` (for exit hysteresis). */
+function flatVwapBars(n: number, px: number): MinuteBar[] {
+  const out: MinuteBar[] = [];
+  for (let i = 0; i < n; i++) {
+    const total = 9 * 60 + 30 + i * 5;
+    out.push(rth(Math.floor(total / 60), total % 60, px, { high: px, low: px, volume: 1000 }));
+  }
+  return out;
+}
+
+const printDayKnowledge = zonedTimeToUtc(2026, 9, 2, 8, 35, 0).toISOString();
+
+describe("dayStochArmed", () => {
+  const noon = zonedTimeToUtc(2026, 9, 2, 11, 20, 0);
+
+  it("is false without knowledge_time and true after a same-ET-day stamp", () => {
+    expect(dayStochArmed(noon, null)).toBe(false);
+    expect(dayStochArmed(noon, undefined)).toBe(false);
+    expect(dayStochArmed(noon, printDayKnowledge)).toBe(true);
+    expect(dayStochArmed(noon, zonedTimeToUtc(2026, 9, 1, 10, 0, 0).toISOString())).toBe(false);
+    expect(dayStochArmed(noon, zonedTimeToUtc(2026, 9, 2, 12, 0, 0).toISOString())).toBe(false);
+  });
+});
+
 describe("decideDayMomentum", () => {
   const noon = zonedTimeToUtc(2026, 9, 2, 11, 20, 0);
   const afterFlat = zonedTimeToUtc(2026, 9, 2, 15, 50, 0);
@@ -112,37 +144,128 @@ describe("decideDayMomentum", () => {
     expect(got.buy).toBeNull();
   });
 
-  it("refuses new entries in PRE-ARM", () => {
-    const bars = series(22, 81);
-    bars[21] = { ...bars[21], close: 99, high: 100, low: 80 };
+  it("refuses new entries in PRE-ARM even after knowledge_time", () => {
     const got = decideDayMomentum({
       now: noon,
       gateMode: "PRE-ARM",
-      bars,
+      bars: longSignalBars(),
       positions: [],
       sleeveLossCapUsd: 500,
       sleeveRealizedPnlUsd: 0,
+      knowledgeTime: printDayKnowledge,
     });
     expect(got.buy).toBeNull();
     expect(got.reason).toMatch(/PRE-ARM/);
   });
 
-  it("buys MES qty 1 on oversold stoch cross above VWAP", () => {
-    const bars = series(22, 81);
-    bars[21] = { ...bars[21], close: 99, high: 100, low: 80 };
+  it("refuses new entries in NO-STOP BAND even after knowledge_time", () => {
     const got = decideDayMomentum({
       now: noon,
-      gateMode: "idle",
-      bars,
+      gateMode: "NO-STOP BAND",
+      bars: longSignalBars(),
       positions: [],
       sleeveLossCapUsd: 500,
       sleeveRealizedPnlUsd: 0,
+      knowledgeTime: printDayKnowledge,
+    });
+    expect(got.buy).toBeNull();
+    expect(got.reason).toMatch(/NO-STOP BAND/);
+  });
+
+  it("does not enter idle RTH on a leftover knowledge_time from another ET day", () => {
+    const got = decideDayMomentum({
+      now: noon,
+      gateMode: "idle",
+      bars: longSignalBars(),
+      positions: [],
+      sleeveLossCapUsd: 500,
+      sleeveRealizedPnlUsd: 0,
+      knowledgeTime: zonedTimeToUtc(2026, 9, 1, 10, 0, 0).toISOString(),
+    });
+    expect(got.buy).toBeNull();
+    expect(got.reason).toMatch(/knowledge_time/);
+  });
+
+  it("does not enter idle RTH without knowledge_time", () => {
+    const got = decideDayMomentum({
+      now: noon,
+      gateMode: "idle",
+      bars: longSignalBars(),
+      positions: [],
+      sleeveLossCapUsd: 500,
+      sleeveRealizedPnlUsd: 0,
+      knowledgeTime: null,
+    });
+    expect(got.buy).toBeNull();
+    expect(got.reason).toMatch(/knowledge_time/);
+  });
+
+  it("buys MES qty 1 on oversold stoch cross above VWAP after knowledge_time", () => {
+    const got = decideDayMomentum({
+      now: noon,
+      gateMode: "idle",
+      bars: longSignalBars(),
+      positions: [],
+      sleeveLossCapUsd: 500,
+      sleeveRealizedPnlUsd: 0,
+      knowledgeTime: printDayKnowledge,
     });
     expect(got.buy?.sleeveId).toBe("day");
     expect(got.buy?.symbol).toBe(DAY_STOCH_SYMBOL);
     expect(got.buy?.side).toBe("Buy");
     expect(got.buy?.qty).toBe(1);
     expect(got.buy!.stopPrice).toBeLessThan(99);
+  });
+
+  it("does not exit on a single completed bar through VWAP", () => {
+    const bars = flatVwapBars(20, 100);
+    bars[19] = { ...bars[19], close: 99.75, high: 100, low: 99.75 };
+    expect(sessionVwap(bars)!).toBeGreaterThan(99.75);
+    expect(vwapLostSustained("Long", bars, sessionVwap(bars)!)).toBe(false);
+    const got = decideDayMomentum({
+      now: noon,
+      gateMode: "idle",
+      bars,
+      positions: [pos("Long")],
+      sleeveLossCapUsd: 500,
+      sleeveRealizedPnlUsd: 0,
+    });
+    expect(got.sells).toEqual([]);
+    expect(got.reason).toBe("hold");
+  });
+
+  it("exits VWAP lost after two consecutive closes on the wrong side", () => {
+    const bars = flatVwapBars(20, 100);
+    bars[18] = { ...bars[18], close: 99.75, high: 100, low: 99.75 };
+    bars[19] = { ...bars[19], close: 99.5, high: 100, low: 99.5 };
+    const vwap = sessionVwap(bars)!;
+    expect(bars[18].close).toBeLessThan(vwap);
+    expect(bars[19].close).toBeLessThan(vwap);
+    expect(vwapLostSustained("Long", bars, vwap)).toBe(true);
+    const got = decideDayMomentum({
+      now: noon,
+      gateMode: "idle",
+      bars,
+      positions: [pos("Long")],
+      sleeveLossCapUsd: 500,
+      sleeveRealizedPnlUsd: 0,
+    });
+    expect(got.sells[0]?.reason).toBe("VWAP lost");
+    expect(got.reason).toBe("exit VWAP");
+    expect(got.buy).toBeNull();
+  });
+
+  it("still flattens an open lot on sleeve loss cap without knowledge_time", () => {
+    const got = decideDayMomentum({
+      now: noon,
+      gateMode: "idle",
+      bars: flatVwapBars(20, 100),
+      positions: [pos("Long")],
+      sleeveLossCapUsd: 500,
+      sleeveRealizedPnlUsd: -500,
+    });
+    expect(got.sells[0]?.reason).toBe("sleeve loss cap");
+    expect(got.buy).toBeNull();
   });
 
   it("parses Yahoo 5m chart timestamps", () => {

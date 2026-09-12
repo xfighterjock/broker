@@ -549,6 +549,7 @@ describe("runAutopilot toggle", () => {
       ],
       gateMode: "idle",
       now: noon,
+      knowledgeTime: zonedTimeToUtc(2026, 9, 2, 8, 35, 0).toISOString(),
       dayBars: mesBuyBars(),
       place: async (b) => {
         placed.push(`${b.sleeveId}:${b.symbol}`);
@@ -569,8 +570,36 @@ describe("runAutopilot toggle", () => {
       log: () => {},
     });
     expect(placed.every((p) => p.startsWith("day:"))).toBe(true);
+    expect(placed.some((p) => p.startsWith("day:"))).toBe(true);
     expect(closed.some((c) => c.startsWith("riskoff:"))).toBe(false);
     expect(verts).toEqual([]);
+  });
+
+  it("does not paper day MES on idle RTH without knowledge_time", async () => {
+    const noon = zonedTimeToUtc(2026, 9, 2, 11, 20, 0);
+    const placed: string[] = [];
+    const result = await runAutopilot({
+      enabled: true,
+      sleeveAuto: { ...defaultAutoPaperBySleeve(false), day: true },
+      getPositions: () => [],
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [],
+      featureRows: [],
+      scanReady: true,
+      riskOn: true,
+      gateMode: "idle",
+      now: noon,
+      knowledgeTime: null,
+      dayBars: mesBuyBars(),
+      place: async (b) => {
+        placed.push(`${b.sleeveId}:${b.symbol}`);
+        return { ok: true };
+      },
+      close: async () => ({ ok: true }),
+      log: () => {},
+    });
+    expect(placed).toEqual([]);
+    expect(result.bought).toEqual([]);
   });
 });
 

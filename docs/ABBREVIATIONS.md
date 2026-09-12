@@ -26,7 +26,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **AUTH_MODE** — Auth front door. Production `users` (users table + cookie/bearer). Local default `cookie` (GATE_PASSWORD). `nginx` is remapped to `users` in production. GET /api/public/risk is exempt in-app too.
 
-**AUTO PAPER** — Autopilot. Independent enable per sleeve (`autoPaperBySleeve`: day, momentum, options, ownership, riskoff). Snapshot `autoPaper` is true if ANY sleeve is on (badge / old clients). POST /api/paper/auto `{ enabled }` sets all; `{ sleeveId, enabled }` sets one. Redis `paper:auto` is JSON; legacy `0`/`1` migrates on first boot. Default all on when the key is missing. Never CSP/CC/naked. GATE still binds day.
+**AUTO PAPER** — Autopilot. Independent enable per sleeve (`autoPaperBySleeve`: day, momentum, options, ownership, riskoff). Snapshot `autoPaper` is true if ANY sleeve is on (badge / old clients). POST /api/paper/auto `{ enabled }` sets all; `{ sleeveId, enabled }` sets one. Redis `paper:auto` is JSON; legacy `0`/`1` migrates on first boot. Default all on when the key is missing. Never CSP/CC/naked. GATE still binds day. Day MES stoch also needs knowledge_time for that ET print day (Stage-3); idle RTH without the stamp does not enter.
 
 **bearer** — Opaque session token from POST /api/auth/login. Stored as sha256 in Postgres `user_sessions` (`SESSION_TTL_MS` 30 days). iOS keeps the raw token in the Keychain and sends `Authorization: Bearer`. SPA uses cookie `eg.sid` instead.
 
@@ -96,7 +96,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **Keychain** — iOS credential store. Event Gate iOS keeps the session bearer, login username, and last registered FCM token (`replaceToken`) here only — never UserDefaults, never git.
 
-**knowledge_time** — Timestamp after the print used on the freeze checklist (knowledge_time after print).
+**knowledge_time** — Timestamp after the print used on the freeze checklist (knowledge_time after print). Also the day-sleeve Stage-3 arm: new MES stoch entries only when this stamp is set, `now` is at or after it, and both share the same America/New_York calendar day. Ordinary idle RTH without a same-day stamp does not open MES. PRE-ARM and NO-STOP BAND still veto new entries. Existing lots keep stop / VWAP-exit / 15:45 flatten / sleeve loss cap.
 
 **Limit** — Limit order type. Gate leaves limits alone unless oversize.
 
@@ -192,6 +192,8 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **SR3** — CME Three-Month SOFR futures. Gated root; freeze-card liquid contract; day quote strip SR3=F.
 
+**Stage-3** — Post-print window on an NFP/CPI/FOMC day after knowledge_time is stamped. Day-sleeve MES stoch may open only then, and only while GATE is idle. Not PRE-ARM or NO-STOP BAND.
+
 **StopLimit** — Stop-limit order type. Cancelled as market-or-stop on gated roots in PRE-ARM and NO-STOP BAND.
 
 **StopMarket** — Stop-market order type. Same cancel rules as Market on gated roots in those windows.
@@ -244,8 +246,8 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **%D** — 3-period SMA of slow %K. Day-sleeve MES stochastic signal line.
 
-**%K** — Slow stochastic (14,3). Day-sleeve MES momentum. Long when %K crosses up through %D after %K was at or below 20; short is the mirror above 80.
+**%K** — Slow stochastic (14,3). Day-sleeve MES momentum after knowledge_time on that ET print day. Long when %K crosses up through %D after %K was at or below 20; short is the mirror above 80.
 
 **RTH** — Regular trading hours, 09:30-16:00 ET. Day-sleeve VWAP and entry window (09:35-15:45) use RTH only. Distinct from `marketSession.cashOpen`, which is the NYSE calendar day (not “are we inside 09:30–16:00 right now”).
 
-**VWAP** — Volume-weighted average price (session, RTH). Day-sleeve MES longs only above it, shorts only below; lose VWAP and the paper position exits.
+**VWAP** — Volume-weighted average price (session, RTH). Day-sleeve MES longs only above it, shorts only below. Paper exit (“VWAP lost”) needs two consecutive completed 5m closes on the wrong side (DAY_VWAP_EXIT_CLOSES = 2). A single-bar pierce holds.

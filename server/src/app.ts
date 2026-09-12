@@ -1268,6 +1268,7 @@ export function buildApp(deps: AppDeps): express.Express {
         verticalStopCooldown: memory.verticalStopCooldown,
         now: new Date(),
         gateMode: computeClock(new Date(), deps.getEvents()).mode,
+        knowledgeTime: memory.knowledgeTime,
         dayBars: await fetchYahooFiveMinuteBars("MES=F").catch(() => []),
         placeVertical: async (v: AutoVertical) => {
           if (v.sleeveId === "riskoff" && v.right !== "P") {

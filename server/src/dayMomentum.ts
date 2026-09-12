@@ -13,6 +13,8 @@ export const DAY_STOCH_QTY = 1;
 export const DAY_ENTRY_START_MIN = 9 * 60 + 35;
 export const DAY_ENTRY_CUTOFF_MIN = 15 * 60 + 45;
 export const DAY_FLAT_MIN = 15 * 60 + 45;
+/** Completed 5m closes on the wrong side of VWAP before "VWAP lost". One-bar pierce holds. */
+export const DAY_VWAP_EXIT_CLOSES = 2;
 
 export type MinuteBar = {
   ts: number;
@@ -63,6 +65,37 @@ export function isRthBar(tsMs: number): boolean {
 
 export function gateBlocksDayEntries(mode: GateMode): boolean {
   return mode !== "idle";
+}
+
+export function sameEtDay(a: Date, b: Date): boolean {
+  const pa = etParts(a);
+  const pb = etParts(b);
+  return pa.year === pb.year && pa.month === pb.month && pa.day === pb.day;
+}
+
+/**
+ * Post-print / Stage-3 arm: knowledge_time is set for this ET print day and now is at/after it.
+ * Ordinary idle RTH with no (or stale) stamp does not open new MES stoch lots.
+ */
+export function dayStochArmed(now: Date, knowledgeTime: string | null | undefined): boolean {
+  if (!knowledgeTime) return false;
+  const kt = Date.parse(knowledgeTime);
+  if (!Number.isFinite(kt)) return false;
+  if (now.getTime() < kt) return false;
+  return sameEtDay(now, new Date(kt));
+}
+
+export function vwapLostSustained(
+  side: Position["side"],
+  bars: MinuteBar[],
+  vwap: number,
+  closes = DAY_VWAP_EXIT_CLOSES,
+): boolean {
+  if (closes < 1 || bars.length < closes || !finite(vwap)) return false;
+  const slice = bars.slice(-closes);
+  if (side === "Long") return slice.every((b) => finite(b.close) && b.close < vwap);
+  if (side === "Short") return slice.every((b) => finite(b.close) && b.close > vwap);
+  return false;
 }
 
 export function sma(values: number[], period: number): number | null {
@@ -203,6 +236,8 @@ export function decideDayMomentum(input: {
   positions: Position[];
   sleeveLossCapUsd: number;
   sleeveRealizedPnlUsd: number;
+  /** ISO stamp after the print. Required for new MES stoch entries; ignored for exits. */
+  knowledgeTime?: string | null;
 }): { buy: DayBuy | null; sells: DaySell[]; reason: string } {
   const empty = { buy: null as DayBuy | null, sells: [] as DaySell[] };
   const open = openDayMes(input.positions);
@@ -233,10 +268,7 @@ export function decideDayMomentum(input: {
   }
 
   if (open) {
-    const against =
-      (open.side === "Long" && bar.close < vwap) ||
-      (open.side === "Short" && bar.close > vwap);
-    if (against) {
+    if (vwapLostSustained(open.side, completed, vwap)) {
       return { buy: null, sells: [{ sleeveId: "day", symbol: open.symbol, reason: "VWAP lost" }], reason: "exit VWAP" };
     }
     return { ...empty, reason: "hold" };
@@ -244,6 +276,9 @@ export function decideDayMomentum(input: {
 
   if (!weekday) return { ...empty, reason: "weekend" };
   if (gateBlocksDayEntries(input.gateMode)) return { ...empty, reason: `gate ${input.gateMode}` };
+  if (!dayStochArmed(input.now, input.knowledgeTime)) {
+    return { ...empty, reason: "no knowledge_time" };
+  }
   if (mins < DAY_ENTRY_START_MIN || mins >= DAY_ENTRY_CUTOFF_MIN) return { ...empty, reason: "outside RTH entry window" };
   if (input.sleeveRealizedPnlUsd <= -input.sleeveLossCapUsd) return { ...empty, reason: "sleeve loss cap" };
 
