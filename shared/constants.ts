@@ -158,22 +158,44 @@ export const RISKOFF_QUOTE_STRIP = [
   "XLU",
   "XLP",
   "DBMF",
+  "KMLM",
   "LQD",
   "JNK",
   "SJB",
 ] as const;
 export type RiskoffQuoteSymbol = (typeof RISKOFF_QUOTE_STRIP)[number];
 /**
- * Second risk-off expression: one ETF long vs BIL. Paper only.
+ * Second risk-off expression: ETF RS overlay vs BIL. Paper only.
  * Preference order for an exact RS tie: GLD > UUP > duration (TLT, IEF)
- * > defensives (XLU, XLP) > trend (DBMF). BIL is the cash/T-bill benchmark, last.
+ * > defensives (XLU, XLP) > trend (DBMF, KMLM). BIL is the cash/T-bill benchmark, last.
  */
-export const RISKOFF_ETF_SYMBOLS = ["GLD", "UUP", "TLT", "IEF", "XLU", "XLP", "DBMF", "BIL"] as const;
+export const RISKOFF_ETF_SYMBOLS = [
+  "GLD",
+  "UUP",
+  "TLT",
+  "IEF",
+  "XLU",
+  "XLP",
+  "DBMF",
+  "KMLM",
+  "BIL",
+] as const;
 export type RiskoffEtfSymbol = (typeof RISKOFF_ETF_SYMBOLS)[number];
 export const RISKOFF_ETF_CASH_SYMBOL: RiskoffEtfSymbol = "BIL";
 export const RISKOFF_ETF_CANDIDATES = RISKOFF_ETF_SYMBOLS.filter(
   (s): s is Exclude<RiskoffEtfSymbol, "BIL"> => s !== "BIL",
 );
+/**
+ * Managed-futures / CTA-style sleeve family on the 63d RS overlay.
+ * DBMF and KMLM are the same diversifier sleeve. When RS #1 is in this
+ * set, #2 prefers the highest-ranked qualifier outside the family; the
+ * other CTA is #2 only if no non-CTA qualifier exists. Add future CTA
+ * tickers here (and to RISKOFF_ETF_SYMBOLS) so the rule picks them up.
+ */
+export const RISKOFF_ETF_CTA_FAMILY = ["DBMF", "KMLM"] as const;
+export type RiskoffEtfCtaSymbol = (typeof RISKOFF_ETF_CTA_FAMILY)[number];
+/** While RISK OFF, split overlay notional 50/50 across this many qualifiers. */
+export const RISKOFF_ETF_TOP_N = 2;
 /**
  * Exact trading-day total-return lookback for the risk-off ETF overlay vs BIL.
  * 63 sessions ≈ 3 months — same convention as scan `ret63`, and clearly
@@ -195,10 +217,10 @@ export const RISKOFF_ETF_STOP_MUL = 0.92;
  */
 export const RISKOFF_ETF_RS_HYSTERESIS = 0.005;
 /**
- * Absolute-trend filter on the 63d RS overlay winner (not BIL). After RS +
- * hysteresis, the chosen candidate must be above its own 200dma (same Massive
- * daily series as the 63d returns). At/below 200 or missing 200 → park in BIL.
- * Not a re-rank: do not fall through to the next RS name. BIL itself is never
+ * Absolute-trend filter on 63d RS overlay candidates (not BIL). A name
+ * qualifies only if it beats BIL and is above its own 200dma (same Massive
+ * daily series as the 63d returns). At/below 200 or missing 200 → that name
+ * is not a qualifier. If no name qualifies → park in BIL. BIL itself is never
  * 200-filtered. Independent of credit-leg 200dma puts and gated TLT/IEF.
  */
 export const RISKOFF_ETF_REQUIRE_ABOVE_200 = true;

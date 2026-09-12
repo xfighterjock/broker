@@ -69,8 +69,8 @@ function etfAbove200(
   return out;
 }
 
-const gldWins = etfRs({ GLD: 0.12, UUP: 0.04 });
-const tltWins = etfRs({ TLT: 0.14, GLD: 0.05, UUP: 0.04 });
+const gldWins = etfRs({ GLD: 0.12 });
+const tltWins = etfRs({ TLT: 0.14 });
 const allEtfQuotes = etfQuotes({
   GLD: 180,
   UUP: 28,
@@ -79,6 +79,7 @@ const allEtfQuotes = etfQuotes({
   XLU: 70,
   XLP: 80,
   DBMF: 28,
+  KMLM: 27,
   BIL: 91,
 });
 

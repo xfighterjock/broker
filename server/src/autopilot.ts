@@ -894,7 +894,7 @@ export type AutopilotCtx = {
   riskoffEtfReturns?: RiskoffEtfReturns | null;
   /**
    * Own-200 map from the same Massive dailies as riskoffEtfReturns.
-   * Candidate winner not known above 200 → park overlay in BIL.
+   * Own-200 qualifier filter: name not known above 200 is skipped; none → BIL.
    */
   riskoffEtfAbove200?: Partial<RiskoffEtfAbove200> | null;
   /** Delayed lasts used to size/rotate the risk-off ETF long. */
@@ -991,7 +991,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
         quotes: ctx.riskoffEtfQuotes ?? [],
         above200: ctx.riskoffEtfAbove200 ?? null,
       })
-    : { sells: [] as AutoSell[], buy: null as AutoBuy | null, winner: null };
+    : { sells: [] as AutoSell[], buy: null as AutoBuy | null, buys: [] as AutoBuy[], winner: null, winners: [] as string[] };
   let overlayRotated: { from: string; to: string } | null = null;
   for (const s of etf.sells) {
     const r = await ctx.close(s);
@@ -1019,6 +1019,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
         sleeve: ctx.getSleeves().riskoff,
         quotes: ctx.riskoffEtfQuotes ?? [],
         overlayWinner: etf.winner ?? null,
+        overlayWinners: etf.winners ?? (etf.winner ? [etf.winner] : []),
       })
     : { sells: [] as AutoSell[], buy: null as AutoBuy | null };
   for (const s of duration.sells) {
@@ -1053,7 +1054,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
 
   if (!ctx.scanReady) {
     if (sleeveAutoOn(ctx, "riskoff")) {
-      await placeRiskoffEtfBuy(ctx, etf.buy, bought);
+      await placeRiskoffEtfBuys(ctx, etf.buys?.length ? etf.buys : etf.buy ? [etf.buy] : [], etf.winners ?? [], bought);
       await placeRiskoffDurationBuy(ctx, duration.buy, bought);
     }
     return { bought, sold, verticals };
@@ -1294,44 +1295,48 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
   }
 
   if (sleeveAutoOn(ctx, "riskoff")) {
-    await placeRiskoffEtfBuy(ctx, etf.buy, bought);
+    await placeRiskoffEtfBuys(ctx, etf.buys?.length ? etf.buys : etf.buy ? [etf.buy] : [], etf.winners ?? [], bought);
     await placeRiskoffDurationBuy(ctx, duration.buy, bought);
   }
   return { bought, sold, verticals };
 }
 
-async function placeRiskoffEtfBuy(
+async function placeRiskoffEtfBuys(
   ctx: AutopilotCtx,
-  buy: AutoBuy | null,
+  buys: AutoBuy[],
+  winners: string[],
   bought: AutoBuy[],
 ): Promise<void> {
-  if (!buy) return;
-  const leftover = openRiskoffEtfPositions(ctx.getPositions()).filter(
-    (p) => p.symbol.toUpperCase() !== buy.symbol.toUpperCase(),
-  );
-  if (leftover.length) {
-    ctx.log(
-      `auto paper skip ${buy.symbol}: still holding ${leftover.map((p) => p.symbol).join(",")}`,
+  const allowed = new Set(winners.map((s) => s.toUpperCase()));
+  for (const buy of buys) {
+    allowed.add(buy.symbol.toUpperCase());
+    const leftover = openRiskoffEtfPositions(ctx.getPositions()).filter(
+      (p) => !allowed.has(p.symbol.toUpperCase()),
     );
-    return;
-  }
-  if (
-    openRiskoffEtfPositions(ctx.getPositions()).some(
-      (p) => p.symbol.toUpperCase() === buy.symbol.toUpperCase(),
-    )
-  ) {
-    return;
-  }
-  const r = await ctx.place(buy);
-  if (r.ok) {
-    ctx.log(
-      `auto paper buy ${buy.sleeveId} ${buy.qty} ${buy.symbol} stop ${buy.stopPrice} ${buy.thesis} (MockBroker, not Tradovate, not live)`,
-    );
-    bought.push(buy);
-  } else if (/no delayed last/i.test(r.error)) {
-    ctx.log(`auto paper skip ${buy.symbol} no delayed last`);
-  } else {
-    ctx.log(`auto paper skip ${buy.symbol}: ${r.error}`);
+    if (leftover.length) {
+      ctx.log(
+        `auto paper skip ${buy.symbol}: still holding ${leftover.map((p) => p.symbol).join(",")}`,
+      );
+      continue;
+    }
+    if (
+      openRiskoffEtfPositions(ctx.getPositions()).some(
+        (p) => p.symbol.toUpperCase() === buy.symbol.toUpperCase(),
+      )
+    ) {
+      continue;
+    }
+    const r = await ctx.place(buy);
+    if (r.ok) {
+      ctx.log(
+        `auto paper buy ${buy.sleeveId} ${buy.qty} ${buy.symbol} stop ${buy.stopPrice} ${buy.thesis} (MockBroker, not Tradovate, not live)`,
+      );
+      bought.push(buy);
+    } else if (/no delayed last/i.test(r.error)) {
+      ctx.log(`auto paper skip ${buy.symbol} no delayed last`);
+    } else {
+      ctx.log(`auto paper skip ${buy.symbol}: ${r.error}`);
+    }
   }
 }
 
