@@ -115,6 +115,8 @@ export function decideRiskoffDuration(input: {
   quotes: Array<{ symbol: string; last: number }>;
   /** RS overlay held/winner — skip duration when that name is already TLT or IEF. */
   overlayWinner?: string | null;
+  /** Top-2 overlay names; skip duration if any is TLT or IEF. */
+  overlayWinners?: string[] | null;
 }): RiskoffDurationDecision {
   const open = openRiskoffDurationPositions(input.positions);
 
@@ -136,9 +138,13 @@ export function decideRiskoffDuration(input: {
   if (input.dollarVeto === true) {
     return flattenOpen(open, "dollar veto: flatten gated duration");
   }
+  const overlayNames = [
+    ...(input.overlayWinners ?? []),
+    ...(input.overlayWinner != null ? [input.overlayWinner] : []),
+  ];
   if (
     overlayHoldsDurationName(input.positions) ||
-    (input.overlayWinner != null && isRiskoffDurationSymbol(input.overlayWinner))
+    overlayNames.some((s) => isRiskoffDurationSymbol(s))
   ) {
     return flattenOpen(open, "overlay already long TLT/IEF");
   }

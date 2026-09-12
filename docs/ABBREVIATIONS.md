@@ -10,7 +10,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **20dma** — 20-day simple moving average. Momentum pullback filter uses last vs this SMA (dist20).
 
-**200dma** — 200-day simple moving average. RISK ON requires SPY, ACWI, and HYG last above it. Momentum/ownership filters and below-200 exits use it too. Risk-off credit-leg puts (HYG/LQD/JNK) need SPY below 200dma (spyAbove200 === false; missing fails closed, no new put) and that name below its own 200dma. HYG-only OFF (SPY still above 200) does not open a new credit-leg put. Existing credit verticals are not flattened just because SPY is above 200. The risk-off ETF RS overlay also requires the 63d winner (not BIL) to be above its own 200dma; else park in BIL. Overlay 200 filter is independent of credit-leg and gated duration.
+**200dma** — 200-day simple moving average. RISK ON requires SPY, ACWI, and HYG last above it. Momentum/ownership filters and below-200 exits use it too. Risk-off credit-leg puts (HYG/LQD/JNK) need SPY below 200dma (spyAbove200 === false; missing fails closed, no new put) and that name below its own 200dma. HYG-only OFF (SPY still above 200) does not open a new credit-leg put. Existing credit verticals are not flattened just because SPY is above 200. Risk-off ETF RS overlay: a candidate qualifies only if it beats BIL and is above its own 200dma; none → BIL. Overlay 200 filter is independent of credit-leg and gated duration.
 
 **ACWI** — iShares MSCI ACWI ETF (global equities). One of three 200dma legs on the RISK ON badge.
 
@@ -30,7 +30,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **bearer** — Opaque session token from POST /api/auth/login. Stored as sha256 in Postgres `user_sessions` (`SESSION_TTL_MS` 30 days). iOS keeps the raw token in the Keychain and sends `Authorization: Bearer`. SPA uses cookie `eg.sid` instead.
 
-**BIL** — SPDR Bloomberg 1-3 Month T-Bill ETF. Cash/T-bill benchmark of the risk-off 63d relative-strength overlay (RISKOFF_ETF_CASH_SYMBOL). Held when no candidate beats it, or when the RS winner is at/below its own 200dma (or that 200 is missing). BIL itself is never 200-filtered.
+**BIL** — SPDR Bloomberg 1-3 Month T-Bill ETF. Cash/T-bill benchmark of the risk-off 63d relative-strength overlay (RISKOFF_ETF_CASH_SYMBOL). Held when no candidate beats BIL and sits above its own 200dma. BIL itself is never 200-filtered.
 
 **BUNDLE_ID** — iOS application id. Event Gate iOS must stay `com.logikmancer.mybroker` to match the existing Firebase iOS app.
 
@@ -40,11 +40,13 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **CSP** — Cash-secured put. Manual overlay on the options sleeve. Reserves strike x 100 x qty. Never naked. Not sold by autopilot.
 
+**CTA** — Commodity Trading Advisor / managed-futures sleeve family on the risk-off 63d RS overlay (RISKOFF_ETF_CTA_FAMILY = DBMF, KMLM). When RS #1 is in this set, #2 prefers a non-CTA qualifier.
+
 **day_loss_cap** — FCM eventType for a paper loss flatten. Two payloads: GATE daily-loss on mock dayPnl (`day_loss_cap:gate_daily:{NY date}`) vs the day sleeve’s own `lossCapUsd` (`day_loss_cap:sleeve:{NY date}`). The sleeve body is used only when that sleeve’s book actually crossed its cap.
 
 **dayPnl** — MockBroker.getDayPnl(): Redis `mock:day_pnl` realized accumulator plus open unrealized. GATE flatten-on-daily-loss ($500 dailyLossUsd). Not the day sleeve `lossCapUsd`. Does not roll with NY session marks. POST `/api/paper/reset` rebuilds it from remaining sleeves' session daily; POST `/api/day-pnl` sets it by hand.
 
-**DBMF** — iMGP DBi Managed Futures Strategy ETF. Multi-asset trend candidate on the risk-off 63d RS overlay (trend bucket, after defensives XLU/XLP).
+**DBMF** — iMGP DBi Managed Futures Strategy ETF. Managed-futures / CTA-family candidate on the risk-off 63d RS overlay (RISKOFF_ETF_CTA_FAMILY with KMLM; trend bucket after defensives XLU/XLP).
 
 **DTE** — Days to expiration. Auto verticals target 30-45 DTE and exit at 21 DTE (OPTIONS_DTE_EXIT). Credit-leg AUTO may try up to 3 expiries in that band (closest to midpoint first) when the first expiry's strikes fail the liquidity gate. Paper-only credit-leg fallback: if the 30-45 band is empty, one standard monthly (3rd Friday) in 21–60 DTE (RISKOFF_CREDIT_LEG_MONTHLY_DTE_MIN/MAX). Equity-index puts and options-sleeve calls do not use that fallback.
 
@@ -60,7 +62,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **ET** — America/New_York clock. Gate windows, 15:50 vertical cutoff, session marks, E*TRADE renew window, flatten times.
 
-**ETF** — Exchange-traded fund. Risk-off 63d RS overlay is one of GLD/UUP/TLT/IEF/XLU/XLP/DBMF/BIL sized at RISKOFF_ETF_NOTIONAL_FRAC (40% of the $100k book); the RS winner must also be above its own 200dma or the overlay parks in BIL. Gated duration is a separate TLT/IEF long at RISKOFF_DURATION_NOTIONAL_FRAC (20%). Gate names are SPY/ACWI/HYG/UUP.
+**ETF** — Exchange-traded fund. Risk-off 63d RS overlay is GLD/UUP/TLT/IEF/XLU/XLP/DBMF/KMLM/BIL sized at RISKOFF_ETF_NOTIONAL_FRAC (40% of the $100k book), split 50/50 across the top-2 qualifiers (beat BIL and above own 200). Gated duration is a separate TLT/IEF long at RISKOFF_DURATION_NOTIONAL_FRAC (20%). Gate names are SPY/ACWI/HYG/UUP.
 
 **EVENT_GATE_OPS_TOKEN** — Optional long-lived HTTPS ops bearer (VPS `/opt/broker/.env`, never git). When set, `Authorization: Bearer` matching the env value authenticates a narrow ops scope: GET /api/status, GET/PUT /api/freeze, GET /api/health, GET /api/sleeves, POST /api/paper/auto, POST /api/flatten, POST /api/paper/reset, POST /api/gate/enable (print-day vetoes: flatten + GATE OFF; paper sleeve reset without a delayed last). Same GATE route also GATE ON (`{ enabled: true }` or omitted, defaults ON) — no separate disable path. Not a users-table session. Paper orders, PIN, mock inject, cancel-stops, user admin stay 401. When unset, behavior unchanged. Agents freeze-save, status-check, toggle AUTO, flatten, reset one mock sleeve, and GATE OFF at https://broker.logikmancer.com without the Mac.
 
@@ -99,6 +101,8 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 **JNK** — SPDR Bloomberg High Yield Bond ETF. Credit-leg put debit on the riskoff sleeve when RISK OFF, SPY is below 200dma, and JNK is below its own 200dma. HYG-only OFF does not open a new JNK put. Same ATM-then-ladder + liquidity/size envelope as HYG. After HYG and LQD inside the cap of 3. Paper only.
 
 **Keychain** — iOS credential store. Event Gate iOS keeps the session bearer, login username, and last registered FCM token (`replaceToken`) here only — never UserDefaults, never git.
+
+**KMLM** — KFA Mount Lucas Managed Futures Index Strategy ETF. Managed-futures / CTA-family candidate on the risk-off 63d RS overlay (RISKOFF_ETF_CTA_FAMILY with DBMF). Same 63d-vs-BIL and own-200 gates as the other overlay names.
 
 **knowledge_time** — Timestamp after the print used on the freeze checklist (knowledge_time after print). Also the day-sleeve Stage-3 arm: new MES stoch entries only when this stamp is set, `now` is at or after it, and both share the same America/New_York calendar day. Ordinary idle RTH without a same-day stamp does not open MES. PRE-ARM and NO-STOP BAND still veto new entries. Existing lots keep stop / VWAP-exit / 15:45 flatten / sleeve loss cap.
 
@@ -158,15 +162,17 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **RISKOFF_DURATION_NOTIONAL_FRAC** — Fraction of the $100k risk-off mock book for the gated TLT/IEF duration long. 0.20 (~$20k). Mild so it does not crowd out the 40% RS overlay (combined 60%; puts keep the rest). Same disaster stop as the overlay (RISKOFF_DURATION_STOP_MUL = 0.92). Paper only. Distinct from the 63d RS pick.
 
-**RISKOFF_ETF_NOTIONAL_FRAC** — Fraction of the $100k risk-off mock book for the defensive ETF RS overlay long. 0.40 (~$40k). Paper step toward half the sleeve; not a full 50%. Puts keep the rest (and the 20% gated duration sleeve when that program is on). Lookback, stop, and flatten rules are unchanged (RISKOFF_ETF_LOOKBACK_DAYS 63, RISKOFF_ETF_STOP_MUL 0.92).
+**RISKOFF_ETF_CTA_FAMILY** — Managed-futures / CTA tickers on the risk-off 63d RS overlay (DBMF, KMLM). When RS #1 is in this set, #2 prefers a non-CTA qualifier; the other CTA is #2 only if no non-CTA qualifier exists. Add future CTA names here and to RISKOFF_ETF_SYMBOLS.
 
-**RISKOFF_ETF_REQUIRE_ABOVE_200** — Absolute-trend filter on the risk-off ETF RS overlay winner. True: after 63d RS + hysteresis, the chosen candidate must be above its own 200dma or the overlay parks in BIL. Not a re-rank. BIL is never 200-filtered. Independent of credit-leg 200dma puts and gated TLT/IEF.
+**RISKOFF_ETF_NOTIONAL_FRAC** — Fraction of the $100k risk-off mock book for the defensive ETF RS overlay long. 0.40 (~$40k). Split 50/50 across the top-2 qualifiers; one qualifier takes the full 40%. Paper step toward half the sleeve; not a full 50% of the book in one name when two qualify. Puts keep the rest (and the 20% gated duration sleeve when that program is on). Lookback and stop unchanged (RISKOFF_ETF_LOOKBACK_DAYS 63, RISKOFF_ETF_STOP_MUL 0.92).
 
-**RISKOFF_ETF_RS_HYSTERESIS** — Mild absolute 63d total-return margin (0.005 / 50bp) on the risk-off ETF overlay. A challenger must beat the held name by this much before rotate, so tiny GLD↔DBMF (etc.) edges do not churn. Exact RS ties still use preference order. Does not apply when held is ineligible (≤ BIL) or missing. Absolute-trend 200dma filter still applies after hysteresis (held GLD below 200 → BIL).
+**RISKOFF_ETF_REQUIRE_ABOVE_200** — Absolute-trend filter on risk-off ETF RS overlay candidates. True: a name qualifies only if it beats BIL and is above its own 200dma; otherwise that name is skipped. None qualify → BIL. BIL is never 200-filtered. Independent of credit-leg 200dma puts and gated TLT/IEF.
+
+**RISKOFF_ETF_RS_HYSTERESIS** — Mild absolute 63d total-return margin (0.005 / 50bp) on the risk-off ETF overlay. A challenger must beat a held name by this much before displacing that slot, so tiny GLD↔DBMF (etc.) edges do not churn. Exact RS ties still use preference order. Does not apply when held is ineligible (≤ BIL / not above 200) or missing.
 
 **risk_flip** — FCM eventType when the global RISK ON/OFF badge changes. Last-known state is in memory and Redis `risk:on` so a restart does not false-flip.
 
-**RS** — Relative strength. Momentum score vs SPY; risk-off ETF overlay is 63-session total return of GLD/UUP/TLT/IEF/XLU/XLP/DBMF vs BIL, sized at RISKOFF_ETF_NOTIONAL_FRAC. Mild 50bp hysteresis (RISKOFF_ETF_RS_HYSTERESIS) so tiny GLD↔DBMF (etc.) edges do not rotate. Dual-momentum style: the RS winner also needs to be above its own 200dma (RISKOFF_ETF_REQUIRE_ABOVE_200) or the overlay parks in BIL. Gated TLT/IEF duration is not an RS pick.
+**RS** — Relative strength. Momentum score vs SPY; risk-off ETF overlay is 63-session total return of GLD/UUP/TLT/IEF/XLU/XLP/DBMF/KMLM vs BIL, sized at RISKOFF_ETF_NOTIONAL_FRAC and split top-2 50/50 among qualifiers (beat BIL and above own 200). Mild 50bp hysteresis (RISKOFF_ETF_RS_HYSTERESIS). CTA family {DBMF, KMLM} diversifies #2 when #1 is CTA. Gated TLT/IEF duration is not an RS pick.
 
 **SDS** — ProShares UltraShort S&P 500. Not a live risk-off expression.
 
