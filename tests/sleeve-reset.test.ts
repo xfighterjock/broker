@@ -12,6 +12,7 @@ import {
   alignedZeroSessionMark,
   nySessionDate,
   parsePaperReset,
+  realizedDayPnlToMatchSessionDaily,
 } from "../server/src/paper";
 import { resetQuoteCache } from "../server/src/quotes";
 import { resetMassiveCache } from "../server/src/massive";
@@ -135,6 +136,43 @@ describe("alignedZeroSessionMark", () => {
       realizedPnlUsd: 0,
       unrealizedPnlUsd: 0,
     });
+  });
+});
+
+describe("realizedDayPnlToMatchSessionDaily", () => {
+  it("is 0 when leftover books are flat so stale dayPnl cannot trip GATE", () => {
+    const books = {
+      day: { dailyPnlUsd: 0, totalPnlUsd: 0, realizedPnlUsd: 0, unrealizedPnlUsd: 0, pnlUsd: 0, equityUsd: 100_000 },
+      momentum: { dailyPnlUsd: 0, totalPnlUsd: 0, realizedPnlUsd: 0, unrealizedPnlUsd: 0, pnlUsd: 0, equityUsd: 100_000 },
+      options: { dailyPnlUsd: 0, totalPnlUsd: 0, realizedPnlUsd: 0, unrealizedPnlUsd: 0, pnlUsd: 0, equityUsd: 100_000 },
+      ownership: { dailyPnlUsd: 0, totalPnlUsd: 0, realizedPnlUsd: 0, unrealizedPnlUsd: 0, pnlUsd: 0, equityUsd: 100_000 },
+      riskoff: { dailyPnlUsd: 0, totalPnlUsd: 0, realizedPnlUsd: 0, unrealizedPnlUsd: 0, pnlUsd: 0, equityUsd: 100_000 },
+    };
+    expect(realizedDayPnlToMatchSessionDaily(books, [])).toBe(0);
+  });
+
+  it("keeps another sleeve's session daily (does not wipe account dayPnl on one-sleeve reset)", () => {
+    const books = {
+      day: { dailyPnlUsd: 0, totalPnlUsd: 0, realizedPnlUsd: 0, unrealizedPnlUsd: 0, pnlUsd: 0, equityUsd: 100_000 },
+      momentum: { dailyPnlUsd: -200, totalPnlUsd: -200, realizedPnlUsd: -160, unrealizedPnlUsd: -40, pnlUsd: -200, equityUsd: 99_800 },
+      options: { dailyPnlUsd: 0, totalPnlUsd: 0, realizedPnlUsd: 0, unrealizedPnlUsd: 0, pnlUsd: 0, equityUsd: 100_000 },
+      ownership: { dailyPnlUsd: 0, totalPnlUsd: 0, realizedPnlUsd: 0, unrealizedPnlUsd: 0, pnlUsd: 0, equityUsd: 100_000 },
+      riskoff: { dailyPnlUsd: 0, totalPnlUsd: 0, realizedPnlUsd: 0, unrealizedPnlUsd: 0, pnlUsd: 0, equityUsd: 100_000 },
+    };
+    const positions = [
+      {
+        id: "p1",
+        symbol: "SPY",
+        root: null,
+        qty: 8,
+        side: "Long" as const,
+        avgPrice: 510,
+        unrealizedPnl: -40,
+        gated: false,
+        sleeveId: "momentum" as const,
+      },
+    ];
+    expect(realizedDayPnlToMatchSessionDaily(books, positions)).toBe(-160);
   });
 });
 
@@ -341,6 +379,29 @@ describe("POST /api/paper/reset", () => {
       expect(snap.sleeveBooks.momentum.realizedPnlUsd).toBe(55);
       expect(snap.sleeveBooks.momentum.unrealizedPnlUsd).toBe(40);
       expect(snap.sleeveBooks.momentum.equityUsd).toBe(DEFAULT_SLEEVE_EQUITY_USD + 55 + 40);
+      expect(broker.getDayPnl()).toBeCloseTo(snap.sleeveBooks.momentum.dailyPnlUsd, 5);
+    } finally {
+      await srv.close();
+      broker.reset();
+    }
+  });
+
+  it("zeros stale mock dayPnl when leftover sleeve books are flat", async () => {
+    const { app, broker } = makeTestApp();
+    broker.setDayPnl(-645);
+    const srv = await listen(app);
+    try {
+      const reset = await fetch(`${srv.url}/api/paper/reset`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sleeveId: "day" }),
+      });
+      expect(reset.status).toBe(200);
+      const snap = (await reset.json()) as StatusSnapshot;
+      expect(snap.sleeveBooks.day.dailyPnlUsd).toBe(0);
+      expect(snap.sleeveBooks.day.totalPnlUsd).toBe(0);
+      expect(broker.getDayPnl()).toBe(0);
+      expect(snap.broker.dayPnl).toBe(0);
     } finally {
       await srv.close();
       broker.reset();

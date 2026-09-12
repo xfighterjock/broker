@@ -40,6 +40,10 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **CSP** — Cash-secured put. Manual overlay on the options sleeve. Reserves strike x 100 x qty. Never naked. Not sold by autopilot.
 
+**day_loss_cap** — FCM eventType for a paper loss flatten. Two payloads: GATE daily-loss on mock dayPnl (`day_loss_cap:gate_daily:{NY date}`) vs the day sleeve’s own `lossCapUsd` (`day_loss_cap:sleeve:{NY date}`). The sleeve body is used only when that sleeve’s book actually crossed its cap.
+
+**dayPnl** — MockBroker.getDayPnl(): Redis `mock:day_pnl` realized accumulator plus open unrealized. GATE flatten-on-daily-loss ($500 dailyLossUsd). Not the day sleeve `lossCapUsd`. Does not roll with NY session marks. POST `/api/paper/reset` rebuilds it from remaining sleeves' session daily; POST `/api/day-pnl` sets it by hand.
+
 **DBMF** — iMGP DBi Managed Futures Strategy ETF. Multi-asset trend candidate on the risk-off 63d RS overlay (trend bucket, after defensives XLU/XLP).
 
 **DTE** — Days to expiration. Auto verticals target 30-45 DTE and exit at 21 DTE (OPTIONS_DTE_EXIT). Credit-leg AUTO may try up to 3 expiries in that band (closest to midpoint first) when the first expiry's strikes fail the liquidity gate. Paper-only credit-leg fallback: if the 30-45 band is empty, one standard monthly (3rd Friday) in 21–60 DTE (RISKOFF_CREDIT_LEG_MONTHLY_DTE_MIN/MAX). Equity-index puts and options-sleeve calls do not use that fallback.
@@ -176,7 +180,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **SJB** — ProShares Short High Yield. Risk-off quote-strip visibility only — not a traded inverse (HYG/LQD/JNK puts are the credit-leg instead).
 
-**sleeve reset** — POST `/api/paper/reset` `{ sleeveId }`. MockBroker only. One sleeve back to a clean $100k book: no open position, no working stop, empty blotter, journal realized 0, session mark aligned so daily and total P/L are 0. Does not need a delayed last (unlike POST /api/paper/close). Does not flatten other sleeves, does not toggle AUTO PAPER, does not change GATE. Refuses when the process is not MockBroker. Never a live or E*TRADE order. EVENT_GATE_OPS_TOKEN may call it. Do not stop event-gate or edit Redis (`mock:positions`, `mock:orders`, `sleeves:cards`, `sleeves:blotter`, `sleeves:session_marks`) to wipe a stuck premarket lot.
+**sleeve reset** — POST `/api/paper/reset` `{ sleeveId }`. MockBroker only. One sleeve back to a clean $100k book: no open position, no working stop, empty blotter, journal realized 0, session mark aligned so daily and total P/L are 0. Rebuilds mock:day_pnl from remaining sleeves' session daily so stale account dayPnl cannot keep tripping GATE daily-loss after leftover books are flat; does not wipe another sleeve's today. Does not need a delayed last (unlike POST /api/paper/close). Does not flatten other sleeves, does not toggle AUTO PAPER, does not change GATE. Refuses when the process is not MockBroker. Never a live or E*TRADE order. EVENT_GATE_OPS_TOKEN may call it. POST `/api/day-pnl` is the manual accumulator path (not on the ops-token allowlist). Do not stop event-gate or edit Redis (`mock:positions`, `mock:orders`, `mock:day_pnl`, `sleeves:cards`, `sleeves:blotter`, `sleeves:session_marks`) to wipe a stuck premarket lot.
 
 **SMA** — Simple moving average. 20- and 200-day windows in scan/risk features.
 

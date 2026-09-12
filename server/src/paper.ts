@@ -341,6 +341,27 @@ export function alignedZeroSessionMark(sessionDate: string): SessionMark {
   return { sessionDate, realizedPnlUsd: 0, unrealizedPnlUsd: 0 };
 }
 
+/**
+ * Realized half of MockBroker.getDayPnl() (getDayPnl = this + open unrealized)
+ * so the account daily matches remaining sleeves' session dailyPnlUsd.
+ * One-sleeve reset must not wipe another sleeve's session daily out of GATE dayPnl.
+ * When leftover books are flat, this is 0 — stale mock:day_pnl cannot keep tripping GATE.
+ */
+export function realizedDayPnlToMatchSessionDaily(
+  books: Record<SleeveId, SleeveBook>,
+  positions: Position[],
+): number {
+  let daily = 0;
+  for (const id of SLEEVE_IDS) daily += books[id]?.dailyPnlUsd ?? 0;
+  let unrealized = 0;
+  for (const p of positions) {
+    if (p.side === "Flat" || p.qty <= 0) continue;
+    if (!Number.isFinite(p.unrealizedPnl)) continue;
+    unrealized += p.unrealizedPnl;
+  }
+  return daily - unrealized;
+}
+
 export function sleeveBook(
   sleeve: SleeveCard,
   positions: Position[],
