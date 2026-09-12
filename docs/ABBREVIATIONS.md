@@ -26,7 +26,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **AUTH_MODE** — Auth front door. Production `users` (users table + cookie/bearer). Local default `cookie` (GATE_PASSWORD). `nginx` is remapped to `users` in production. GET /api/public/risk is exempt in-app too.
 
-**AUTO PAPER** — Autopilot. Independent enable per sleeve (`autoPaperBySleeve`: day, momentum, options, ownership, riskoff). Snapshot `autoPaper` is true if ANY sleeve is on (badge / old clients). POST /api/paper/auto `{ enabled }` sets all; `{ sleeveId, enabled }` sets one. Redis `paper:auto` is JSON; legacy `0`/`1` migrates on first boot. Default all on when the key is missing. Never CSP/CC/naked. GATE still binds day.
+**AUTO PAPER** — Autopilot. Independent enable per sleeve (`autoPaperBySleeve`: day, momentum, options, ownership, riskoff). Snapshot `autoPaper` is true if ANY sleeve is on (badge / old clients). POST /api/paper/auto `{ enabled }` sets all; `{ sleeveId, enabled }` sets one. Redis `paper:auto` is JSON; legacy `0`/`1` migrates on first boot. Default all on when the key is missing. Never CSP/CC/naked. GATE still binds day. Day MES stoch also needs knowledge_time for that ET print day (Stage-3); idle RTH without the stamp does not enter.
 
 **bearer** — Opaque session token from POST /api/auth/login. Stored as sha256 in Postgres `user_sessions` (`SESSION_TTL_MS` 30 days). iOS keeps the raw token in the Keychain and sends `Authorization: Bearer`. SPA uses cookie `eg.sid` instead.
 
@@ -39,6 +39,10 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 **CPI** — Consumer Price Index print. Seed calendar event; freeze card; flatten 15:45 ET. Day-sleeve event clock only.
 
 **CSP** — Cash-secured put. Manual overlay on the options sleeve. Reserves strike x 100 x qty. Never naked. Not sold by autopilot.
+
+**day_loss_cap** — FCM eventType for a paper loss flatten. Two payloads: GATE daily-loss on mock dayPnl (`day_loss_cap:gate_daily:{NY date}`) vs the day sleeve’s own `lossCapUsd` (`day_loss_cap:sleeve:{NY date}`). The sleeve body is used only when that sleeve’s book actually crossed its cap.
+
+**dayPnl** — MockBroker.getDayPnl(): Redis `mock:day_pnl` realized accumulator plus open unrealized. GATE flatten-on-daily-loss ($500 dailyLossUsd). Not the day sleeve `lossCapUsd`. Does not roll with NY session marks. POST `/api/paper/reset` rebuilds it from remaining sleeves' session daily; POST `/api/day-pnl` sets it by hand.
 
 **DBMF** — iMGP DBi Managed Futures Strategy ETF. Multi-asset trend candidate on the risk-off 63d RS overlay (trend bucket, after defensives XLU/XLP).
 
@@ -96,7 +100,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **Keychain** — iOS credential store. Event Gate iOS keeps the session bearer, login username, and last registered FCM token (`replaceToken`) here only — never UserDefaults, never git.
 
-**knowledge_time** — Timestamp after the print used on the freeze checklist (knowledge_time after print).
+**knowledge_time** — Timestamp after the print used on the freeze checklist (knowledge_time after print). Also the day-sleeve Stage-3 arm: new MES stoch entries only when this stamp is set, `now` is at or after it, and both share the same America/New_York calendar day. Ordinary idle RTH without a same-day stamp does not open MES. PRE-ARM and NO-STOP BAND still veto new entries. Existing lots keep stop / VWAP-exit / 15:45 flatten / sleeve loss cap.
 
 **Limit** — Limit order type. Gate leaves limits alone unless oversize.
 
@@ -176,7 +180,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **SJB** — ProShares Short High Yield. Risk-off quote-strip visibility only — not a traded inverse (HYG/LQD/JNK puts are the credit-leg instead).
 
-**sleeve reset** — POST `/api/paper/reset` `{ sleeveId }`. MockBroker only. One sleeve back to a clean $100k book: no open position, no working stop, empty blotter, journal realized 0, session mark aligned so daily and total P/L are 0. Does not need a delayed last (unlike POST /api/paper/close). Does not flatten other sleeves, does not toggle AUTO PAPER, does not change GATE. Refuses when the process is not MockBroker. Never a live or E*TRADE order. EVENT_GATE_OPS_TOKEN may call it. Do not stop event-gate or edit Redis (`mock:positions`, `mock:orders`, `sleeves:cards`, `sleeves:blotter`, `sleeves:session_marks`) to wipe a stuck premarket lot.
+**sleeve reset** — POST `/api/paper/reset` `{ sleeveId }`. MockBroker only. One sleeve back to a clean $100k book: no open position, no working stop, empty blotter, journal realized 0, session mark aligned so daily and total P/L are 0. Rebuilds mock:day_pnl from remaining sleeves' session daily so stale account dayPnl cannot keep tripping GATE daily-loss after leftover books are flat; does not wipe another sleeve's today. Does not need a delayed last (unlike POST /api/paper/close). Does not flatten other sleeves, does not toggle AUTO PAPER, does not change GATE. Refuses when the process is not MockBroker. Never a live or E*TRADE order. EVENT_GATE_OPS_TOKEN may call it. POST `/api/day-pnl` is the manual accumulator path (not on the ops-token allowlist). Do not stop event-gate or edit Redis (`mock:positions`, `mock:orders`, `mock:day_pnl`, `sleeves:cards`, `sleeves:blotter`, `sleeves:session_marks`) to wipe a stuck premarket lot.
 
 **SMA** — Simple moving average. 20- and 200-day windows in scan/risk features.
 
@@ -191,6 +195,8 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 **SPY** — SPDR S&P 500 ETF Trust. RISK ON 200dma leg; scan RS benchmark; risk-off equity-index puts and new credit-leg (HYG/LQD/JNK) puts only when SPY is below 200dma (missing spyAbove200 fails closed); options quote strip.
 
 **SR3** — CME Three-Month SOFR futures. Gated root; freeze-card liquid contract; day quote strip SR3=F.
+
+**Stage-3** — Post-print window on an NFP/CPI/FOMC day after knowledge_time is stamped. Day-sleeve MES stoch may open only then, and only while GATE is idle. Not PRE-ARM or NO-STOP BAND.
 
 **StopLimit** — Stop-limit order type. Cancelled as market-or-stop on gated roots in PRE-ARM and NO-STOP BAND.
 
@@ -244,8 +250,8 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **%D** — 3-period SMA of slow %K. Day-sleeve MES stochastic signal line.
 
-**%K** — Slow stochastic (14,3). Day-sleeve MES momentum. Long when %K crosses up through %D after %K was at or below 20; short is the mirror above 80.
+**%K** — Slow stochastic (14,3). Day-sleeve MES momentum after knowledge_time on that ET print day. Long when %K crosses up through %D after %K was at or below 20; short is the mirror above 80.
 
 **RTH** — Regular trading hours, 09:30-16:00 ET. Day-sleeve VWAP and entry window (09:35-15:45) use RTH only. Distinct from `marketSession.cashOpen`, which is the NYSE calendar day (not “are we inside 09:30–16:00 right now”).
 
-**VWAP** — Volume-weighted average price (session, RTH). Day-sleeve MES longs only above it, shorts only below; lose VWAP and the paper position exits.
+**VWAP** — Volume-weighted average price (session, RTH). Day-sleeve MES longs only above it, shorts only below. Paper exit (“VWAP lost”) needs two consecutive completed 5m closes on the wrong side (DAY_VWAP_EXIT_CLOSES = 2). A single-bar pierce holds.

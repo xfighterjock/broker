@@ -904,6 +904,8 @@ export type AutopilotCtx = {
   now?: Date;
   gateMode?: GateMode;
   dayBars?: MinuteBar[];
+  /** ISO knowledge_time after the print. Day MES stoch entries stay flat without it. */
+  knowledgeTime?: string | null;
   log: (line: string) => void;
 };
 
@@ -931,6 +933,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
       positions: ctx.getPositions(),
       sleeveLossCapUsd: ctx.getSleeves().day.lossCapUsd,
       sleeveRealizedPnlUsd: ctx.getSleeves().day.paper.realizedPnlUsd,
+      knowledgeTime: ctx.knowledgeTime ?? null,
     });
     for (const s of day.sells) {
       const r = await ctx.close(s);

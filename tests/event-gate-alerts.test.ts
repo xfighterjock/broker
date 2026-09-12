@@ -23,6 +23,7 @@ import {
   notifyCreditPutStopped,
   notifyDayFill,
   notifyDayFlatten,
+  dayLossCapCopy,
   notifyDayLossCap,
   notifyEtradeRenewFailed,
   notifyOverlayRotation,
@@ -331,7 +332,7 @@ describe("event-gate FCM producers", () => {
     const { calls } = countingService();
     await notifyDayFill("MES=F");
     await notifyDayFlatten("session");
-    await notifyDayLossCap();
+    await notifyDayLossCap("sleeve");
     await notifyVetoConfirm("flatten");
     await notifyVetoConfirm("gate_off");
     expect(calls.map((c) => c.payload.eventType)).toEqual([
@@ -342,12 +343,25 @@ describe("event-gate FCM producers", () => {
       "veto_confirm",
     ]);
     expect(calls[0].payload.body).toMatch(/MES/);
+    expect(calls[2].payload.title).toBe("Event Gate: day sleeve loss cap");
+    expect(calls[2].payload.body).toBe("Day sleeve hit its loss cap.");
+    expect(calls[2].payload.dedupeKey).toMatch(/^day_loss_cap:sleeve:/);
     expect(calls[3].payload.body).toMatch(/Flatten confirmed/);
     expect(calls[4].payload.body).toMatch(/GATE OFF/);
     expect(JSON.stringify(calls)).not.toMatch(/avgPrice|stopPrice|password/i);
   });
 
-  it("gate tick session flatten and daily loss produce day_flatten / day_loss_cap", async () => {
+  it("GATE daily-loss copy does not claim the day sleeve hit its cap", () => {
+    const gate = dayLossCapCopy("gate_daily");
+    const sleeve = dayLossCapCopy("sleeve");
+    expect(gate.title).toBe("Event Gate: GATE daily loss");
+    expect(gate.body).toMatch(/mock dayPnl/);
+    expect(gate.body).not.toMatch(/Day sleeve hit its loss cap/);
+    expect(sleeve.title).toBe("Event Gate: day sleeve loss cap");
+    expect(sleeve.body).toBe("Day sleeve hit its loss cap.");
+  });
+
+  it("gate tick session flatten and daily loss produce day_flatten / GATE day_loss_cap copy", async () => {
     const { calls } = countingService();
     await considerGateTickAlerts({
       actions: [{ kind: "flatten", reason: "session flatten 15:45 ET" }],
@@ -356,6 +370,31 @@ describe("event-gate FCM producers", () => {
       actions: [{ kind: "log", message: "flatten (daily loss -520 (limit 500)): nothing open" }],
     });
     expect(calls.map((c) => c.payload.eventType)).toEqual(["day_flatten", "day_loss_cap"]);
+    expect(calls[1].payload.title).toBe("Event Gate: GATE daily loss");
+    expect(calls[1].payload.body).not.toMatch(/Day sleeve hit its loss cap/);
+    expect(calls[1].payload.dedupeKey).toMatch(/^day_loss_cap:gate_daily:/);
+  });
+
+  it("day sleeve lossCapUsd fires sleeve copy; a -$72.50 book does not", async () => {
+    const { calls } = countingService();
+    const sleeves = defaultSleeves();
+    const under = {
+      day: book(-72.5, -72.5),
+      momentum: book(0, 0),
+      options: book(0, 0),
+      ownership: book(0, 0),
+      riskoff: book(0, 0),
+    } as Record<SleeveId, SleeveBook>;
+    await considerSleeveLossWarn(sleeves, under, new Date("2026-09-12T04:03:00Z"));
+    expect(calls.filter((c) => c.payload.eventType === "day_loss_cap")).toHaveLength(0);
+
+    const atCap = { ...under, day: book(-500, -500) };
+    await considerSleeveLossWarn(sleeves, atCap, new Date("2026-09-12T04:03:00Z"));
+    const loss = calls.filter((c) => c.payload.eventType === "day_loss_cap");
+    expect(loss).toHaveLength(1);
+    expect(loss[0].payload.title).toBe("Event Gate: day sleeve loss cap");
+    expect(loss[0].payload.body).toBe("Day sleeve hit its loss cap.");
+    expect(loss[0].payload.dedupeKey).toBe("day_loss_cap:sleeve:2026-09-12");
   });
 
   it("overlay rotation, credit put open/stop/risk-on flatten send once", async () => {

@@ -254,12 +254,29 @@ export async function notifyDayFlatten(kind: "session" | "manual"): Promise<Send
   });
 }
 
-export async function notifyDayLossCap(): Promise<SendResult> {
-  return safeSendEventGateAlert({
-    title: "Event Gate: day loss cap",
+export type DayLossCapKind = "gate_daily" | "sleeve";
+
+/** GATE mock dayPnl path vs the day sleeve's own lossCapUsd. Do not mix the copy. */
+export function dayLossCapCopy(kind: DayLossCapKind): { title: string; body: string } {
+  if (kind === "gate_daily") {
+    return {
+      title: "Event Gate: GATE daily loss",
+      body: "GATE daily-loss hit on mock dayPnl (account-wide, not the day sleeve loss cap).",
+    };
+  }
+  return {
+    title: "Event Gate: day sleeve loss cap",
     body: "Day sleeve hit its loss cap.",
+  };
+}
+
+export async function notifyDayLossCap(kind: DayLossCapKind, now = new Date()): Promise<SendResult> {
+  const copy = dayLossCapCopy(kind);
+  return safeSendEventGateAlert({
+    title: copy.title,
+    body: copy.body,
     eventType: "day_loss_cap",
-    dedupeKey: `day_loss_cap:${nyDateKey()}`,
+    dedupeKey: `day_loss_cap:${kind}:${nyDateKey(now)}`,
   });
 }
 
@@ -283,7 +300,7 @@ export async function considerGateTickAlerts(result: {
       if (/daily loss/i.test(text)) loss = true;
       if (/session flatten/i.test(text)) session = true;
     }
-    if (loss) await notifyDayLossCap();
+    if (loss) await notifyDayLossCap("gate_daily");
     if (session) await notifyDayFlatten("session");
   } catch (err) {
     console.warn("[EventGate] gate alert hook failed", err instanceof Error ? err.message : err);
@@ -379,7 +396,7 @@ export async function considerSleeveLossWarn(
       const cap = sleeve.lossCapUsd;
       if (!(cap > 0)) continue;
       const pnl = book.totalPnlUsd;
-      if (id === "day" && pnl <= -cap) await notifyDayLossCap();
+      if (id === "day" && pnl <= -cap) await notifyDayLossCap("sleeve", now);
       if (pnl > -cap * SLEEVE_LOSS_WARN_FRAC) continue;
       const key = `${id}:${ymd}`;
       if (sleeveWarnSent.has(key)) continue;

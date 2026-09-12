@@ -101,6 +101,7 @@ import {
   parsePaperOrder,
   parsePaperReset,
   positionSideFor,
+  realizedDayPnlToMatchSessionDaily,
   rollSessionMarks,
   signedPnl,
   sleeveBook,
@@ -1185,9 +1186,7 @@ export function buildApp(deps: AppDeps): express.Express {
     await ensureBlotter();
     await ensureSessionMarks();
     await ensureAutoPaper();
-    const realized = memory.sleeves[sleeveId].paper.realizedPnlUsd;
     deps.broker.resetSleeve(sleeveId);
-    if (realized !== 0) deps.broker.addRealizedPnl(-realized);
     memory.sleeves[sleeveId] = {
       ...memory.sleeves[sleeveId],
       paper: emptyPaperStats(),
@@ -1195,6 +1194,15 @@ export function buildApp(deps: AppDeps): express.Express {
     };
     memory.blotter = memory.blotter.filter((f) => f.sleeveId !== sleeveId);
     memory.sessionMarks[sleeveId] = alignedZeroSessionMark(nySessionDate());
+    const remainingBooks = allSleeveBooks(
+      memory.sleeves,
+      deps.broker.getPositionsSync(),
+      [],
+      memory.sessionMarks,
+    );
+    deps.broker.setDayPnl(
+      realizedDayPnlToMatchSessionDaily(remainingBooks, deps.broker.getPositionsSync()),
+    );
     await persistSleeves();
     await persistBlotter();
     await persistSessionMarks();
@@ -1268,6 +1276,7 @@ export function buildApp(deps: AppDeps): express.Express {
         verticalStopCooldown: memory.verticalStopCooldown,
         now: new Date(),
         gateMode: computeClock(new Date(), deps.getEvents()).mode,
+        knowledgeTime: memory.knowledgeTime,
         dayBars: await fetchYahooFiveMinuteBars("MES=F").catch(() => []),
         placeVertical: async (v: AutoVertical) => {
           if (v.sleeveId === "riskoff" && v.right !== "P") {
