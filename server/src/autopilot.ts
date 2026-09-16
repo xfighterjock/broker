@@ -990,6 +990,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
         returns: ctx.riskoffEtfReturns ?? null,
         quotes: ctx.riskoffEtfQuotes ?? [],
         above200: ctx.riskoffEtfAbove200 ?? null,
+        spyAbove200,
       })
     : { sells: [] as AutoSell[], buy: null as AutoBuy | null, buys: [] as AutoBuy[], winner: null, winners: [] as string[] };
   let overlayRotated: { from: string; to: string } | null = null;

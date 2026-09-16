@@ -203,11 +203,25 @@ export const RISKOFF_ETF_TOP_N = 2;
  */
 export const RISKOFF_ETF_LOOKBACK_DAYS = 63;
 /**
- * Fraction of the $100k risk-off mock book for the ETF long (~$40k).
- * Puts keep the rest of the sleeve. Paper step toward half the sleeve
- * (not a full 50%). Easy to change.
+ * Base overlay fraction of the $100k risk-off mock book (~$40k) while RISK
+ * OFF and spyAbove200 === false (puts can come online). Puts keep the rest
+ * of the sleeve, plus gated duration when that program is on. Easy to change.
  */
 export const RISKOFF_ETF_NOTIONAL_FRAC = 0.40;
+/**
+ * Put-gated overlay scale-up. While RISK OFF and spyAbove200 === true
+ * (same SPY-above-200 check that gates equity/credit puts), size the 63d
+ * RS overlay at ~60% of the book. When SPY loses 200 (puts can fire), cut
+ * back to RISKOFF_ETF_NOTIONAL_FRAC. Missing spyAbove200 does not scale up.
+ * RISK ON still flattens (no separate ON path). Paper / MockBroker only.
+ */
+export const RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED = 0.60;
+/**
+ * Rebalance a held overlay lot when |held−target| notional is at least this
+ * fraction of the $100k book. Catches 40%↔60% (and 20%↔30% per top-2 name)
+ * without churning 1-share quote drift. Close+reopen in MockBroker.
+ */
+export const RISKOFF_ETF_RESIZE_NOTIONAL_FRAC = 0.08;
 /** Disaster stop on the ETF long. Rotation — not this stop — is the primary exit. */
 export const RISKOFF_ETF_STOP_MUL = 0.92;
 /**
@@ -226,8 +240,11 @@ export const RISKOFF_ETF_RS_HYSTERESIS = 0.005;
 export const RISKOFF_ETF_REQUIRE_ABOVE_200 = true;
 /**
  * Gated TLT/IEF duration long — a separate risk-off book rule, not another
- * 63d RS pick. 20% of the $100k book so it does not crowd out the 40% overlay.
- * Combined overlay + duration = 60%; puts keep the rest. Paper only.
+ * 63d RS pick. 20% of the $100k book so it does not crowd out the 40% overlay
+ * that applies when SPY is below 200 (puts/duration can be on). Combined
+ * overlay + duration = 60%; puts keep the rest. Duration is already flat
+ * while SPY is above 200, so it never stacks with the 60% put-gated overlay.
+ * Paper only.
  */
 export const RISKOFF_DURATION_SYMBOLS = ["TLT", "IEF"] as const;
 export type RiskoffDurationSymbol = (typeof RISKOFF_DURATION_SYMBOLS)[number];

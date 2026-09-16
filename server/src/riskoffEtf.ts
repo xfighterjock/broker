@@ -5,7 +5,9 @@ import {
   RISKOFF_ETF_CTA_FAMILY,
   RISKOFF_ETF_LOOKBACK_DAYS,
   RISKOFF_ETF_NOTIONAL_FRAC,
+  RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED,
   RISKOFF_ETF_REQUIRE_ABOVE_200,
+  RISKOFF_ETF_RESIZE_NOTIONAL_FRAC,
   RISKOFF_ETF_RS_HYSTERESIS,
   RISKOFF_ETF_STOP_MUL,
   RISKOFF_ETF_SYMBOLS,
@@ -155,9 +157,31 @@ export function applyRiskoffEtfAbsoluteTrend(
   return RISKOFF_ETF_CASH_SYMBOL;
 }
 
-export function riskoffEtfSleeveFrac(nameCount: number): number {
-  if (nameCount >= RISKOFF_ETF_TOP_N) return RISKOFF_ETF_NOTIONAL_FRAC / RISKOFF_ETF_TOP_N;
-  return RISKOFF_ETF_NOTIONAL_FRAC;
+/**
+ * Overlay book fraction from the same spyAbove200 used to gate equity/credit
+ * puts. SPY known above 200 → 60% (puts gated). SPY below 200 or missing →
+ * 40% (do not scale up without the signal). RISK ON still flattens first.
+ */
+export function riskoffEtfNotionalFrac(spyAbove200?: boolean | null): number {
+  return spyAbove200 === true ? RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED : RISKOFF_ETF_NOTIONAL_FRAC;
+}
+
+export function riskoffEtfSleeveFrac(
+  nameCount: number,
+  totalFrac = RISKOFF_ETF_NOTIONAL_FRAC,
+): number {
+  if (nameCount >= RISKOFF_ETF_TOP_N) return totalFrac / RISKOFF_ETF_TOP_N;
+  return totalFrac;
+}
+
+/** True when a held overlay lot is materially off the current 40/60 target. */
+export function overlayLotNeedsResize(heldQty: number, targetQty: number, last: number): boolean {
+  if (!(heldQty >= 0) || !(targetQty >= 0)) return false;
+  if (heldQty === targetQty) return false;
+  if (targetQty < 1) return heldQty > 0;
+  if (heldQty < 1) return targetQty >= 1;
+  if (!(last > 0) || !Number.isFinite(last)) return heldQty !== targetQty;
+  return Math.abs(heldQty - targetQty) * last >= DEFAULT_SLEEVE_EQUITY_USD * RISKOFF_ETF_RESIZE_NOTIONAL_FRAC;
 }
 
 export function riskoffEtfReturnsReady(returns: RiskoffEtfReturns): boolean {
@@ -180,8 +204,10 @@ export function riskoffEtfReturnsReady(returns: RiskoffEtfReturns): boolean {
  * 200); omit it to test RS/hysteresis in isolation. Names that fail 200 are
  * skipped; if none qualify → BIL. BIL itself is never 200-filtered.
  * While RISK OFF, pickRiskoffEtfSleeve then takes the top-2 qualifiers at
- * 50/50 overlay notional (one name at full size; none → BIL). When #1 is in
- * RISKOFF_ETF_CTA_FAMILY, #2 prefers a non-CTA qualifier.
+ * 50/50 overlay notional (one name at full size; none → BIL). Overlay
+ * notional is 60% while spyAbove200 === true (puts gated) and 40% when SPY
+ * is below 200. When #1 is in RISKOFF_ETF_CTA_FAMILY, #2 prefers a non-CTA
+ * qualifier.
  */
 function heldCandidateNames(held?: string | string[] | null): RiskoffEtfCandidate[] {
   const raw = Array.isArray(held) ? held : held ? [held] : [];
@@ -371,6 +397,11 @@ export function decideRiskoffEtf(input: {
   quotes: Array<{ symbol: string; last: number }>;
   /** Own-200 map from the same Massive dailies as `returns`. Missing 200 → not a qualifier. */
   above200?: Partial<Record<RiskoffEtfSymbol, boolean | null>> | null;
+  /**
+   * Same spyAbove200 as the put gate (riskoffEquityPutsAllowed). True → 60%
+   * overlay (puts gated). False/missing → 40%. Does not change RISK ON flatten.
+   */
+  spyAbove200?: boolean | null;
 }): RiskoffEtfDecision {
   const open = openRiskoffEtfPositions(input.positions);
 
@@ -393,14 +424,15 @@ export function decideRiskoffEtf(input: {
   }
 
   const quotes = lastBySymbol(input.quotes);
+  const totalFrac = riskoffEtfNotionalFrac(input.spyAbove200);
   const canSize = (name: RiskoffEtfSymbol, frac: number): boolean => {
     const last = quotes.get(name);
     if (last === undefined) return false;
     return sizeRiskoffEtfShares(last, DEFAULT_SLEEVE_EQUITY_USD, frac) >= 1;
   };
-  const halfFrac = riskoffEtfSleeveFrac(RISKOFF_ETF_TOP_N);
+  const halfFrac = riskoffEtfSleeveFrac(RISKOFF_ETF_TOP_N, totalFrac);
   const canHalf = sleeve.filter((s) => canSize(s, halfFrac));
-  const canFull = sleeve.filter((s) => canSize(s, RISKOFF_ETF_NOTIONAL_FRAC));
+  const canFull = sleeve.filter((s) => canSize(s, totalFrac));
   const tradable = canHalf.length >= RISKOFF_ETF_TOP_N ? canHalf.slice(0, RISKOFF_ETF_TOP_N) : canFull.slice(0, 1);
 
   const trendPark =
@@ -420,10 +452,11 @@ export function decideRiskoffEtf(input: {
 
   const winners = tradable.slice(0, RISKOFF_ETF_TOP_N);
   const winner = winners[0];
-  const frac = riskoffEtfSleeveFrac(winners.length);
+  const frac = riskoffEtfSleeveFrac(winners.length, totalFrac);
   const want = new Set(winners.map((s) => s.toUpperCase()));
   const extras = open.filter((p) => !want.has(p.symbol.toUpperCase()));
   const label = winners.join("+");
+  const pct = Math.round(totalFrac * 100);
   const sells: RiskoffEtfSell[] = extras.map((p) => ({
     sleeveId: "riskoff",
     symbol: p.symbol,
@@ -431,11 +464,31 @@ export function decideRiskoffEtf(input: {
   }));
 
   const heldWanted = open.filter((p) => want.has(p.symbol.toUpperCase()) && p.qty > 0);
-  const missing = winners.filter(
-    (s) => !heldWanted.some((p) => p.symbol.toUpperCase() === s),
-  );
+  const heldBy = new Map(heldWanted.map((p) => [p.symbol.toUpperCase(), p]));
+  const toBuy: RiskoffEtfSymbol[] = [];
+  let resized = false;
+  for (const name of winners) {
+    const last = quotes.get(name);
+    if (last === undefined) continue;
+    const targetQty = sizeRiskoffEtfShares(last, DEFAULT_SLEEVE_EQUITY_USD, frac);
+    if (targetQty < 1) continue;
+    const held = heldBy.get(name);
+    if (!held) {
+      toBuy.push(name);
+      continue;
+    }
+    if (overlayLotNeedsResize(held.qty, targetQty, last)) {
+      sells.push({
+        sleeveId: "riskoff",
+        symbol: held.symbol,
+        reason: `resize overlay to ${pct}%`,
+      });
+      toBuy.push(name);
+      resized = true;
+    }
+  }
 
-  if (missing.length === 0) {
+  if (toBuy.length === 0) {
     return {
       winner,
       winners,
@@ -447,7 +500,7 @@ export function decideRiskoffEtf(input: {
   }
 
   const buys: RiskoffEtfBuy[] = [];
-  for (const name of missing) {
+  for (const name of toBuy) {
     const last = quotes.get(name);
     if (last === undefined) continue;
     const qty = sizeRiskoffEtfShares(last, DEFAULT_SLEEVE_EQUITY_USD, frac);
@@ -471,7 +524,7 @@ export function decideRiskoffEtf(input: {
   return {
     winner,
     winners,
-    reason: trendPark ?? `buy ${label}`,
+    reason: trendPark ?? (resized ? `resize overlay to ${pct}%` : `buy ${label}`),
     sells,
     buy: buys[0] ?? null,
     buys,
