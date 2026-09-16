@@ -10,7 +10,11 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **20dma** — 20-day simple moving average. Momentum pullback filter uses last vs this SMA (dist20).
 
-**200dma** — 200-day simple moving average. RISK ON requires SPY, ACWI, and HYG last above it. Momentum/ownership filters and below-200 exits use it too. Risk-off credit-leg puts (HYG/LQD/JNK) need SPY below 200dma (spyAbove200 === false; missing fails closed, no new put) and that name below its own 200dma. HYG-only OFF (SPY still above 200) does not open a new credit-leg put. Existing credit verticals are not flattened just because SPY is above 200. Risk-off ETF RS overlay: a candidate qualifies only if it beats BIL and is above its own 200dma; none → BIL. Overlay 200 filter is independent of credit-leg and gated duration.
+**200dma** — 200-day simple moving average. RISK ON requires SPY, ACWI, and HYG last above it. Momentum/ownership filters and below-200 exits use it too. Risk-off credit-leg puts (HYG/LQD/JNK) need SPY below 200dma (spyAbove200 === false; missing fails closed, no new put) and that name below its own 200dma. HYG-only OFF (SPY still above 200) does not open a new credit-leg put. Existing credit verticals are not flattened just because SPY is above 200. Risk-off ETF RS overlay: a candidate qualifies only if it beats BIL and is above its own 200dma; none → BIL. Overlay 200 filter is independent of credit-leg and gated duration. Overlay notional uses the same spyAbove200: 60% while SPY is above 200 (puts gated), 40% once SPY loses 200.
+
+**%D** — 3-period SMA of slow %K. Day-sleeve MES stochastic signal line.
+
+**%K** — Slow stochastic (14,3). Day-sleeve MES momentum after knowledge_time on that ET print day. Long when %K crosses up through %D after %K was at or below 20; short is the mirror above 80.
 
 **ACWI** — iShares MSCI ACWI ETF (global equities). One of three 200dma legs on the RISK ON badge.
 
@@ -35,6 +39,8 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 **BUNDLE_ID** — iOS application id. Event Gate iOS must stay `com.logikmancer.mybroker` to match the existing Firebase iOS app.
 
 **CC** — Covered call. Manual overlay on the options sleeve, tagged to an ownership or SPCX thesis. Not sold by autopilot. Never naked.
+
+**CME** — CME Group. Home of the gated futures roots (MES, ES, NQ, Treasuries, FX, SR3).
 
 **CPI** — Consumer Price Index print. Seed calendar event; freeze card; flatten 15:45 ET. Day-sleeve event clock only.
 
@@ -62,7 +68,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **ET** — America/New_York clock. Gate windows, 15:50 vertical cutoff, session marks, E*TRADE renew window, flatten times.
 
-**ETF** — Exchange-traded fund. Risk-off 63d RS overlay is GLD/UUP/TLT/IEF/XLU/XLP/DBMF/KMLM/BIL sized at RISKOFF_ETF_NOTIONAL_FRAC (40% of the $100k book), split 50/50 across the top-2 qualifiers (beat BIL and above own 200). Gated duration is a separate TLT/IEF long at RISKOFF_DURATION_NOTIONAL_FRAC (20%). Gate names are SPY/ACWI/HYG/UUP.
+**ETF** — Exchange-traded fund. Risk-off 63d RS overlay is GLD/UUP/TLT/IEF/XLU/XLP/DBMF/KMLM/BIL sized at RISKOFF_ETF_NOTIONAL_FRAC (40% of the $100k book) when SPY is below 200, or RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED (60%) while SPY is above 200 and puts stay gated; split 50/50 across the top-2 qualifiers (beat BIL and above own 200). Gated duration is a separate TLT/IEF long at RISKOFF_DURATION_NOTIONAL_FRAC (20%). Gate names are SPY/ACWI/HYG/UUP.
 
 **EVENT_GATE_OPS_TOKEN** — Optional long-lived HTTPS ops bearer (VPS `/opt/broker/.env`, never git). When set, `Authorization: Bearer` matching the env value authenticates a narrow ops scope: GET /api/status, GET/PUT /api/freeze, GET /api/health, GET /api/sleeves, POST /api/paper/auto, POST /api/flatten, POST /api/paper/reset, POST /api/gate/enable (print-day vetoes: flatten + GATE OFF; paper sleeve reset without a delayed last). Same GATE route also GATE ON (`{ enabled: true }` or omitted, defaults ON) — no separate disable path. Not a users-table session. Paper orders, PIN, mock inject, cancel-stops, user admin stay 401. When unset, behavior unchanged. Agents freeze-save, status-check, toggle AUTO, flatten, reset one mock sleeve, and GATE OFF at https://broker.logikmancer.com without the Mac.
 
@@ -126,7 +132,13 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **MockBroker** — In-memory paper broker persisted in Redis. The only place Event Gate fills BUY/SELL. Not Tradovate, not E*TRADE.
 
+**MTM** — Mark to market. Vertical and overlay unrealized P/L use chain marks, not invented prices.
+
 **NFP** — Nonfarm payrolls print. Seed calendar event; freeze card; flatten 15:45 ET. Day-sleeve event clock only.
+
+**nginx** — TLS reverse proxy in front of 127.0.0.1:3001. No htpasswd on /api or the SPA; app auth is the users table. GET /api/public/risk stays unauthenticated.
+
+**NinjaTrader** — Futures platform. README notes a live NT API add-on is not required for mock. This repo is not an NT order router.
 
 **NO-STOP BAND** — Gate mode T-2m to T+2m around the event. Cancels Market / StopMarket / StopLimit / MIT on gated roots.
 
@@ -148,31 +160,39 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **PIN** — E*TRADE verifier after Authorize. Typed in Event Gate (desktop header, web /m, or the iOS essentials home). Needed after midnight ET. Never stored in git or chat.
 
-**push dedupe key** — Stable alert key used to suppress repeat deliveries in a configured window (default 30 minutes).
+**Postgres** — Database for calendar events, freeze snapshots, `users` + `user_sessions`, iOS FCM device tokens, push-alert dedupe, and the activity journal (`gate_log`, plus `session_logs`). Activity rows older than 90 days are deleted.
 
 **PRE-ARM** — Gate mode T-15m to T-2m. Cancels Market / StopMarket / StopLimit / MIT on gated roots.
+
+**push dedupe key** — Stable alert key used to suppress repeat deliveries in a configured window (default 30 minutes).
 
 **QQQ** — Invesco QQQ Trust (Nasdaq-100). Options quote strip; risk-off equity-index put when SPY is below 200dma; momentum/ownership quote strip.
 
 **Redis** — Cache/store for gate flags, mock book, sleeves, blotter, session marks, scan, AUTO PAPER (per-sleeve JSON on `paper:auto`), last-known RISK ON/OFF (`risk:on`), and SPA cookie sessions (cookie name `eg.sid`, Redis prefix `eg:sess:`).
 
-**RISK OFF** — Badge when RISK ON is false. Pauses new momentum longs and options call-debits; ownership pauses new adds. May run the riskoff sleeve (ETF overlay always; credit-leg and equity-index puts only when SPY is below 200dma). Does not bind the day book.
+**RISK OFF** — Badge when RISK ON is false. Pauses new momentum longs and options call-debits; ownership pauses new adds. May run the riskoff sleeve (ETF overlay always — 60% while SPY is above 200 and puts stay gated, 40% once SPY loses 200; credit-leg and equity-index puts only when SPY is below 200dma). Does not bind the day book.
 
 **RISK ON** — Badge iff SPY, ACWI, and HYG are above 200dma and UUP 20d is not greater than +3%. Missing series fail closed to RISK OFF.
 
-**RISKOFF_DURATION_NOTIONAL_FRAC** — Fraction of the $100k risk-off mock book for the gated TLT/IEF duration long. 0.20 (~$20k). Mild so it does not crowd out the 40% RS overlay (combined 60%; puts keep the rest). Same disaster stop as the overlay (RISKOFF_DURATION_STOP_MUL = 0.92). Paper only. Distinct from the 63d RS pick.
+**RISKOFF_DURATION_NOTIONAL_FRAC** — Fraction of the $100k risk-off mock book for the gated TLT/IEF duration long. 0.20 (~$20k). Mild so it does not crowd out the 40% RS overlay that applies when SPY is below 200 (combined 60%; puts keep the rest). Duration is already flat while SPY is above 200, so it never stacks with the 60% put-gated overlay. Same disaster stop as the overlay (RISKOFF_DURATION_STOP_MUL = 0.92). Paper only. Distinct from the 63d RS pick.
 
 **RISKOFF_ETF_CTA_FAMILY** — Managed-futures / CTA tickers on the risk-off 63d RS overlay (DBMF, KMLM). When RS #1 is in this set, #2 prefers a non-CTA qualifier; the other CTA is #2 only if no non-CTA qualifier exists. Add future CTA names here and to RISKOFF_ETF_SYMBOLS.
 
-**RISKOFF_ETF_NOTIONAL_FRAC** — Fraction of the $100k risk-off mock book for the defensive ETF RS overlay long. 0.40 (~$40k). Split 50/50 across the top-2 qualifiers; one qualifier takes the full 40%. Paper step toward half the sleeve; not a full 50% of the book in one name when two qualify. Puts keep the rest (and the 20% gated duration sleeve when that program is on). Lookback and stop unchanged (RISKOFF_ETF_LOOKBACK_DAYS 63, RISKOFF_ETF_STOP_MUL 0.92).
+**RISKOFF_ETF_NOTIONAL_FRAC** — Base fraction of the $100k risk-off mock book for the defensive ETF RS overlay long while RISK OFF and spyAbove200 === false (puts can come online). 0.40 (~$40k). Split 50/50 across the top-2 qualifiers; one qualifier takes the full 40%. Puts keep the rest (and the 20% gated duration sleeve when that program is on). Lookback and stop unchanged (RISKOFF_ETF_LOOKBACK_DAYS 63, RISKOFF_ETF_STOP_MUL 0.92).
+
+**RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED** — Overlay fraction while RISK OFF and spyAbove200 === true (same SPY-above-200 check that gates equity/credit puts). 0.60 (~$60k). Split 50/50 across the top-2 qualifiers; one qualifier takes the full 60%. Missing spyAbove200 does not scale up (stays RISKOFF_ETF_NOTIONAL_FRAC). When SPY loses 200, MockBroker close+reopen cuts held lots back toward 40%. RISK ON still flattens. Paper only.
 
 **RISKOFF_ETF_REQUIRE_ABOVE_200** — Absolute-trend filter on risk-off ETF RS overlay candidates. True: a name qualifies only if it beats BIL and is above its own 200dma; otherwise that name is skipped. None qualify → BIL. BIL is never 200-filtered. Independent of credit-leg 200dma puts and gated TLT/IEF.
+
+**RISKOFF_ETF_RESIZE_NOTIONAL_FRAC** — Deadband on overlay lot resize. Rebalance a held overlay name when |held−target| notional is at least this fraction of the $100k book (0.08 / ~$8k). Catches 40%↔60% (and 20%↔30% per top-2 name) without churning 1-share quote drift. Close+reopen in MockBroker.
 
 **RISKOFF_ETF_RS_HYSTERESIS** — Mild absolute 63d total-return margin (0.005 / 50bp) on the risk-off ETF overlay. A challenger must beat a held name by this much before displacing that slot, so tiny GLD↔DBMF (etc.) edges do not churn. Exact RS ties still use preference order. Does not apply when held is ineligible (≤ BIL / not above 200) or missing.
 
 **risk_flip** — FCM eventType when the global RISK ON/OFF badge changes. Last-known state is in memory and Redis `risk:on` so a restart does not false-flip.
 
-**RS** — Relative strength. Momentum score vs SPY; risk-off ETF overlay is 63-session total return of GLD/UUP/TLT/IEF/XLU/XLP/DBMF/KMLM vs BIL, sized at RISKOFF_ETF_NOTIONAL_FRAC and split top-2 50/50 among qualifiers (beat BIL and above own 200). Mild 50bp hysteresis (RISKOFF_ETF_RS_HYSTERESIS). CTA family {DBMF, KMLM} diversifies #2 when #1 is CTA. Gated TLT/IEF duration is not an RS pick.
+**RS** — Relative strength. Momentum score vs SPY; risk-off ETF overlay is 63-session total return of GLD/UUP/TLT/IEF/XLU/XLP/DBMF/KMLM vs BIL, sized at RISKOFF_ETF_NOTIONAL_FRAC (40%, SPY below 200) or RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED (60%, SPY above 200 / puts gated) and split top-2 50/50 among qualifiers (beat BIL and above own 200). Mild 50bp hysteresis (RISKOFF_ETF_RS_HYSTERESIS). CTA family {DBMF, KMLM} diversifies #2 when #1 is CTA. Gated TLT/IEF duration is not an RS pick.
+
+**RTH** — Regular trading hours, 09:30-16:00 ET. Day-sleeve VWAP and entry window (09:35-15:45) use RTH only. Distinct from `marketSession.cashOpen`, which is the NYSE calendar day (not “are we inside 09:30–16:00 right now”).
 
 **SDS** — ProShares UltraShort S&P 500. Not a live risk-off expression.
 
@@ -198,7 +218,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **SPCX** — SPAC and New Issue ETF. Overlay thesisSleeve may be tagged spcx (manual CSP/CC). Not auto-traded.
 
-**SPY** — SPDR S&P 500 ETF Trust. RISK ON 200dma leg; scan RS benchmark; risk-off equity-index puts and new credit-leg (HYG/LQD/JNK) puts only when SPY is below 200dma (missing spyAbove200 fails closed); options quote strip.
+**SPY** — SPDR S&P 500 ETF Trust. RISK ON 200dma leg; scan RS benchmark; risk-off equity-index puts and new credit-leg (HYG/LQD/JNK) puts only when SPY is below 200dma (missing spyAbove200 fails closed); same spyAbove200 scales the 63d ETF overlay (60% while above 200 / puts gated, 40% once below); options quote strip.
 
 **SR3** — CME Three-Month SOFR futures. Gated root; freeze-card liquid contract; day quote strip SR3=F.
 
@@ -220,7 +240,11 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **uPnL** — Unrealized profit and loss on open mock positions. Marks from delayed last (or vertical/overlay MTM).
 
+**Vite** — Client bundler/dev server for the React SPA.
+
 **VPS** — Virtual private server running Event Gate (systemd event-gate, nginx, postgres, redis).
+
+**VWAP** — Volume-weighted average price (session, RTH). Day-sleeve MES longs only above it, shorts only below. Paper exit (“VWAP lost”) needs two consecutive completed 5m closes on the wrong side (DAY_VWAP_EXIT_CLOSES = 2). A single-bar pierce holds.
 
 **VXX** — iPath Series B S&P 500 VIX Short-Term Futures ETN. Not a live risk-off expression.
 
@@ -242,22 +266,3 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **ZT** — CME 2-Year U.S. Treasury Note futures. Gated root.
 
-**CME** — CME Group. Home of the gated futures roots (MES, ES, NQ, Treasuries, FX, SR3).
-
-**MTM** — Mark to market. Vertical and overlay unrealized P/L use chain marks, not invented prices.
-
-**NinjaTrader** — Futures platform. README notes a live NT API add-on is not required for mock. This repo is not an NT order router.
-
-**Postgres** — Database for calendar events, freeze snapshots, `users` + `user_sessions`, iOS FCM device tokens, push-alert dedupe, and the activity journal (`gate_log`, plus `session_logs`). Activity rows older than 90 days are deleted.
-
-**nginx** — TLS reverse proxy in front of 127.0.0.1:3001. No htpasswd on /api or the SPA; app auth is the users table. GET /api/public/risk stays unauthenticated.
-
-**Vite** — Client bundler/dev server for the React SPA.
-
-**%D** — 3-period SMA of slow %K. Day-sleeve MES stochastic signal line.
-
-**%K** — Slow stochastic (14,3). Day-sleeve MES momentum after knowledge_time on that ET print day. Long when %K crosses up through %D after %K was at or below 20; short is the mirror above 80.
-
-**RTH** — Regular trading hours, 09:30-16:00 ET. Day-sleeve VWAP and entry window (09:35-15:45) use RTH only. Distinct from `marketSession.cashOpen`, which is the NYSE calendar day (not “are we inside 09:30–16:00 right now”).
-
-**VWAP** — Volume-weighted average price (session, RTH). Day-sleeve MES longs only above it, shorts only below. Paper exit (“VWAP lost”) needs two consecutive completed 5m closes on the wrong side (DAY_VWAP_EXIT_CLOSES = 2). A single-bar pierce holds.

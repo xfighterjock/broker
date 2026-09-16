@@ -24,6 +24,7 @@ import {
   RISKOFF_DURATION_NOTIONAL_FRAC,
   RISKOFF_DURATION_STOP_MUL,
   RISKOFF_ETF_NOTIONAL_FRAC,
+  RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED,
   RISKOFF_ETF_STOP_MUL,
   RISKOFF_ETF_SYMBOLS,
   type RiskoffEtfSymbol,
@@ -198,10 +199,14 @@ describe("gated TLT/IEF duration", () => {
       log: () => {},
     });
     expect(result.sold.some((s) => s.symbol === "TLT" && /gated duration/i.test(s.reason))).toBe(true);
-    expect(result.sold.some((s) => s.symbol === "GLD")).toBe(false);
+    expect(result.sold.find((s) => s.symbol === "GLD")?.reason ?? "").not.toMatch(/gated duration/i);
     expect(book.getPositions().filter((p) => p.gatedDuration)).toEqual([]);
     expect(book.getPositions().some((p) => p.symbol === "GLD" && !p.gatedDuration)).toBe(true);
     expect(result.bought.filter((b) => b.gatedDuration)).toEqual([]);
+    const overlayGld = book.getPositions().find((p) => p.symbol === "GLD" && !p.gatedDuration);
+    expect(overlayGld?.qty).toBe(
+      sizeRiskoffEtfShares(180, DEFAULT_SLEEVE_EQUITY_USD, RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED),
+    );
   });
 
   it("dollarVeto true → flat / flatten", async () => {

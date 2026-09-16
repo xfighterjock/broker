@@ -43,6 +43,7 @@ describe("defaultSleeves", () => {
     expect(sleeves.riskoff.thesis).toMatch(/JNK/);
     expect(sleeves.riskoff.structure).toMatch(/put debit verticals/);
     expect(sleeves.riskoff.structure).toMatch(/GLD/);
+    expect(sleeves.riskoff.structure).toMatch(/60%/);
     expect(sleeves.riskoff.structure).toMatch(/no naked short vol/);
     expect(sleeves.riskoff.killRules).toMatch(/max debit lost/);
     expect(sleeves.riskoff.instruments).toMatch(/SPY/);
