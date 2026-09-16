@@ -1105,7 +1105,7 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(pickRiskoffEtfWinner(dbmfTinyLead, "GLD", etfAbove200())).toBe("GLD");
     const hold = decideRiskoffEtf({
       riskOn: false,
-      positions: [etfPos("GLD", 100, 180)],
+      positions: [etfPos("GLD", sizeRiskoffEtfShares(180), 180)],
       sleeve: defaultSleeves().riskoff,
       returns: gldWins,
       quotes: allEtfQuotes,
@@ -1710,9 +1710,13 @@ describe("risk-off ETF relative-strength expression", () => {
 
   it("held CTA pair rotates #2 to a non-CTA when one qualifies", () => {
     const withGold = etfRs({ DBMF: 0.18, KMLM: 0.16, GLD: 0.09 });
+    const half = riskoffEtfSleeveFrac(2);
     const decided = decideRiskoffEtf({
       riskOn: false,
-      positions: [etfPos("DBMF", 200, 28), etfPos("KMLM", 200, 27)],
+      positions: [
+        etfPos("DBMF", sizeRiskoffEtfShares(28, DEFAULT_SLEEVE_EQUITY_USD, half), 28),
+        etfPos("KMLM", sizeRiskoffEtfShares(27, DEFAULT_SLEEVE_EQUITY_USD, half), 27),
+      ],
       sleeve: defaultSleeves().riskoff,
       returns: withGold,
       quotes: allEtfQuotes,
@@ -1910,10 +1914,7 @@ describe("risk-off ETF relative-strength expression", () => {
 
     const holdTiny60 = decideRiskoffEtf({
       riskOn: false,
-      positions: [
-        etfPos("GLD", sizeRiskoffEtfShares(180, DEFAULT_SLEEVE_EQUITY_USD, half60), 180),
-        etfPos("UUP", sizeRiskoffEtfShares(28, DEFAULT_SLEEVE_EQUITY_USD, half60), 28),
-      ],
+      positions: [etfPos("GLD", sizeRiskoffEtfShares(180, DEFAULT_SLEEVE_EQUITY_USD, half60), 180)],
       sleeve: defaultSleeves().riskoff,
       returns: tiny,
       quotes: allEtfQuotes,
@@ -1923,14 +1924,12 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(holdTiny60.winner).toBe("GLD");
     expect(holdTiny60.winners).toEqual(["GLD", "UUP"]);
     expect(holdTiny60.sells).toEqual([]);
-    expect(holdTiny60.buy).toBeNull();
+    expect(holdTiny60.buy?.symbol).toBe("UUP");
+    expect(holdTiny60.buy?.qty).toBe(sizeRiskoffEtfShares(28, DEFAULT_SLEEVE_EQUITY_USD, half60));
 
     const holdTiny40 = decideRiskoffEtf({
       riskOn: false,
-      positions: [
-        etfPos("GLD", sizeRiskoffEtfShares(180, DEFAULT_SLEEVE_EQUITY_USD, half40), 180),
-        etfPos("UUP", sizeRiskoffEtfShares(28, DEFAULT_SLEEVE_EQUITY_USD, half40), 28),
-      ],
+      positions: [etfPos("GLD", sizeRiskoffEtfShares(180, DEFAULT_SLEEVE_EQUITY_USD, half40), 180)],
       sleeve: defaultSleeves().riskoff,
       returns: tiny,
       quotes: allEtfQuotes,
@@ -1940,7 +1939,23 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(holdTiny40.winner).toBe("GLD");
     expect(holdTiny40.winners).toEqual(["GLD", "UUP"]);
     expect(holdTiny40.sells).toEqual([]);
-    expect(holdTiny40.buy).toBeNull();
+    expect(holdTiny40.buy?.symbol).toBe("UUP");
+
+    const holdPair60 = decideRiskoffEtf({
+      riskOn: false,
+      positions: [
+        etfPos("GLD", sizeRiskoffEtfShares(180, DEFAULT_SLEEVE_EQUITY_USD, half60), 180),
+        etfPos("UUP", sizeRiskoffEtfShares(28, DEFAULT_SLEEVE_EQUITY_USD, half60), 28),
+      ],
+      sleeve: defaultSleeves().riskoff,
+      returns: two,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      spyAbove200: true,
+    });
+    expect(holdPair60.winners).toEqual(["GLD", "UUP"]);
+    expect(holdPair60.sells).toEqual([]);
+    expect(holdPair60.buy).toBeNull();
   });
 });
 
@@ -2003,7 +2018,8 @@ describe("flatten risk-off puts while SPY is above 200dma", () => {
   it("HYG-only OFF flattens leftover SPY/QQQ puts, keeps the HYG put and ETF", async () => {
     const spyPut = putVertPos("SPY");
     const hygPut = putVertPos("HYG");
-    const book = paperBook([etfPos("GLD", 100, 180), spyPut, hygPut]);
+    const qty60 = sizeRiskoffEtfShares(180, DEFAULT_SLEEVE_EQUITY_USD, RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED);
+    const book = paperBook([etfPos("GLD", qty60, 180), spyPut, hygPut]);
     const result = await runAutopilot({
       enabled: true,
       getPositions: book.getPositions,
