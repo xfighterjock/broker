@@ -1555,7 +1555,7 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(book.getPositions().map((p) => p.symbol)).toEqual(["UUP"]);
   });
 
-  it("missing-bars debounce: N consecutive misses flatten with the missing-bars note", () => {
+  it("missing-bars debounce: N consecutive misses flatten with the missing-bars note", async () => {
     const held = [etfPos("KMLM", 200, 27), etfPos("UUP", 200, 28)];
     const input = {
       riskOn: false,
