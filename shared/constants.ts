@@ -231,6 +231,16 @@ export const RISKOFF_ETF_STOP_MUL = 0.92;
  */
 export const RISKOFF_ETF_RS_HYSTERESIS = 0.005;
 /**
+ * Consecutive failed "missing bars / incomplete returns" overlay decisions
+ * before fail-closed flatten. A miss is `returns === null` or any name in
+ * RISKOFF_ETF_SYMBOLS lacking a finite 63d return (pickRiskoffEtfSleeve
+ * null). AUTO_PAPER_INTERVAL_MS is 5 min, so 3 misses ≈ 15 min. Misses 1
+ * and 2 hold the last open overlay sleeve (no sells, no new buys). Miss 3
+ * flattens with note "missing risk-off ETF bars". RS hysteresis does not
+ * apply until returns are ready again. Paper / MockBroker only.
+ */
+export const RISKOFF_ETF_MISSING_BARS_MAX_MISSES = 3;
+/**
  * Absolute-trend filter on 63d RS overlay candidates (not BIL). A name
  * qualifies only if it beats BIL and is above its own 200dma (same Massive
  * daily series as the 63d returns). At/below 200 or missing 200 → that name

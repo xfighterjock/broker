@@ -31,6 +31,7 @@ import {
   RISKOFF_ETF_CANDIDATES,
   RISKOFF_ETF_CTA_FAMILY,
   RISKOFF_ETF_LOOKBACK_DAYS,
+  RISKOFF_ETF_MISSING_BARS_MAX_MISSES,
   RISKOFF_ETF_NOTIONAL_FRAC,
   RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED,
   RISKOFF_ETF_REQUIRE_ABOVE_200,
@@ -53,6 +54,7 @@ import {
   pickRiskoffEtfSecond,
   pickRiskoffEtfSleeve,
   pickRiskoffEtfWinner,
+  resetRiskoffEtfMissingBarsMisses,
   riskoffEtfAbove200FromBars,
   riskoffEtfNotionalFrac,
   riskoffEtfQualifiers,
@@ -927,8 +929,14 @@ const putChainForAuto: OptionLeg[] = [
 ];
 
 describe("risk-off ETF relative-strength expression", () => {
-  beforeEach(() => setPaperNow(new Date("2026-09-03T13:50:00.000Z")));
-  afterEach(() => setPaperNow(null));
+  beforeEach(() => {
+    setPaperNow(new Date("2026-09-03T13:50:00.000Z"));
+    resetRiskoffEtfMissingBarsMisses();
+  });
+  afterEach(() => {
+    setPaperNow(null);
+    resetRiskoffEtfMissingBarsMisses();
+  });
   it("uses a 63-session lookback and fails closed without an exact series", () => {
     expect(RISKOFF_ETF_LOOKBACK_DAYS).toBe(63);
     const closes = Array.from({ length: 80 }, () => 100);
@@ -1490,8 +1498,44 @@ describe("risk-off ETF relative-strength expression", () => {
     ).toEqual([]);
   });
 
-  it("5. Missing bars → fail closed to cash", async () => {
+  it("5. Missing bars: RS pick is still null; a single miss holds the last sleeve", async () => {
+    expect(RISKOFF_ETF_MISSING_BARS_MAX_MISSES).toBe(3);
+    expect(pickRiskoffEtfWinner(etfRs({ GLD: null, UUP: 0.2 }))).toBeNull();
+    expect(pickRiskoffEtfWinner(etfRs({ TLT: null, GLD: 0.2 }))).toBeNull();
+    expect(pickRiskoffEtfWinner(etfRs({ DBMF: null, GLD: 0.2 }))).toBeNull();
+    expect(pickRiskoffEtfWinner(etfRs({ KMLM: null, GLD: 0.2 }))).toBeNull();
+
+    const kmlmUup = [etfPos("KMLM", 200, 27), etfPos("UUP", 200, 28)];
+    const incomplete = etfRs({ GLD: null, UUP: 0.2 });
+    const oneMiss = decideRiskoffEtf({
+      riskOn: false,
+      positions: kmlmUup,
+      sleeve: defaultSleeves().riskoff,
+      returns: incomplete,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      missingBarsMisses: 0,
+    });
+    expect(oneMiss.sells).toEqual([]);
+    expect(oneMiss.buys).toEqual([]);
+    expect(oneMiss.buy).toBeNull();
+    expect(oneMiss.winners).toEqual(["KMLM", "UUP"]);
+    expect(oneMiss.reason).toBe("missing risk-off ETF bars: hold last sleeve (1/3)");
+
+    const nullReturns = decideRiskoffEtf({
+      riskOn: false,
+      positions: kmlmUup,
+      sleeve: defaultSleeves().riskoff,
+      returns: null,
+      quotes: allEtfQuotes,
+      missingBarsMisses: 0,
+    });
+    expect(nullReturns.sells).toEqual([]);
+    expect(nullReturns.winners).toEqual(["KMLM", "UUP"]);
+    expect(nullReturns.reason).toMatch(/hold last sleeve \(1\/3\)/);
+
     const book = paperBook([etfPos("UUP", 200, 28)]);
+    resetRiskoffEtfMissingBarsMisses();
     const result = await runAutopilot({
       enabled: true,
       getPositions: book.getPositions,
@@ -1500,19 +1544,132 @@ describe("risk-off ETF relative-strength expression", () => {
       featureRows: [],
       scanReady: true,
       riskOn: false,
-      riskoffEtfReturns: etfRs({ GLD: null, UUP: 0.2 }),
+      riskoffEtfReturns: incomplete,
       riskoffEtfQuotes: allEtfQuotes,
       place: book.place,
       close: book.close,
       log: () => {},
     });
     expect(result.bought).toEqual([]);
-    expect(result.sold.map((s) => s.symbol)).toEqual(["UUP"]);
+    expect(result.sold).toEqual([]);
+    expect(book.getPositions().map((p) => p.symbol)).toEqual(["UUP"]);
+  });
+
+  it("missing-bars debounce: N consecutive misses flatten with the missing-bars note", () => {
+    const held = [etfPos("KMLM", 200, 27), etfPos("UUP", 200, 28)];
+    const input = {
+      riskOn: false,
+      positions: held,
+      sleeve: defaultSleeves().riskoff,
+      returns: null as RiskoffEtfReturns | null,
+      quotes: allEtfQuotes,
+    };
+    for (let i = 0; i < RISKOFF_ETF_MISSING_BARS_MAX_MISSES - 1; i++) {
+      const hold = decideRiskoffEtf({ ...input, missingBarsMisses: i });
+      expect(hold.sells).toEqual([]);
+      expect(hold.winners).toEqual(["KMLM", "UUP"]);
+      expect(hold.reason).toBe(
+        `missing risk-off ETF bars: hold last sleeve (${i + 1}/${RISKOFF_ETF_MISSING_BARS_MAX_MISSES})`,
+      );
+    }
+    const flatten = decideRiskoffEtf({
+      ...input,
+      missingBarsMisses: RISKOFF_ETF_MISSING_BARS_MAX_MISSES - 1,
+    });
+    expect(flatten.reason).toBe("missing risk-off ETF bars");
+    expect(flatten.sells.map((s) => s.symbol)).toEqual(["KMLM", "UUP"]);
+    expect(flatten.buys).toEqual([]);
+    expect(flatten.winners).toEqual([]);
+
+    resetRiskoffEtfMissingBarsMisses();
+    const book = paperBook([etfPos("UUP", 200, 28)]);
+    const ctx = {
+      enabled: true,
+      getPositions: book.getPositions,
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [] as ScanRow[],
+      featureRows: [] as Array<{ symbol: string; above200: boolean | null }>,
+      scanReady: true,
+      riskOn: false,
+      riskoffEtfReturns: etfRs({ GLD: null, UUP: 0.2 }),
+      riskoffEtfQuotes: allEtfQuotes,
+      place: book.place,
+      close: book.close,
+      log: () => {},
+    };
+    for (let i = 0; i < RISKOFF_ETF_MISSING_BARS_MAX_MISSES - 1; i++) {
+      const held = await runAutopilot(ctx);
+      expect(held.sold).toEqual([]);
+      expect(book.getPositions().map((p) => p.symbol)).toEqual(["UUP"]);
+    }
+    const dumped = await runAutopilot(ctx);
+    expect(dumped.sold.map((s) => s.symbol)).toEqual(["UUP"]);
     expect(book.getPositions()).toEqual([]);
-    expect(pickRiskoffEtfWinner(etfRs({ GLD: null, UUP: 0.2 }))).toBeNull();
-    expect(pickRiskoffEtfWinner(etfRs({ TLT: null, GLD: 0.2 }))).toBeNull();
-    expect(pickRiskoffEtfWinner(etfRs({ DBMF: null, GLD: 0.2 }))).toBeNull();
-    expect(pickRiskoffEtfWinner(etfRs({ KMLM: null, GLD: 0.2 }))).toBeNull();
+  });
+
+  it("missing-bars recovery: bars return → resume RS, no spurious rotate", () => {
+    const kmlmUup = etfRs({ KMLM: 0.16, UUP: 0.11 });
+    const half = riskoffEtfSleeveFrac(2);
+    const kmlmQty = sizeRiskoffEtfShares(27, DEFAULT_SLEEVE_EQUITY_USD, half);
+    const uupQty = sizeRiskoffEtfShares(28, DEFAULT_SLEEVE_EQUITY_USD, half);
+    const held = [etfPos("KMLM", kmlmQty, 27), etfPos("UUP", uupQty, 28)];
+    expect(pickRiskoffEtfSleeve(kmlmUup, ["KMLM", "UUP"], etfAbove200())).toEqual(["KMLM", "UUP"]);
+
+    const miss = decideRiskoffEtf({
+      riskOn: false,
+      positions: held,
+      sleeve: defaultSleeves().riskoff,
+      returns: null,
+      quotes: allEtfQuotes,
+      missingBarsMisses: 0,
+    });
+    expect(miss.sells).toEqual([]);
+    expect(miss.winners).toEqual(["KMLM", "UUP"]);
+
+    const recovered = decideRiskoffEtf({
+      riskOn: false,
+      positions: held,
+      sleeve: defaultSleeves().riskoff,
+      returns: kmlmUup,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      missingBarsMisses: 1,
+    });
+    expect(recovered.reason).toBe("hold KMLM+UUP");
+    expect(recovered.winners).toEqual(["KMLM", "UUP"]);
+    expect(recovered.sells).toEqual([]);
+    expect(recovered.buys).toEqual([]);
+    expect(recovered.buy).toBeNull();
+
+    const tiny = etfRs({ GLD: 0.1, DBMF: 0.104, UUP: 0.02 });
+    expect(pickRiskoffEtfWinner(tiny, "GLD", etfAbove200())).toBe("GLD");
+    expect(pickRiskoffEtfWinner(tiny, null, etfAbove200())).toBe("DBMF");
+    const afterGap = decideRiskoffEtf({
+      riskOn: false,
+      positions: [etfPos("GLD", 100, 180)],
+      sleeve: defaultSleeves().riskoff,
+      returns: tiny,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+    });
+    expect(afterGap.winner).toBe("GLD");
+    expect(afterGap.winners).toEqual(["GLD", "DBMF"]);
+    expect(afterGap.sells).toEqual([]);
+    expect(afterGap.buy?.symbol).toBe("DBMF");
+    expect(afterGap.reason).toBe("buy GLD+DBMF");
+  });
+
+  it("missing-bars debounce does not delay RISK ON flatten", () => {
+    const flatten = decideRiskoffEtf({
+      riskOn: true,
+      positions: [etfPos("KMLM", 200, 27)],
+      sleeve: defaultSleeves().riskoff,
+      returns: null,
+      quotes: allEtfQuotes,
+      missingBarsMisses: 0,
+    });
+    expect(flatten.reason).toBe("risk on: flatten risk-off ETF");
+    expect(flatten.sells.map((s) => s.symbol)).toEqual(["KMLM"]);
   });
 
   it("6. Size stays ~$40k (well under $100k) and hold does not churn", async () => {

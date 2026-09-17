@@ -4,6 +4,7 @@ import {
   RISKOFF_ETF_CASH_SYMBOL,
   RISKOFF_ETF_CTA_FAMILY,
   RISKOFF_ETF_LOOKBACK_DAYS,
+  RISKOFF_ETF_MISSING_BARS_MAX_MISSES,
   RISKOFF_ETF_NOTIONAL_FRAC,
   RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED,
   RISKOFF_ETF_REQUIRE_ABOVE_200,
@@ -54,6 +55,17 @@ export type RiskoffEtfDecision = {
   buy: RiskoffEtfBuy | null;
   buys: RiskoffEtfBuy[];
 };
+
+/** Consecutive missing-bars / incomplete-returns decisions. Process-local. */
+let missingBarsMisses = 0;
+
+export function getRiskoffEtfMissingBarsMisses(): number {
+  return missingBarsMisses;
+}
+
+export function resetRiskoffEtfMissingBarsMisses(): void {
+  missingBarsMisses = 0;
+}
 
 export function isRiskoffEtfCta(symbol: string): boolean {
   return (RISKOFF_ETF_CTA_FAMILY as readonly string[]).includes(symbol.trim().toUpperCase());
@@ -194,8 +206,9 @@ export function riskoffEtfReturnsReady(returns: RiskoffEtfReturns): boolean {
 
 /**
  * Hold a candidate if that name's lookback return beats BIL; else BIL.
- * Any missing overlay-universe return → null (cash). Among names that beat
- * BIL, pick the highest 63d return. If a held name is still eligible, keep it
+ * Any missing overlay-universe return → null (not an RS pick; decideRiskoffEtf
+ * debounces flatten — hysteresis does not apply until returns are ready).
+ * Among names that beat BIL, pick the highest 63d return. If a held name is still eligible, keep it
  * unless a challenger leads by RISKOFF_ETF_RS_HYSTERESIS or more. Exact RS
  * tie keeps a held name when it is still eligible, else preference order
  * GLD > UUP > TLT > IEF > XLU > XLP > DBMF > KMLM. Hysteresis does not apply
@@ -378,6 +391,47 @@ function flattenOpen(
   };
 }
 
+function overlayNamesFromOpen(open: Position[]): RiskoffEtfSymbol[] {
+  const out: RiskoffEtfSymbol[] = [];
+  for (const p of open) {
+    if (!isRiskoffEtfSymbol(p.symbol)) continue;
+    if (!out.includes(p.symbol)) out.push(p.symbol);
+  }
+  return out;
+}
+
+/** Hold open overlay lots. No sells, no new buys — last successful sleeve. */
+function holdLastSleeve(open: Position[], reason: string): RiskoffEtfDecision {
+  const winners = overlayNamesFromOpen(open);
+  return {
+    winner: winners[0] ?? null,
+    winners,
+    reason,
+    sells: [],
+    buy: null,
+    buys: [],
+  };
+}
+
+/**
+ * Increment the missing-bars streak. Hold last sleeve until
+ * RISKOFF_ETF_MISSING_BARS_MAX_MISSES consecutive misses, then flatten.
+ */
+function decideMissingBars(
+  open: Position[],
+  priorMisses: number,
+): RiskoffEtfDecision {
+  const misses = priorMisses + 1;
+  missingBarsMisses = misses;
+  if (misses < RISKOFF_ETF_MISSING_BARS_MAX_MISSES) {
+    return holdLastSleeve(
+      open,
+      `missing risk-off ETF bars: hold last sleeve (${misses}/${RISKOFF_ETF_MISSING_BARS_MAX_MISSES})`,
+    );
+  }
+  return flattenOpen(open, "missing risk-off ETF bars", null);
+}
+
 function overlayThesis(
   names: RiskoffEtfSymbol[],
   trendPark: string | null,
@@ -402,17 +456,26 @@ export function decideRiskoffEtf(input: {
    * overlay (puts gated). False/missing → 40%. Does not change RISK ON flatten.
    */
   spyAbove200?: boolean | null;
+  /**
+   * Consecutive missing-bars misses already counted before this decision.
+   * Omit to use the process-local streak (autopilot ticks). Tests pass this
+   * to isolate a single call. A successful RS path resets the streak to 0.
+   */
+  missingBarsMisses?: number;
 }): RiskoffEtfDecision {
   const open = openRiskoffEtfPositions(input.positions);
+  const priorMisses = input.missingBarsMisses ?? missingBarsMisses;
 
   if (input.riskOn) {
+    missingBarsMisses = 0;
     return flattenOpen(open, "risk on: flatten risk-off ETF", null);
   }
   if (input.sleeve.paper.realizedPnlUsd <= -input.sleeve.lossCapUsd) {
+    missingBarsMisses = 0;
     return flattenOpen(open, "sleeve loss cap", null);
   }
   if (!input.returns) {
-    return flattenOpen(open, "missing risk-off ETF bars", null);
+    return decideMissingBars(open, priorMisses);
   }
 
   const heldNames = open.map((p) => p.symbol);
@@ -420,8 +483,9 @@ export function decideRiskoffEtf(input: {
   const rsSleeve = pickRiskoffEtfSleeve(input.returns, heldNames);
   const sleeve = pickRiskoffEtfSleeve(input.returns, heldNames, above200);
   if (sleeve === null || rsSleeve === null) {
-    return flattenOpen(open, "missing risk-off ETF bars", null);
+    return decideMissingBars(open, priorMisses);
   }
+  missingBarsMisses = 0;
 
   const quotes = lastBySymbol(input.quotes);
   const totalFrac = riskoffEtfNotionalFrac(input.spyAbove200);

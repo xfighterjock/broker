@@ -68,7 +68,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **ET** — America/New_York clock. Gate windows, 15:50 vertical cutoff, session marks, E*TRADE renew window, flatten times.
 
-**ETF** — Exchange-traded fund. Risk-off 63d RS overlay is GLD/UUP/TLT/IEF/XLU/XLP/DBMF/KMLM/BIL sized at RISKOFF_ETF_NOTIONAL_FRAC (40% of the $100k book) when SPY is below 200, or RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED (60%) while SPY is above 200 and puts stay gated; split 50/50 across the top-2 qualifiers (beat BIL and above own 200). Gated duration is a separate TLT/IEF long at RISKOFF_DURATION_NOTIONAL_FRAC (20%). Gate names are SPY/ACWI/HYG/UUP.
+**ETF** — Exchange-traded fund. Risk-off 63d RS overlay is GLD/UUP/TLT/IEF/XLU/XLP/DBMF/KMLM/BIL sized at RISKOFF_ETF_NOTIONAL_FRAC (40% of the $100k book) when SPY is below 200, or RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED (60%) while SPY is above 200 and puts stay gated; split 50/50 across the top-2 qualifiers (beat BIL and above own 200). Missing overlay bars debounce via RISKOFF_ETF_MISSING_BARS_MAX_MISSES (hold last sleeve; do not flatten on a single miss). Gated duration is a separate TLT/IEF long at RISKOFF_DURATION_NOTIONAL_FRAC (20%). Gate names are SPY/ACWI/HYG/UUP.
 
 **EVENT_GATE_OPS_TOKEN** — Optional long-lived HTTPS ops bearer (VPS `/opt/broker/.env`, never git). When set, `Authorization: Bearer` matching the env value authenticates a narrow ops scope: GET /api/status, GET/PUT /api/freeze, GET /api/health, GET /api/sleeves, POST /api/paper/auto, POST /api/flatten, POST /api/paper/reset, POST /api/gate/enable (print-day vetoes: flatten + GATE OFF; paper sleeve reset without a delayed last). Same GATE route also GATE ON (`{ enabled: true }` or omitted, defaults ON) — no separate disable path. Not a users-table session. Paper orders, PIN, mock inject, cancel-stops, user admin stay 401. When unset, behavior unchanged. Agents freeze-save, status-check, toggle AUTO, flatten, reset one mock sleeve, and GATE OFF at https://broker.logikmancer.com without the Mac.
 
@@ -170,13 +170,15 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **Redis** — Cache/store for gate flags, mock book, sleeves, blotter, session marks, scan, AUTO PAPER (per-sleeve JSON on `paper:auto`), last-known RISK ON/OFF (`risk:on`), and SPA cookie sessions (cookie name `eg.sid`, Redis prefix `eg:sess:`).
 
-**RISK OFF** — Badge when RISK ON is false. Pauses new momentum longs and options call-debits; ownership pauses new adds. May run the riskoff sleeve (ETF overlay always — 60% while SPY is above 200 and puts stay gated, 40% once SPY loses 200; credit-leg and equity-index puts only when SPY is below 200dma). Does not bind the day book.
+**RISK OFF** — Badge when RISK ON is false. Pauses new momentum longs and options call-debits; ownership pauses new adds. May run the riskoff sleeve (ETF overlay always — 60% while SPY is above 200 and puts stay gated, 40% once SPY loses 200; credit-leg and equity-index puts only when SPY is below 200dma). Overlay missing-bars misses hold the last sleeve for RISKOFF_ETF_MISSING_BARS_MAX_MISSES consecutive decide() calls before flattening. Does not bind the day book.
 
 **RISK ON** — Badge iff SPY, ACWI, and HYG are above 200dma and UUP 20d is not greater than +3%. Missing series fail closed to RISK OFF.
 
 **RISKOFF_DURATION_NOTIONAL_FRAC** — Fraction of the $100k risk-off mock book for the gated TLT/IEF duration long. 0.20 (~$20k). Mild so it does not crowd out the 40% RS overlay that applies when SPY is below 200 (combined 60%; puts keep the rest). Duration is already flat while SPY is above 200, so it never stacks with the 60% put-gated overlay. Same disaster stop as the overlay (RISKOFF_DURATION_STOP_MUL = 0.92). Paper only. Distinct from the 63d RS pick.
 
 **RISKOFF_ETF_CTA_FAMILY** — Managed-futures / CTA tickers on the risk-off 63d RS overlay (DBMF, KMLM). When RS #1 is in this set, #2 prefers a non-CTA qualifier; the other CTA is #2 only if no non-CTA qualifier exists. Add future CTA names here and to RISKOFF_ETF_SYMBOLS.
+
+**RISKOFF_ETF_MISSING_BARS_MAX_MISSES** — Consecutive failed missing-bars / incomplete-returns overlay decisions before fail-closed flatten. 3 (≈15 min at AUTO_PAPER_INTERVAL_MS 5 min). A miss is `returns === null` or any RISKOFF_ETF_SYMBOLS name lacking a finite 63d return. Misses 1–2 hold the last open overlay sleeve (no sells, no new buys). Miss 3 flattens with note "missing risk-off ETF bars". RS hysteresis does not apply until returns are ready. Paper / MockBroker only.
 
 **RISKOFF_ETF_NOTIONAL_FRAC** — Base fraction of the $100k risk-off mock book for the defensive ETF RS overlay long while RISK OFF and spyAbove200 === false (puts can come online). 0.40 (~$40k). Split 50/50 across the top-2 qualifiers; one qualifier takes the full 40%. Puts keep the rest (and the 20% gated duration sleeve when that program is on). Lookback and stop unchanged (RISKOFF_ETF_LOOKBACK_DAYS 63, RISKOFF_ETF_STOP_MUL 0.92).
 
@@ -186,11 +188,11 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **RISKOFF_ETF_RESIZE_NOTIONAL_FRAC** — Deadband on overlay lot resize. Rebalance a held overlay name when |held−target| notional is at least this fraction of the $100k book (0.08 / ~$8k). Catches 40%↔60% (and 20%↔30% per top-2 name) without churning 1-share quote drift. Close+reopen in MockBroker.
 
-**RISKOFF_ETF_RS_HYSTERESIS** — Mild absolute 63d total-return margin (0.005 / 50bp) on the risk-off ETF overlay. A challenger must beat a held name by this much before displacing that slot, so tiny GLD↔DBMF (etc.) edges do not churn. Exact RS ties still use preference order. Does not apply when held is ineligible (≤ BIL / not above 200) or missing.
+**RISKOFF_ETF_RS_HYSTERESIS** — Mild absolute 63d total-return margin (0.005 / 50bp) on the risk-off ETF overlay. A challenger must beat a held name by this much before displacing that slot, so tiny GLD↔DBMF (etc.) edges do not churn. Exact RS ties still use preference order. Does not apply when held is ineligible (≤ BIL / not above 200) or missing. Does not apply on a missing-bars miss — that path short-circuits before RS; hysteresis resumes only after returns are ready again.
 
 **risk_flip** — FCM eventType when the global RISK ON/OFF badge changes. Last-known state is in memory and Redis `risk:on` so a restart does not false-flip.
 
-**RS** — Relative strength. Momentum score vs SPY; risk-off ETF overlay is 63-session total return of GLD/UUP/TLT/IEF/XLU/XLP/DBMF/KMLM vs BIL, sized at RISKOFF_ETF_NOTIONAL_FRAC (40%, SPY below 200) or RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED (60%, SPY above 200 / puts gated) and split top-2 50/50 among qualifiers (beat BIL and above own 200). Mild 50bp hysteresis (RISKOFF_ETF_RS_HYSTERESIS). CTA family {DBMF, KMLM} diversifies #2 when #1 is CTA. Gated TLT/IEF duration is not an RS pick.
+**RS** — Relative strength. Momentum score vs SPY; risk-off ETF overlay is 63-session total return of GLD/UUP/TLT/IEF/XLU/XLP/DBMF/KMLM vs BIL, sized at RISKOFF_ETF_NOTIONAL_FRAC (40%, SPY below 200) or RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED (60%, SPY above 200 / puts gated) and split top-2 50/50 among qualifiers (beat BIL and above own 200). Mild 50bp hysteresis (RISKOFF_ETF_RS_HYSTERESIS) only when the 63d universe is complete — missing bars debounce (RISKOFF_ETF_MISSING_BARS_MAX_MISSES) short-circuits first. CTA family {DBMF, KMLM} diversifies #2 when #1 is CTA. Gated TLT/IEF duration is not an RS pick.
 
 **RTH** — Regular trading hours, 09:30-16:00 ET. Day-sleeve VWAP and entry window (09:35-15:45) use RTH only. Distinct from `marketSession.cashOpen`, which is the NYSE calendar day (not “are we inside 09:30–16:00 right now”).
 
