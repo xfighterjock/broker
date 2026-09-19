@@ -89,8 +89,8 @@ When RISK OFF: no new momentum longs, no new options call-debit verticals; owner
 
 | Path | Vendor | Use |
 | --- | --- | --- |
-| Equities last, S&P scan dailies, risk gate, overlay + LQD/JNK 200dma bars | Massive (api.massive.com), 15-minute delayed Starter | quotes, scan, RISK ON, risk-off ETF RS, credit-leg 200dma |
-| Futures =F | Yahoo chart | day/momentum quote strip |
+| Equities last, S&P scan dailies, risk gate, overlay + LQD/JNK 200dma bars | Massive Stocks Starter (api.massive.com), 15-minute delayed | quotes, scan, RISK ON, risk-off ETF RS, credit-leg 200dma |
+| Futures MES/ZN/M6E/SR3 (and ES/NQ/MNQ/6E) lasts + day MES 5m bars | Massive Futures on the same MASSIVE_API_KEY; front-month dated contract (MESU6, not F:MES). Yahoo chart MES=F fallback if Futures is unconfigured or errors | day-sleeve stoch/VWAP; day/momentum quote strip |
 | Option expiries and chains | Live E*TRADE (api.etrade.com) | paper vertical/CSP/CC marks only |
 | S&P 500 universe | datasets CSV on GitHub | scan constituents |
 
@@ -117,7 +117,7 @@ Five sleeves (SLEEVE_IDS). Each has its own mock book.
 
 Horizon: intraday. Budget hint 15%. Loss cap $500 (day sleeve realized P/L, not mock:day_pnl).
 
-Event-clock futures sleeve. Instruments on the quote strip: MES, ZN, M6E, SR3 (Yahoo =F). NFP/CPI/FOMC GATE still binds: PRE-ARM, NO-STOP BAND, and session flatten refuse new entries; flatten 15:45 ET (15:30 FOMC). Per-sleeve AUTO does not bypass GATE vetoes. Autopilot papers MES only when day AUTO is on and knowledge_time is set for that America/New_York print day (post-print / Stage-3; `now` at or after the stamp, same ET calendar day). Ordinary idle RTH with no stamp — or a leftover stamp from another ET day — does not open new MES stoch lots. PRE-ARM and NO-STOP BAND still veto new entries after the stamp. Existing open lots keep stop, VWAP-exit, 15:45 flatten, and sleeve loss cap. Signal: 5-minute slow stochastic 14,3,3, longs only above session VWAP, shorts only below, qty 1, stop at least 8 ticks or the signal bar. VWAP exit is two consecutive completed 5m closes on the wrong side of session VWAP (DAY_VWAP_EXIT_CLOSES = 2); a single-bar pierce holds. Yahoo 5m MES=F bars (not E*TRADE). RISK ON does not bind this book. MockBroker only.
+Event-clock futures sleeve. Instruments on the quote strip: MES, ZN, M6E, SR3 (Massive Futures front-month lasts; Yahoo =F fallback). NFP/CPI/FOMC GATE still binds: PRE-ARM, NO-STOP BAND, and session flatten refuse new entries; flatten 15:45 ET (15:30 FOMC). Per-sleeve AUTO does not bypass GATE vetoes. Autopilot papers MES only when day AUTO is on and knowledge_time is set for that America/New_York print day (post-print / Stage-3; `now` at or after the stamp, same ET calendar day). Ordinary idle RTH with no stamp — or a leftover stamp from another ET day — does not open new MES stoch lots. PRE-ARM and NO-STOP BAND still veto new entries after the stamp. Existing open lots keep stop, VWAP-exit, 15:45 flatten, and sleeve loss cap. Signal: 5-minute slow stochastic 14,3,3, longs only above session VWAP, shorts only below, qty 1, stop at least 8 ticks or the signal bar. VWAP exit is two consecutive completed 5m closes on the wrong side of session VWAP (DAY_VWAP_EXIT_CLOSES = 2); a single-bar pierce holds. Day MES 5m bars prefer Massive Futures aggregates on the front-month contract from `GET /futures/v1/contracts` + `GET /futures/v1/aggs/{ticker}?resolution=5min` (not a synthetic F: ticker; Massive has no continuous REST symbol). Yahoo 5m MES=F is fallback only when Massive Futures is unconfigured or the response is unusable — the process logs which source won. Not E*TRADE. Paper symbol stays MES=F. RISK ON does not bind this book. MockBroker only.
 
 ### 2. momentum — Short-term momentum
 

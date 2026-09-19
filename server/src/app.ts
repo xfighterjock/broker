@@ -84,7 +84,7 @@ import {
 import { GateEngine } from "./gate";
 import { MockBroker } from "./mockBroker";
 import type { RedisClient } from "./redis";
-import { fetchDelayedQuotes, fetchYahooFiveMinuteBars, mapTicker, symbolsForSleeve } from "./quotes";
+import { fetchDelayedQuotes, fetchDayMesFiveMinuteBars, mapTicker, symbolsForSleeve } from "./quotes";
 import { attachScanReady, getScan, getScanFeaturesCache, rankMomentum } from "./scan";
 import {
   alignedZeroSessionMark,
@@ -1343,7 +1343,7 @@ export function buildApp(deps: AppDeps): express.Express {
         now: new Date(),
         gateMode: computeClock(new Date(), deps.getEvents()).mode,
         knowledgeTime: memory.knowledgeTime,
-        dayBars: await fetchYahooFiveMinuteBars("MES=F").catch(() => []),
+        dayBars: await fetchDayMesFiveMinuteBars().catch(() => []),
         placeVertical: async (v: AutoVertical) => {
           if (v.sleeveId === "riskoff" && v.right !== "P") {
             return { ok: false, error: "riskoff sleeve: put debit verticals only" };
