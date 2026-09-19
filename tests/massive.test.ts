@@ -258,7 +258,7 @@ describe("fetchDayMesFiveMinuteBars Massive vs Yahoo", () => {
 
   it("still feeds decideDayMomentum from Massive-parsed 5m bars", async () => {
     setMassiveTestKey();
-    const raw = fiveMinuteBars(22, 81);
+    const raw = fiveMinuteBars(22, 81).map((b) => ({ ...b, high: 100, low: 80 }));
     raw[21] = { ...raw[21], close: 99, high: 100, low: 80 };
     stubMarketFetch({ futuresAggs: raw });
     const bars = await fetchDayMesFiveMinuteBars();
