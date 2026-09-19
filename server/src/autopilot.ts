@@ -890,7 +890,7 @@ export type AutopilotCtx = {
   fetchChain?: (symbol: string, expiry: string) => Promise<FetchChainResult | OptionLeg[]>;
   /** Delayed lasts for SPY/QQQ (IWM optional) and HYG/LQD/JNK, used for risk-off put intents. */
   riskoffQuotes?: Array<{ symbol: string; last: number }>;
-  /** 63d total returns for the risk-off ETF overlay vs BIL. Missing/null → fail closed to cash. */
+  /** 63d total returns for the risk-off ETF overlay vs BIL. Missing/incomplete → missing-bars debounce, then flatten. */
   riskoffEtfReturns?: RiskoffEtfReturns | null;
   /**
    * Own-200 map from the same Massive dailies as riskoffEtfReturns.
