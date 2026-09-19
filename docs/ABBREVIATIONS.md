@@ -70,7 +70,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **ETF** — Exchange-traded fund. Risk-off 63d RS overlay is GLD/UUP/TLT/IEF/XLU/XLP/DBMF/KMLM/BIL sized at RISKOFF_ETF_NOTIONAL_FRAC (40% of the $100k book) when SPY is below 200, or RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED (60%) while SPY is above 200 and puts stay gated; split 50/50 across the top-2 qualifiers (beat BIL and above own 200). Missing overlay bars debounce via RISKOFF_ETF_MISSING_BARS_MAX_MISSES (hold last sleeve; do not flatten on a single miss). Gated duration is a separate TLT/IEF long at RISKOFF_DURATION_NOTIONAL_FRAC (20%). Gate names are SPY/ACWI/HYG/UUP.
 
-**EVENT_GATE_OPS_TOKEN** — Optional long-lived HTTPS ops bearer (VPS `/opt/broker/.env`, never git). When set, `Authorization: Bearer` matching the env value authenticates a narrow ops scope: GET /api/status, GET/PUT /api/freeze, GET /api/health, GET /api/sleeves, POST /api/paper/auto, POST /api/flatten, POST /api/paper/reset, POST /api/gate/enable (print-day vetoes: flatten + GATE OFF; paper sleeve reset without a delayed last). Same GATE route also GATE ON (`{ enabled: true }` or omitted, defaults ON) — no separate disable path. Not a users-table session. Paper orders, PIN, mock inject, cancel-stops, user admin stay 401. When unset, behavior unchanged. Agents freeze-save, status-check, toggle AUTO, flatten, reset one mock sleeve, and GATE OFF at https://broker.logikmancer.com without the Mac.
+**EVENT_GATE_OPS_TOKEN** — Optional long-lived HTTPS ops bearer (VPS `/opt/broker/.env`, never git). When set, `Authorization: Bearer` matching the env value authenticates a narrow ops scope: GET /api/status, GET/PUT /api/freeze, GET /api/health, GET /api/sleeves, POST /api/paper/auto, POST /api/flatten, POST /api/paper/reset, POST /api/gate/enable, POST /api/knowledge-time (print-day vetoes: flatten + GATE OFF; paper sleeve reset without a delayed last; same knowledge_time stamp as a user). Same GATE route also GATE ON (`{ enabled: true }` or omitted, defaults ON) — no separate disable path. Not a users-table session. Paper orders, PIN, mock inject, cancel-stops, user admin stay 401. When unset, behavior unchanged. Agents freeze-save, status-check, toggle AUTO, flatten, reset one mock sleeve, GATE OFF, and stamp knowledge_time at https://broker.logikmancer.com without the Mac.
 
 **Face ID** — iOS LocalAuthentication unlock of a Keychain session. Optional. Not a remote password. Touch ID is the same path.
 
@@ -100,7 +100,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **IEF** — iShares 7-10 Year Treasury Bond ETF. Intermediate-duration candidate on the risk-off 63d RS overlay (after TLT in the duration bucket). Also the fallback for gated duration when TLT is unquoted or sizes to 0.
 
-**iOS Event Gate** — Native SwiftUI app in ios/ (bundle com.logikmancer.mybroker). Phone Event Gate client: essentials (clock, US cash closed/holiday strip, GATE, RISK, AUTO PAPER chips, Flatten, sleeve P/L, E*TRADE PIN), paged Activity log, plus FCM. Users-table login + optional Face ID / Touch ID unlock of the Keychain session. Web `/m` remains for browsers. Push notification glyph is the AppIcon (same auto-agent artwork as the web favicon).
+**iOS Event Gate** — Native SwiftUI app in ios/ (bundle com.logikmancer.mybroker). Phone Event Gate client: essentials (clock, US cash closed/holiday strip, GATE, RISK, AUTO PAPER chips, knowledge_time / Stage-3 arm + Stamp knowledge time, Flatten, sleeve P/L, E*TRADE PIN), paged Activity log, plus FCM. Users-table login + optional Face ID / Touch ID unlock of the Keychain session. Web `/m` remains for browsers. Push notification glyph is the AppIcon (same auto-agent artwork as the web favicon).
 
 **IWM** — iShares Russell 2000 ETF. Options quote strip; optional third equity-index put on riskoff when SPY is below 200dma and IWM is quoted.
 
@@ -110,7 +110,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **KMLM** — KFA Mount Lucas Managed Futures Index Strategy ETF. Managed-futures / CTA-family candidate on the risk-off 63d RS overlay (RISKOFF_ETF_CTA_FAMILY with DBMF). Same 63d-vs-BIL and own-200 gates as the other overlay names.
 
-**knowledge_time** — Timestamp after the print used on the freeze checklist (knowledge_time after print). Also the day-sleeve Stage-3 arm: new MES stoch entries only when this stamp is set, `now` is at or after it, and both share the same America/New_York calendar day. Ordinary idle RTH without a same-day stamp does not open MES. PRE-ARM and NO-STOP BAND still veto new entries. Existing lots keep stop / VWAP-exit / 15:45 flatten / sleeve loss cap.
+**knowledge_time** — Timestamp after the print used on the freeze checklist (knowledge_time after print). Also the day-sleeve Stage-3 arm: new MES stoch entries only when this stamp is set, `now` is at or after it, and both share the same America/New_York calendar day. Ordinary idle RTH without a same-day stamp does not open MES. PRE-ARM and NO-STOP BAND still veto new entries. Existing lots keep stop / VWAP-exit / 15:45 flatten / sleeve loss cap. Stamp paths: desktop and iOS POST `/api/knowledge-time` (manual), EVENT_GATE_OPS_TOKEN (ops), and auto-stamp on event day once the print `timeUtc` is reached if a freeze card exists (`freezeTimestamp` set) and that ET day is still unstamped. FOMC auto-stamp uses STATEMENT time when both STATEMENT and PC exist; NFP/CPI use the print time. No freeze → no auto-stamp. Same-ET-day stamp is idempotent. Logs: `knowledge_time manual`, `knowledge_time ops-stamped`, `knowledge_time auto-stamped`.
 
 **Limit** — Limit order type. Gate leaves limits alone unless oversize.
 
@@ -224,7 +224,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **SR3** — CME Three-Month SOFR futures. Gated root; freeze-card liquid contract; day quote strip SR3=F.
 
-**Stage-3** — Post-print window on an NFP/CPI/FOMC day after knowledge_time is stamped. Day-sleeve MES stoch may open only then, and only while GATE is idle. Not PRE-ARM or NO-STOP BAND.
+**Stage-3** — Post-print window on an NFP/CPI/FOMC day after knowledge_time is stamped (manual, ops, or auto-stamp after the print when a freeze card exists). Day-sleeve MES stoch may open only then, and only while GATE is idle. Not PRE-ARM or NO-STOP BAND. iOS essentials shows whether Stage-3 is armed.
 
 **StopLimit** — Stop-limit order type. Cancelled as market-or-stop on gated roots in PRE-ARM and NO-STOP BAND.
 

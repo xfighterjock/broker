@@ -61,6 +61,10 @@ struct BrokerAPI {
         try await post("/api/flatten", json: [:] as [String: String])
     }
 
+    func stampKnowledgeTime() async throws -> StatusSnapshot {
+        try await post("/api/knowledge-time", json: [:] as [String: String])
+    }
+
     func startEtradeOAuth() async throws -> EtradeStartResult {
         try await post("/api/etrade/oauth/start", json: [:] as [String: String])
     }

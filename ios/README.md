@@ -1,6 +1,6 @@
 # Event Gate iOS (essentials + FCM)
 
-Native phone client for Event Gate. Home screen mirrors web `/m` (MobileEssentials): clock/mode, US cash closed/holiday strip (`marketSession` from GET `/api/status`), GATE, RISK ON/OFF, AUTO PAPER master + D/M/O/Ow/R chips, Flatten (same confirm copy), sleeve P/L, optional E*TRADE PIN. Toolbar Activity is a paged log (GET `/api/activity`, newest first, older pages on scroll). Settings holds credentials/session tools and FCM register/revoke/test. Rebuild the Xcode target after pulling — no App Store release is required for this strip.
+Native phone client for Event Gate. Home screen mirrors web `/m` (MobileEssentials): clock/mode, US cash closed/holiday strip (`marketSession` from GET `/api/status`), GATE, RISK ON/OFF, AUTO PAPER master + D/M/O/Ow/R chips, knowledge_time / Stage-3 arm + Stamp knowledge time (POST `/api/knowledge-time`, same as desktop), Flatten (same confirm copy), sleeve P/L, optional E*TRADE PIN. Toolbar Activity is a paged log (GET `/api/activity`, newest first, older pages on scroll). Settings holds credentials/session tools and FCM register/revoke/test. Rebuild the Xcode target after pulling — no App Store release is required for this strip.
 
 Web `/m` remains for browsers. This app talks to the same JSON APIs with a users-table session (Bearer in Keychain). It does not wrap the SPA in WKWebView.
 
@@ -87,6 +87,7 @@ Production `AUTH_MODE=users`. nginx terminates TLS and does **not** require htpa
 | POST | `/api/gate/enable` | `{ enabled }` |
 | POST | `/api/paper/auto` | `{ enabled }` or `{ sleeveId, enabled }` |
 | POST | `/api/flatten` | `{}` |
+| POST | `/api/knowledge-time` | `{}` (same stamp as desktop; shows current KT / Stage-3 arm) |
 | POST | `/api/etrade/oauth/start` | `{}` |
 | POST | `/api/etrade/oauth/pin` | `{ pin }` |
 | POST | `/api/notifications/tokens/register` | `{ platform: "ios", token, deviceLabel?, replaceToken? }` |

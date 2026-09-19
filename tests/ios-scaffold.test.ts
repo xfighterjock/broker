@@ -81,6 +81,7 @@ describe("iOS Event Gate scaffold", () => {
     expect(api).toContain("/api/gate/enable");
     expect(api).toContain("/api/paper/auto");
     expect(api).toContain("/api/flatten");
+    expect(api).toContain("/api/knowledge-time");
     expect(api).toContain("Authorization");
     expect(api).toContain("Bearer");
     expect(api).not.toContain("basicAuthHeader");
@@ -99,6 +100,14 @@ describe("iOS Event Gate scaffold", () => {
     expect(essentials).toContain("AUTO PAPER");
     expect(essentials).toContain("SleeveChip");
     expect(essentials).toContain("confirmFlatten");
+    expect(essentials).toContain("Stamp knowledge time");
+    expect(essentials).toContain("knowledge_time");
+    expect(essentials).toContain("stage3-arm");
+    expect(format).toContain("dayStochArmed");
+    expect(format).toContain("Stage-3 armed");
+    expect(readFileSync(resolve("ios/EventGate/Models.swift"), "utf8")).toContain(
+      "knowledgeTime",
+    );
     expect(readFileSync(resolve("ios/EventGate/Models.swift"), "utf8")).toContain(
       "marketSession",
     );
@@ -114,6 +123,7 @@ describe("iOS Event Gate scaffold", () => {
     expect(activityCtl).toContain("activityLog");
     expect(activityCtl).toContain("before");
     expect(activityCtl).toContain("pageLimit");
+    expect(statusCtl).toContain("stampKnowledgeTime");
     expect(statusCtl).not.toContain("/api/activity");
     expect(statusCtl).not.toContain("activityLog");
     expect(pbx).toContain("ActivityLogView.swift");
