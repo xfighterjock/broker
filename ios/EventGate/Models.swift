@@ -110,6 +110,7 @@ struct CalendarEventSnap: Codable {
 }
 
 struct ClockSnapshot: Codable {
+    let nowUtc: String?
     let nowEt: String?
     let mode: String?
     let countdownLabel: String?
@@ -165,6 +166,7 @@ struct StatusSnapshot: Codable {
     let etradeAuth: String?
     let broker: BrokerSnapshot
     let sleeveBooks: [String: SleeveBook]?
+    let knowledgeTime: String?
 }
 
 struct ActivityLogEntry: Decodable, Identifiable, Equatable {

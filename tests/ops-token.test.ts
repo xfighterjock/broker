@@ -131,6 +131,7 @@ describe("EVENT_GATE_OPS_TOKEN helpers", () => {
     expect(opsRouteAllowed("POST", "/flatten")).toBe(true);
     expect(opsRouteAllowed("POST", "/paper/reset")).toBe(true);
     expect(opsRouteAllowed("POST", "/gate/enable")).toBe(true);
+    expect(opsRouteAllowed("POST", "/knowledge-time")).toBe(true);
     expect(opsRouteAllowed("POST", "/paper/order")).toBe(false);
     expect(opsRouteAllowed("GET", "/activity")).toBe(false);
     expect(opsRouteAllowed("GET", "/log")).toBe(false);
@@ -302,6 +303,39 @@ describe("EVENT_GATE_OPS_TOKEN HTTPS ops scope", () => {
       const working = snap.broker?.orders?.filter((o) => o.symbol === "XLP" && o.state === "Working");
       expect(working ?? []).toHaveLength(0);
       expect(JSON.stringify(snap)).not.toContain(OPS_TOKEN);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it("lets the ops bearer POST /api/knowledge-time", async () => {
+    const dir = await seededUsers();
+    const { app } = makeApp(dir);
+    const srv = await listen(app);
+    try {
+      const stamp = await fetch(`${srv.url}/api/knowledge-time`, {
+        method: "POST",
+        headers: { ...opsHeaders(), "Content-Type": "application/json" },
+        body: "{}",
+      });
+      expect(stamp.status).toBe(200);
+      const snap = (await stamp.json()) as {
+        knowledgeTime?: string | null;
+        checklist?: { knowledgeTimeAfterPrint?: boolean | null };
+      };
+      expect(typeof snap.knowledgeTime).toBe("string");
+      expect(snap.knowledgeTime).toBeTruthy();
+      expect(snap.checklist?.knowledgeTimeAfterPrint).toBe(true);
+      expect(JSON.stringify(snap)).not.toContain(OPS_TOKEN);
+
+      const again = await fetch(`${srv.url}/api/knowledge-time`, {
+        method: "POST",
+        headers: { ...opsHeaders(), "Content-Type": "application/json" },
+        body: "{}",
+      });
+      expect(again.status).toBe(200);
+      const second = (await again.json()) as { knowledgeTime?: string | null };
+      expect(second.knowledgeTime).toBe(snap.knowledgeTime);
     } finally {
       await srv.close();
     }

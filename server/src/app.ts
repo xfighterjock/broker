@@ -171,6 +171,12 @@ import {
   NotificationService,
   attachNotificationService,
 } from "./notifications";
+import {
+  knowledgeTimeAlreadySetForEtDay,
+  knowledgeTimeLogLine,
+  shouldAutoStampKnowledgeTime,
+  type KnowledgeTimeStampSource,
+} from "./knowledgeTime";
 
 let autoPaperTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -197,6 +203,8 @@ export interface AppDeps {
   stubNote: string | null;
   notifications?: NotificationService;
   users?: UserDirectory;
+  /** Injectable clock for knowledge_time auto-stamp tests. Production uses wall clock. */
+  now?: () => Date;
 }
 
 function freezeFromRow(row: Awaited<ReturnType<typeof latestFreeze>>): {
@@ -241,6 +249,7 @@ export function buildApp(deps: AppDeps): express.Express {
   app.disable("x-powered-by");
   app.use(express.json({ limit: "512kb" }));
   app.use(cookieParser());
+  const clockNow = () => (deps.now ? deps.now() : new Date());
   const users = deps.users ?? createUserDirectory(deps.pool);
   app.use(bearerAuthMiddleware(users));
   const notifications = deps.notifications ?? new NotificationService(deps.pool, deps.cfg);
@@ -491,6 +500,61 @@ export function buildApp(deps: AppDeps): express.Express {
     if (deps.pool) {
       void insertSessionLog(deps.pool, kind, memory.checklist, message);
     }
+  }
+
+  async function hydrateFreeze(): Promise<void> {
+    if (!deps.pool) return;
+    try {
+      const row = await latestFreeze(deps.pool);
+      const parsed = freezeFromRow(row);
+      memory.freeze = parsed.freeze;
+      memory.knowledgeTime = parsed.knowledgeTime;
+      noteServiceUp("postgres");
+    } catch {
+      void noteServiceDown("postgres");
+    }
+  }
+
+  function markChecklistKnowledgeTime(): void {
+    if (!memory.checklist || !("knowledgeTimeAfterPrint" in memory.checklist)) return;
+    memory.checklist = { ...memory.checklist, knowledgeTimeAfterPrint: true };
+  }
+
+  async function applyKnowledgeTimeStamp(
+    source: KnowledgeTimeStampSource,
+    at?: Date,
+  ): Promise<{ stamped: boolean; knowledgeTime: string | null }> {
+    const atTime = at ?? clockNow();
+    if (knowledgeTimeAlreadySetForEtDay(atTime, memory.knowledgeTime)) {
+      return { stamped: false, knowledgeTime: memory.knowledgeTime };
+    }
+    const iso = atTime.toISOString();
+    memory.knowledgeTime = iso;
+    markChecklistKnowledgeTime();
+    if (deps.pool) {
+      try {
+        await stampKnowledgeTime(deps.pool, new Date(iso));
+      } catch (err) {
+        console.error("[EventGate] knowledge_time stamp failed", err);
+      }
+    }
+    const line = knowledgeTimeLogLine(source, iso);
+    sessionNote("knowledge_time", line);
+    deps.engine.log(line);
+    return { stamped: true, knowledgeTime: iso };
+  }
+
+  async function maybeAutoStampKnowledgeTime(at?: Date): Promise<boolean> {
+    const atTime = at ?? clockNow();
+    const decision = shouldAutoStampKnowledgeTime({
+      now: atTime,
+      events: deps.getEvents(),
+      freeze: memory.freeze,
+      knowledgeTime: memory.knowledgeTime,
+    });
+    if (!decision.stamp) return false;
+    const got = await applyKnowledgeTimeStamp("auto", atTime);
+    return got.stamped;
   }
 
   function assertMockOnly(): string | null {
@@ -1221,6 +1285,8 @@ export function buildApp(deps: AppDeps): express.Express {
       await ensureAutoPaper();
       await ensureSleeves();
       await ensureVerticalStopCooldown();
+      await hydrateFreeze();
+      await maybeAutoStampKnowledgeTime();
       if (!anyAutoPaperOn(memory.autoPaperBySleeve)) return;
       const mockErr = assertMockOnly();
       if (mockErr) {
@@ -1380,7 +1446,7 @@ export function buildApp(deps: AppDeps): express.Express {
   }
 
   async function snapshot(): Promise<StatusSnapshot> {
-    const now = new Date();
+    const now = clockNow();
     const events = deps.getEvents();
     const clock = computeClock(now, events);
     // Quotes/chains can hang; GET /api/quotes already awaits markPaperQuiet.
@@ -1395,22 +1461,10 @@ export function buildApp(deps: AppDeps): express.Express {
       void notifyAuthNeeded();
     }
     lastEtradeAuth = etradeAuth;
-    let freeze = memory.freeze;
-    let knowledgeTime = memory.knowledgeTime;
-    if (deps.pool) {
-      try {
-        const row = await latestFreeze(deps.pool);
-        const parsed = freezeFromRow(row);
-        freeze = parsed.freeze;
-        knowledgeTime = parsed.knowledgeTime;
-        memory.freeze = freeze;
-        memory.knowledgeTime = knowledgeTime;
-        noteServiceUp("postgres");
-      } catch {
-        void noteServiceDown("postgres");
-        /* keep memory */
-      }
-    }
+    await hydrateFreeze();
+    await maybeAutoStampKnowledgeTime(now);
+    const freeze = memory.freeze;
+    const knowledgeTime = memory.knowledgeTime;
     const sleeveBooks = await sleeveBooksWithSession();
     void considerClockAlerts(clock, freeze);
     void considerSleeveLossWarn(memory.sleeves, sleeveBooks, now);
@@ -1695,17 +1749,9 @@ export function buildApp(deps: AppDeps): express.Express {
     res.json(await snapshot());
   });
 
-  app.post("/api/knowledge-time", async (_req, res) => {
-    memory.knowledgeTime = new Date().toISOString();
-    if (deps.pool) {
-      try {
-        await stampKnowledgeTime(deps.pool, new Date(memory.knowledgeTime));
-      } catch (err) {
-        console.error("[EventGate] knowledge_time stamp failed", err);
-      }
-    }
-    sessionNote("knowledge_time", memory.knowledgeTime);
-    deps.engine.log(`knowledge_time ${memory.knowledgeTime}`);
+  app.post("/api/knowledge-time", async (req, res) => {
+    const source: KnowledgeTimeStampSource = req.eventGateOps ? "ops" : "manual";
+    await applyKnowledgeTimeStamp(source);
     await publishStatus();
     res.json(await snapshot());
   });

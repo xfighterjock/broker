@@ -152,6 +152,49 @@ enum EssentialsFormat {
         url.hasPrefix(etradeAuthorizePrefix)
     }
 
+    static func parseIso(_ iso: String) -> Date? {
+        let withFrac = ISO8601DateFormatter()
+        withFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return withFrac.date(from: iso) ?? plain.date(from: iso)
+    }
+
+    static func sameEtDay(_ a: Date, _ b: Date) -> Bool {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "America/New_York") ?? TimeZone(secondsFromGMT: 0) ?? .current
+        let pa = cal.dateComponents([.year, .month, .day], from: a)
+        let pb = cal.dateComponents([.year, .month, .day], from: b)
+        return pa.year == pb.year && pa.month == pb.month && pa.day == pb.day
+    }
+
+    /// Matches server `dayStochArmed`: same-ET-day stamp and now at/after it.
+    static func dayStochArmed(now: Date, knowledgeTime: String?) -> Bool {
+        guard let knowledgeTime, let kt = parseIso(knowledgeTime) else { return false }
+        if now < kt { return false }
+        return sameEtDay(now, kt)
+    }
+
+    static func snapshotNow(_ snap: StatusSnapshot?) -> Date {
+        if let raw = snap?.clock?.nowUtc, let parsed = parseIso(raw) { return parsed }
+        return Date()
+    }
+
+    static func knowledgeTimeDisplay(_ iso: String?) -> String {
+        guard let iso, !iso.isEmpty else { return "—" }
+        return formatActivityTs(iso)
+    }
+
+    static func stage3Line(now: Date, knowledgeTime: String?) -> String {
+        if dayStochArmed(now: now, knowledgeTime: knowledgeTime) {
+            return "Stage-3 armed"
+        }
+        if knowledgeTime == nil || knowledgeTime?.isEmpty == true {
+            return "Stage-3 not armed — no knowledge_time"
+        }
+        return "Stage-3 not armed"
+    }
+
     static func formatActivityTs(_ iso: String) -> String {
         let withFrac = ISO8601DateFormatter()
         withFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]

@@ -156,6 +156,8 @@ struct EssentialsView: View {
                 }
             }
 
+            knowledgeTimeBlock
+
             Button("Flatten") {
                 confirmFlatten = true
             }
@@ -169,6 +171,37 @@ struct EssentialsView: View {
                 .foregroundStyle(Color(red: 0.49, green: 0.54, blue: 0.60))
         }
         .padding(16)
+    }
+
+    private var knowledgeTimeBlock: some View {
+        let kt = snap?.knowledgeTime
+        let now = EssentialsFormat.snapshotNow(snap)
+        let armed = EssentialsFormat.dayStochArmed(now: now, knowledgeTime: kt)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("knowledge_time")
+                    .font(.caption.weight(.semibold))
+                    .tracking(0.6)
+                    .foregroundStyle(Color(red: 0.49, green: 0.54, blue: 0.60))
+                Spacer()
+                Text(EssentialsFormat.knowledgeTimeDisplay(kt))
+                    .font(.footnote.monospaced())
+                    .foregroundStyle(Color(red: 0.86, green: 0.89, blue: 0.93))
+                    .accessibilityIdentifier("knowledge-time-value")
+            }
+            badge(
+                EssentialsFormat.stage3Line(now: now, knowledgeTime: kt),
+                kind: armed ? "on" : "off"
+            )
+            .accessibilityIdentifier("stage3-arm")
+            Button("Stamp knowledge time") {
+                Task { await status.stampKnowledgeTime() }
+            }
+            .buttonStyle(.bordered)
+            .frame(maxWidth: .infinity)
+            .disabled(status.busy || snap == nil)
+            .accessibilityIdentifier("stamp-knowledge-time")
+        }
     }
 
     private var sleeves: some View {

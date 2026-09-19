@@ -19,7 +19,7 @@ declare global {
   namespace Express {
     interface Request {
       eventGateUser?: { id: number; username: string };
-      /** Narrow freeze/status/AUTO/flatten/GATE-toggle/sleeve-reset scope from EVENT_GATE_OPS_TOKEN. Not a full user session. */
+      /** Narrow freeze/status/AUTO/flatten/GATE-toggle/sleeve-reset/knowledge-time scope from EVENT_GATE_OPS_TOKEN. Not a full user session. */
       eventGateOps?: boolean;
     }
   }
@@ -139,6 +139,7 @@ export function opsRouteAllowed(method: string, path: string): boolean {
   // Single GATE toggle (no separate disable route). Veto is { enabled: false };
   // { enabled: true } or omitted enabled (handler defaults ON) also GATE ON.
   if (m === "POST" && path === "/gate/enable") return true;
+  if (m === "POST" && path === "/knowledge-time") return true;
   return false;
 }
 
