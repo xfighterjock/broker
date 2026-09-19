@@ -1,6 +1,11 @@
 import { RISKOFF_QUOTE_STRIP } from "../../shared/constants";
 import type { DelayedQuote, SleeveCard, SleeveId } from "../../shared/types";
-import { fetchMassiveQuote } from "./massive";
+import {
+  fetchMassiveFuturesFiveMinuteBars,
+  fetchMassiveFuturesQuote,
+  fetchMassiveQuote,
+  massiveConfigured,
+} from "./massive";
 import { parseYahooFiveMinuteBars, type MinuteBar } from "./dayMomentum";
 
 export const DEFAULT_SYMBOLS: Record<SleeveId, string[]> = {
@@ -31,9 +36,11 @@ const FETCH_TIMEOUT_MS = 8_000;
 
 type CacheEntry = { quote: DelayedQuote; at: number };
 const cache = new Map<string, CacheEntry>();
+const barsCache = new Map<string, { at: number; bars: MinuteBar[] }>();
 
 export function resetQuoteCache(): void {
   cache.clear();
+  barsCache.clear();
 }
 
 export function mapTicker(raw: string): string | null {
@@ -92,11 +99,11 @@ function errorQuote(
   };
 }
 
-/** Yahoo only for futures =F / MES,ZN,6E,M6E,SR3,ES,NQ,MNQ. Equities go to Massive. */
+/** Futures =F / MES,ZN,6E,M6E,SR3,ES,NQ,MNQ. Massive Futures first; Yahoo fallback. Equities stay Massive Stocks. */
 export function isYahooFuturesSymbol(symbol: string): boolean {
   const t = symbol.trim().toUpperCase();
   if (!t) return false;
-  if (t.includes("=")) return true;
+  if (t.includes("=") || t.startsWith("F:")) return true;
   return t in ROOT_TO_YAHOO;
 }
 
@@ -171,7 +178,7 @@ function parseYahooChart(symbol: string, body: unknown): DelayedQuote {
   };
 }
 
-async function fetchYahooOne(symbol: string, now: number): Promise<DelayedQuote> {
+async function fetchYahooOne(symbol: string): Promise<DelayedQuote> {
   const url = `${YAHOO_CHART_BASE}${encodeURIComponent(symbol)}?interval=5m&range=1d`;
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS);
@@ -193,13 +200,29 @@ async function fetchYahooOne(symbol: string, now: number): Promise<DelayedQuote>
   }
 }
 
+async function fetchFuturesLast(symbol: string): Promise<DelayedQuote> {
+  if (massiveConfigured()) {
+    const massive = await fetchMassiveFuturesQuote(symbol);
+    if (massive.last !== null) {
+      console.info(`[EventGate] futures last ${symbol} source=massive`);
+      return massive;
+    }
+    console.info(
+      `[EventGate] futures last ${symbol} source=yahoo (massive ${massive.error ?? "no last"})`,
+    );
+  } else {
+    console.info(`[EventGate] futures last ${symbol} source=yahoo (massive unconfigured)`);
+  }
+  return fetchYahooOne(symbol);
+}
+
 async function fetchOne(symbol: string, now: number): Promise<DelayedQuote> {
   const hit = cache.get(symbol);
   if (hit && now - hit.at < QUOTE_CACHE_MS) return hit.quote;
 
   let q: DelayedQuote;
   if (isYahooFuturesSymbol(symbol)) {
-    q = await fetchYahooOne(symbol, now);
+    q = await fetchFuturesLast(symbol);
   } else {
     q = await fetchMassiveQuote(symbol);
   }
@@ -219,7 +242,6 @@ export async function fetchDelayedQuotes(symbols: string[]): Promise<DelayedQuot
   const now = Date.now();
   return mapPool(unique, QUOTE_FETCH_CONCURRENCY, (sym) => fetchOne(sym, now));
 }
-const barsCache = new Map<string, { at: number; bars: MinuteBar[] }>();
 
 export async function fetchYahooFiveMinuteBars(symbol = "MES=F"): Promise<MinuteBar[]> {
   const now = Date.now();
@@ -240,4 +262,29 @@ export async function fetchYahooFiveMinuteBars(symbol = "MES=F"): Promise<Minute
   } finally {
     clearTimeout(timer);
   }
+}
+
+const DAY_MES_BARS_CACHE = "day:MES";
+
+/** Day-sleeve MES 5m: Massive Futures front-month aggs when the key works; Yahoo MES=F otherwise. */
+export async function fetchDayMesFiveMinuteBars(): Promise<MinuteBar[]> {
+  const now = Date.now();
+  const hit = barsCache.get(DAY_MES_BARS_CACHE);
+  if (hit && now - hit.at < QUOTE_CACHE_MS) return hit.bars;
+
+  if (massiveConfigured()) {
+    const got = await fetchMassiveFuturesFiveMinuteBars("MES");
+    if (got.bars.length) {
+      console.info(`[EventGate] day MES 5m bars source=massive contract=${got.ticker ?? "?"}`);
+      barsCache.set(DAY_MES_BARS_CACHE, { at: now, bars: got.bars });
+      return got.bars;
+    }
+    console.info(`[EventGate] day MES 5m bars source=yahoo (massive ${got.error ?? "unavailable"})`);
+  } else {
+    console.info("[EventGate] day MES 5m bars source=yahoo (massive unconfigured)");
+  }
+
+  const yahoo = await fetchYahooFiveMinuteBars("MES=F");
+  barsCache.set(DAY_MES_BARS_CACHE, { at: now, bars: yahoo });
+  return yahoo;
 }

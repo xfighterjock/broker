@@ -45,6 +45,80 @@ export function massiveAggsBody(closes: number[], vol = 1_000_000) {
   };
 }
 
+export function massiveFuturesContractBody(productCode: string, ticker = `${productCode}U6`) {
+  return {
+    status: "OK",
+    results: [
+      {
+        active: true,
+        days_to_maturity: 20,
+        product_code: productCode,
+        ticker,
+        type: "single",
+        settlement_date: "2026-09-18",
+        last_trade_date: "2026-09-18",
+        name: `${ticker} Future`,
+      },
+    ],
+  };
+}
+
+export function massiveFuturesSnapshotBody(ticker: string, last: number, prev = last - 1) {
+  return {
+    status: "OK",
+    results: [
+      {
+        ticker,
+        product_code: ticker.replace(/[A-Z]\d+$/, ""),
+        last_trade: { price: last, last_updated: 1_605_195_918_306_274_000, size: 1 },
+        session: {
+          close: last,
+          previous_settlement: prev,
+          change: last - prev,
+          change_percent: prev !== 0 ? (last - prev) / prev : 0,
+        },
+      },
+    ],
+  };
+}
+
+export function massiveFuturesAggsBody(
+  ticker: string,
+  bars: Array<{ ts: number; open: number; high: number; low: number; close: number; volume?: number }>,
+) {
+  return {
+    status: "OK",
+    results: bars.map((b) => ({
+      ticker,
+      open: b.open,
+      high: b.high,
+      low: b.low,
+      close: b.close,
+      volume: b.volume ?? 1_000,
+      window_start: b.ts * 1e6,
+    })),
+  };
+}
+
+export function fiveMinuteBars(n = 22, close = 5800): Array<{
+  ts: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}> {
+  const start = Date.UTC(2026, 8, 2, 13, 30, 0);
+  return Array.from({ length: n }, (_, i) => ({
+    ts: start + i * 5 * 60 * 1000,
+    open: close,
+    high: close + 0.5,
+    low: close - 0.5,
+    close,
+    volume: 1_000,
+  }));
+}
+
 export function barsCloses(n: number, last = 100, step = 0.01): number[] {
   return Array.from({ length: n }, (_, i) => last - (n - 1 - i) * step);
 }
@@ -99,6 +173,17 @@ export type StubMarketOpts = {
   lastBySymbol?: Record<string, number> | number;
   aggs?: Record<string, number[]>;
   chain?: { calls: unknown; puts: unknown; expiries: unknown };
+  /** When set, Massive /futures/v1/* returns this HTTP status (Yahoo fallback tests). */
+  futuresStatus?: number;
+  futuresAggs?: Array<{ ts: number; open: number; high: number; low: number; close: number; volume?: number }>;
+  yahooFiveMinuteBars?: Array<{
+    ts: number;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume?: number;
+  }>;
 };
 
 /** Mock Massive equities, E*TRADE option chains, Yahoo futures. Never hits the network except localhost. */
@@ -136,6 +221,43 @@ export function stubMarketFetch(opts: StubMarketOpts = {}) {
         }
         throw new Error(`unexpected E*TRADE URL in tests: ${url.split("?")[0]}`);
       }
+      if (url.includes("/futures/v1/")) {
+        if (opts.futuresStatus && opts.futuresStatus >= 400) {
+          return {
+            ok: false,
+            status: opts.futuresStatus,
+            json: async () => ({ status: "ERROR" }),
+            text: async () => `Massive API ${opts.futuresStatus}`,
+          };
+        }
+        const parsed = new URL(url);
+        const fromTicker = (raw: string | null) =>
+          raw ? raw.toUpperCase().replace(/[A-Z]\d+$/, "") : "";
+        const product =
+          parsed.searchParams.get("product_code")?.toUpperCase() ||
+          fromTicker(parsed.searchParams.get("ticker")) ||
+          fromTicker(decodeURIComponent(url.split("/aggs/")[1]?.split("?")[0] ?? "")) ||
+          "MES";
+        const contract = `${product}U6`;
+        const last =
+          typeof lastBy === "number"
+            ? lastBy
+            : lastBy[`${product}=F`] ?? lastBy[product] ?? lastBy[contract] ?? 100;
+        if (url.includes("/futures/v1/contracts")) {
+          const body = massiveFuturesContractBody(product, contract);
+          return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+        }
+        if (url.includes("/futures/v1/snapshot")) {
+          const body = massiveFuturesSnapshotBody(contract, last);
+          return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+        }
+        if (url.includes("/futures/v1/aggs/")) {
+          const bars = opts.futuresAggs ?? fiveMinuteBars(22, last);
+          const body = massiveFuturesAggsBody(contract, bars);
+          return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+        }
+        throw new Error(`unexpected Massive futures URL in tests: ${url.split("?")[0]}`);
+      }
       if (url.includes("/v8/finance/chart/")) {
         const after = url.slice(url.indexOf("/chart/") + "/chart/".length);
         const symbol = decodeURIComponent(after.split("?")[0]);
@@ -143,6 +265,7 @@ export function stubMarketFetch(opts: StubMarketOpts = {}) {
           typeof lastBy === "number"
             ? lastBy
             : lastBy[symbol] ?? lastBy[symbol.replace("=F", "")] ?? 100;
+        const yBars = opts.yahooFiveMinuteBars;
         return {
           ok: true,
           status: 200,
@@ -157,6 +280,20 @@ export function stubMarketFetch(opts: StubMarketOpts = {}) {
                     regularMarketTime: 1_787_847_253,
                     exchangeName: "CME",
                   },
+                  timestamp: yBars?.map((b) => Math.floor(b.ts / 1000)),
+                  indicators: yBars
+                    ? {
+                        quote: [
+                          {
+                            open: yBars.map((b) => b.open),
+                            high: yBars.map((b) => b.high),
+                            low: yBars.map((b) => b.low),
+                            close: yBars.map((b) => b.close),
+                            volume: yBars.map((b) => b.volume ?? 1000),
+                          },
+                        ],
+                      }
+                    : undefined,
                 },
               ],
               error: null,

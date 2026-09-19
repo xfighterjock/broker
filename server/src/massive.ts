@@ -7,6 +7,7 @@ import type {
   OptionLeg,
   OptionRight,
 } from "../../shared/types";
+import type { MinuteBar } from "./dayMomentum";
 import { loadEnvFile, parseYmd, type ChainQuery } from "./etrade";
 
 export const MASSIVE_BASE = "https://api.massive.com";
@@ -28,6 +29,8 @@ export function resetMassiveCache(): void {
   expiryCache.clear();
   chainCache.clear();
   aggCache.clear();
+  futuresContractCache.clear();
+  futuresAggCache.clear();
 }
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -74,7 +77,35 @@ export function massiveConfigured(env: NodeJS.ProcessEnv = process.env): boolean
 }
 
 export const MASSIVE_KEY_MISSING =
-  "MASSIVE_API_KEY missing. Equities/options need Massive Starter (15-min delayed). Futures still use Yahoo.";
+  "MASSIVE_API_KEY missing. Equities need Massive Stocks Starter (15-min delayed). Futures fall back to Yahoo.";
+
+/** CME product codes Massive Futures documents (dated tickers like MESU6, not F:MES or MES=F). */
+export const MASSIVE_FUTURES_PRODUCT_BY_ROOT: Record<string, string> = {
+  MES: "MES",
+  MNQ: "MNQ",
+  ES: "ES",
+  NQ: "NQ",
+  ZN: "ZN",
+  ZF: "ZF",
+  ZT: "ZT",
+  ZB: "ZB",
+  SR3: "SR3",
+  "6E": "6E",
+  M6E: "M6E",
+};
+
+export type FuturesContractRow = {
+  ticker: string;
+  productCode: string;
+  active: boolean | null;
+  type: string | null;
+  daysToMaturity: number | null;
+  settlementDate: string | null;
+  lastTradeDate: string | null;
+};
+
+const futuresContractCache = new Map<string, CacheEntry<FuturesContractRow | null>>();
+const futuresAggCache = new Map<string, CacheEntry<MinuteBar[] | null>>();
 
 /** US equity/ETF underlyer for option chains. Reject empty, futures, OSI keys. */
 export function parseOptionsUnderlying(
@@ -292,6 +323,257 @@ export async function fetchMassiveDailyBars(ticker: string): Promise<DailyBar[] 
   const bars = parseMassiveDailyBars(got.body);
   aggCache.set(ticker, { at: now, value: bars });
   return bars;
+}
+
+/** Display MES=F / F:MES / MES → Massive product_code MES. Unknown =F roots stay unmapped. */
+export function massiveFuturesProductCode(symbol: string): string | null {
+  const raw = symbol.trim().toUpperCase();
+  if (!raw) return null;
+  const stripped = raw.replace(/^F:/, "").replace(/=F$/, "");
+  return MASSIVE_FUTURES_PRODUCT_BY_ROOT[stripped] ?? null;
+}
+
+export function parseMassiveFuturesContracts(body: unknown): FuturesContractRow[] {
+  const root = asRecord(body);
+  const out: FuturesContractRow[] = [];
+  for (const row of asArray(root?.results)) {
+    const r = asRecord(row);
+    if (!r) continue;
+    const ticker = str(r.ticker);
+    if (!ticker) continue;
+    const productCode = str(r.product_code) ?? "";
+    const type = str(r.type);
+    const active = typeof r.active === "boolean" ? r.active : null;
+    out.push({
+      ticker,
+      productCode,
+      active,
+      type,
+      daysToMaturity: num(r.days_to_maturity),
+      settlementDate: str(r.settlement_date),
+      lastTradeDate: str(r.last_trade_date),
+    });
+  }
+  return out;
+}
+
+/** Nearest active single (no spreads). Massive has no continuous F: ticker — front-month only. */
+export function pickFrontMonthContract(rows: FuturesContractRow[]): FuturesContractRow | null {
+  const eligible = rows.filter((r) => {
+    if (!r.ticker || r.ticker.includes("-")) return false;
+    if (r.active === false) return false;
+    if (r.type && r.type.toLowerCase() === "combo") return false;
+    if (r.daysToMaturity !== null && r.daysToMaturity < 0) return false;
+    return true;
+  });
+  eligible.sort((a, b) => {
+    const da = a.daysToMaturity;
+    const db = b.daysToMaturity;
+    if (da !== null && db !== null && da !== db) return da - db;
+    if (da !== null && db === null) return -1;
+    if (da === null && db !== null) return 1;
+    const sa = a.settlementDate ?? a.lastTradeDate ?? "";
+    const sb = b.settlementDate ?? b.lastTradeDate ?? "";
+    if (sa && sb && sa !== sb) return sa.localeCompare(sb);
+    return a.ticker.localeCompare(b.ticker);
+  });
+  return eligible[0] ?? null;
+}
+
+function windowStartToMs(raw: number): number | null {
+  if (!Number.isFinite(raw) || raw <= 0) return null;
+  const ms = raw > 1e15 ? raw / 1e6 : raw > 1e12 ? raw / 1e3 : raw;
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  const d = new Date(ms);
+  return Number.isNaN(d.getTime()) ? null : ms;
+}
+
+export function parseMassiveFuturesAggs(body: unknown): MinuteBar[] {
+  const root = asRecord(body);
+  const results = root?.results;
+  if (!Array.isArray(results)) return [];
+  const bars: MinuteBar[] = [];
+  for (const row of results) {
+    const r = asRecord(row);
+    if (!r) continue;
+    const o = num(r.open ?? r.o);
+    const h = num(r.high ?? r.h);
+    const l = num(r.low ?? r.l);
+    const c = num(r.close ?? r.c);
+    const t = num(r.window_start ?? r.t);
+    if (o === null || h === null || l === null || c === null || t === null) continue;
+    const ts = windowStartToMs(t);
+    if (ts === null) continue;
+    const v = num(r.volume ?? r.v);
+    bars.push({
+      ts,
+      open: o,
+      high: h,
+      low: l,
+      close: c,
+      volume: v !== null ? v : 0,
+    });
+  }
+  bars.sort((a, b) => a.ts - b.ts);
+  return bars;
+}
+
+export function parseMassiveFuturesSnapshotQuote(displaySymbol: string, body: unknown): DelayedQuote {
+  const root = asRecord(body);
+  const results = asArray(root?.results);
+  let picked: Record<string, unknown> | null = null;
+  for (const row of results) {
+    const r = asRecord(row);
+    if (r) {
+      picked = r;
+      break;
+    }
+  }
+  if (!picked) {
+    const ticker = asRecord(root?.ticker);
+    picked = ticker ?? root;
+  }
+  if (!picked) {
+    return {
+      symbol: displaySymbol,
+      last: null,
+      prevClose: null,
+      change: null,
+      changePct: null,
+      asOf: null,
+      exchange: null,
+      delayed: true,
+      source: "massive",
+      error: "no futures snapshot",
+    };
+  }
+  const lastTrade = asRecord(picked.last_trade) ?? asRecord(picked.lastTrade);
+  const session = asRecord(picked.session);
+  const lastMinute = asRecord(picked.last_minute) ?? asRecord(picked.lastMinute);
+  const last =
+    num(lastTrade?.price ?? lastTrade?.p) ??
+    num(session?.close ?? session?.c) ??
+    num(lastMinute?.close ?? lastMinute?.c);
+  const prevClose = num(session?.previous_settlement ?? session?.prevClose);
+  if (last === null) {
+    return {
+      symbol: displaySymbol,
+      last: null,
+      prevClose,
+      change: null,
+      changePct: null,
+      asOf: nsToIso(num(lastTrade?.last_updated ?? lastTrade?.t ?? picked.updated)),
+      exchange: str(picked.ticker),
+      delayed: true,
+      source: "massive",
+      error: "no futures last trade/close",
+    };
+  }
+  const change =
+    num(session?.change) ?? (prevClose !== null ? last - prevClose : null);
+  const rawPct = num(session?.change_percent ?? session?.changePercent);
+  const changePct =
+    rawPct !== null
+      ? Math.abs(rawPct) <= 1 && prevClose !== null && prevClose !== 0
+        ? rawPct * 100
+        : rawPct
+      : change !== null && prevClose !== null && prevClose !== 0
+        ? (change / prevClose) * 100
+        : null;
+  return {
+    symbol: displaySymbol,
+    last,
+    prevClose,
+    change,
+    changePct,
+    asOf: nsToIso(num(lastTrade?.last_updated ?? lastTrade?.timestamp ?? lastTrade?.t)),
+    exchange: str(picked.ticker),
+    delayed: true,
+    source: "massive",
+  };
+}
+
+export async function resolveMassiveFrontMonth(
+  productCode: string,
+): Promise<FuturesContractRow | null> {
+  const key = massiveApiKey();
+  if (!key) return null;
+  const code = productCode.trim().toUpperCase();
+  if (!code) return null;
+  const now = Date.now();
+  const hit = futuresContractCache.get(code);
+  if (hit && now - hit.at < MASSIVE_CACHE_MS) return hit.value;
+  const url =
+    `${MASSIVE_BASE}/futures/v1/contracts?product_code=${encodeURIComponent(code)}` +
+    `&active=true&type=single&limit=100&sort=days_to_maturity.asc`;
+  const got = await massiveGetJson(url, key);
+  if (!got.ok) {
+    futuresContractCache.set(code, { at: now, value: null });
+    return null;
+  }
+  const picked = pickFrontMonthContract(parseMassiveFuturesContracts(got.body));
+  futuresContractCache.set(code, { at: now, value: picked });
+  return picked;
+}
+
+export async function fetchMassiveFuturesQuote(displaySymbol: string): Promise<DelayedQuote> {
+  const product = massiveFuturesProductCode(displaySymbol);
+  const missing = {
+    symbol: displaySymbol,
+    last: null as number | null,
+    prevClose: null as number | null,
+    change: null as number | null,
+    changePct: null as number | null,
+    asOf: null as string | null,
+    exchange: null as string | null,
+    delayed: true as const,
+    source: "massive" as const,
+  };
+  const key = massiveApiKey();
+  if (!key) return { ...missing, error: MASSIVE_KEY_MISSING };
+  if (!product) return { ...missing, error: `no Massive futures product for ${displaySymbol}` };
+  const front = await resolveMassiveFrontMonth(product);
+  if (!front) return { ...missing, error: `no Massive front-month for ${product}` };
+  const url = `${MASSIVE_BASE}/futures/v1/snapshot?ticker=${encodeURIComponent(front.ticker)}&limit=1`;
+  const got = await massiveGetJson(url, key);
+  if (!got.ok) return { ...missing, error: got.error };
+  return parseMassiveFuturesSnapshotQuote(displaySymbol, got.body);
+}
+
+export type MassiveFuturesBarsResult = {
+  bars: MinuteBar[];
+  ticker?: string;
+  error?: string;
+};
+
+export async function fetchMassiveFuturesFiveMinuteBars(
+  productCode = "MES",
+): Promise<MassiveFuturesBarsResult> {
+  const key = massiveApiKey();
+  if (!key) return { bars: [], error: MASSIVE_KEY_MISSING };
+  const code = productCode.trim().toUpperCase();
+  const front = await resolveMassiveFrontMonth(code);
+  if (!front) return { bars: [], error: `no Massive front-month for ${code}` };
+  const now = Date.now();
+  const hit = futuresAggCache.get(front.ticker);
+  if (hit && now - hit.at < MASSIVE_CACHE_MS) {
+    return hit.value?.length
+      ? { bars: hit.value, ticker: front.ticker }
+      : { bars: [], ticker: front.ticker, error: "empty Massive futures aggs" };
+  }
+  const from = new Date(now - 2 * 86_400_000);
+  const url =
+    `${MASSIVE_BASE}/futures/v1/aggs/${encodeURIComponent(front.ticker)}` +
+    `?resolution=5min&limit=1000&sort=window_start.asc&window_start.gte=${ymdUtc(from)}`;
+  const got = await massiveGetJson(url, key);
+  if (!got.ok) {
+    futuresAggCache.set(front.ticker, { at: now, value: null });
+    return { bars: [], ticker: front.ticker, error: got.error };
+  }
+  const bars = parseMassiveFuturesAggs(got.body);
+  futuresAggCache.set(front.ticker, { at: now, value: bars.length ? bars : null });
+  if (!bars.length) return { bars: [], ticker: front.ticker, error: "empty Massive futures aggs" };
+  return { bars, ticker: front.ticker };
 }
 
 function parseRight(raw: unknown): OptionRight | null {

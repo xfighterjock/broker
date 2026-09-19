@@ -6,7 +6,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 ---
 
-**6E** — CME Euro FX futures. Gated root (GATED_ROOTS); Yahoo ticker 6E=F.
+**6E** — CME Euro FX futures. Gated root (GATED_ROOTS). Massive Futures product_code 6E (front-month dated ticker); Yahoo fallback 6E=F.
 
 **20dma** — 20-day simple moving average. Momentum pullback filter uses last vs this SMA (dist20).
 
@@ -64,7 +64,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **E\*TRADE** — Broker API used for live option chains and OAuth only. Never orders. Production base api.etrade.com.
 
-**ES** — CME E-mini S&P 500 futures. Gated root. Yahoo ES=F. On the momentum quote strip.
+**ES** — CME E-mini S&P 500 futures. Gated root. Massive Futures product_code ES (front-month); Yahoo fallback ES=F. On the momentum quote strip.
 
 **ET** — America/New_York clock. Gate windows, 15:50 vertical cutoff, session marks, E*TRADE renew window, flatten times.
 
@@ -116,19 +116,19 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **LQD** — iShares iBoxx $ Investment Grade Corporate Bond ETF. Credit-leg put debit on the riskoff sleeve when RISK OFF, SPY is below 200dma, and LQD is below its own 200dma. HYG-only OFF does not open a new LQD put. Same ATM-then-ladder + liquidity/size envelope as HYG. Tried after HYG (including when HYG fails liquidity) and before JNK. Paper only.
 
-**M6E** — CME Micro Euro FX futures. Gated root; freeze-card liquid contract; day quote strip M6E=F.
+**M6E** — CME Micro Euro FX futures. Gated root; freeze-card liquid contract; day quote strip. Massive Futures product_code M6E (front-month); Yahoo fallback M6E=F.
 
 **Market** — Market order type. Cancelled on gated roots in PRE-ARM and NO-STOP BAND.
 
 **marketSession** — Top-level GET `/api/status` field: NYSE cash open/closed in ET (`cashOpen`, `closedReason`, `holidayName`, `asOfEt`, `nextOpenEt`). Not a GateMode.
 
-**Massive** — Market-data vendor (api.massive.com). Equities last, S&P scan dailies, risk-gate bars, risk-off ETF overlay bars. 15-minute delayed Starter.
+**Massive** — Market-data vendor (api.massive.com). Same MASSIVE_API_KEY: Stocks Starter for equities last / S&P scan dailies / risk-gate and risk-off ETF bars (15-minute delayed); Futures for day MES 5m aggs and futures quote-strip lasts (front-month dated contracts such as MESU6 via `/futures/v1/contracts` + `/futures/v1/aggs` + `/futures/v1/snapshot`). No documented continuous F: ticker — do not invent one. Yahoo =F is the futures fallback.
 
-**MES** — CME Micro E-mini S&P 500 futures. Gated root; freeze-card liquid contract; day quote strip MES=F.
+**MES** — CME Micro E-mini S&P 500 futures. Gated root; freeze-card liquid contract; day quote strip and paper symbol MES=F. Day-sleeve 5m stoch/VWAP bars prefer Massive Futures front-month (product_code MES); Yahoo MES=F fallback.
 
 **MIT** — Market-if-touched order type. Treated as market-or-stop: cancelled in PRE-ARM and NO-STOP BAND on gated roots.
 
-**MNQ** — CME Micro E-mini Nasdaq-100 futures. Gated root. Yahoo MNQ=F.
+**MNQ** — CME Micro E-mini Nasdaq-100 futures. Gated root. Massive Futures product_code MNQ; Yahoo fallback MNQ=F.
 
 **MockBroker** — In-memory paper broker persisted in Redis. The only place Event Gate fills BUY/SELL. Not Tradovate, not E*TRADE.
 
@@ -142,7 +142,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **NO-STOP BAND** — Gate mode T-2m to T+2m around the event. Cancels Market / StopMarket / StopLimit / MIT on gated roots.
 
-**NQ** — CME E-mini Nasdaq-100 futures. Gated root. Yahoo NQ=F.
+**NQ** — CME E-mini Nasdaq-100 futures. Gated root. Massive Futures product_code NQ; Yahoo fallback NQ=F.
 
 **NY** — New York session date (America/New_York calendar YYYY-MM-DD) used for sleeve session marks and same-day vertical stop cooldown.
 
@@ -222,7 +222,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **SPY** — SPDR S&P 500 ETF Trust. RISK ON 200dma leg; scan RS benchmark; risk-off equity-index puts and new credit-leg (HYG/LQD/JNK) puts only when SPY is below 200dma (missing spyAbove200 fails closed); same spyAbove200 scales the 63d ETF overlay (60% while above 200 / puts gated, 40% once below); options quote strip.
 
-**SR3** — CME Three-Month SOFR futures. Gated root; freeze-card liquid contract; day quote strip SR3=F.
+**SR3** — CME Three-Month SOFR futures. Gated root; freeze-card liquid contract; day quote strip. Massive Futures product_code SR3 (front-month); Yahoo fallback SR3=F.
 
 **Stage-3** — Post-print window on an NFP/CPI/FOMC day after knowledge_time is stamped (manual, ops, or auto-stamp after the print when a freeze card exists). Day-sleeve MES stoch may open only then, and only while GATE is idle. Not PRE-ARM or NO-STOP BAND. iOS essentials shows whether Stage-3 is armed.
 
@@ -258,13 +258,13 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **XLU** — Utilities Select Sector SPDR Fund. Defensive-equity candidate on the risk-off 63d RS overlay (first in the defensives bucket).
 
-**Yahoo** — Yahoo Finance chart API for futures =F quotes (and fallbacks). Equities prefer Massive.
+**Yahoo** — Yahoo Finance chart API. Fallback for futures =F lasts and day MES 5m bars when Massive Futures is unconfigured or errors. Equities stay Massive Stocks Starter.
 
 **ZB** — CME 30-Year U.S. Treasury Bond futures. Gated root.
 
 **ZF** — CME 5-Year U.S. Treasury Note futures. Gated root.
 
-**ZN** — CME 10-Year U.S. Treasury Note futures. Gated root; freeze-card liquid contract; day quote strip ZN=F.
+**ZN** — CME 10-Year U.S. Treasury Note futures. Gated root; freeze-card liquid contract; day quote strip. Massive Futures product_code ZN (front-month); Yahoo fallback ZN=F.
 
 **ZT** — CME 2-Year U.S. Treasury Note futures. Gated root.
 
