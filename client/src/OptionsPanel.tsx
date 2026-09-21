@@ -272,7 +272,7 @@ export function OptionsPanel({
       <div className="body">
         <div className="hint">
           {putsOnly
-            ? "Massive Starter chain (DELAYED 15m). Paper put debit verticals on MockBroker (SPY/QQQ/IWM after SPY 200dma break; HYG/LQD/JNK when that credit name is below its own 200dma). The defensive ETF overlay (GLD/UUP/TLT/IEF/XLU/XLP/DBMF/KMLM vs BIL; top-2 50/50) is a separate sleeve position when RISK OFF. Never a live send."
+            ? "Massive Starter chain (DELAYED 15m). Paper put debit verticals on MockBroker (SPY/QQQ/IWM after SPY 200dma break; HYG/LQD/JNK when that credit name is below its own 200dma). The defensive ETF overlay (GLD/UUP/TLT/IEF/XLU/XLP/DBMF/KMLM/CLSE vs BIL; top-2 50/50) is a separate sleeve position when RISK OFF. Never a live send."
             : HINT}
         </div>
         <div className="paper-form options-form">
@@ -408,10 +408,10 @@ export function OptionsPanel({
           <>
             <label>{RISKOFF_ETF_SYMBOLS.join(" / ")} (top-2 50/50)</label>
             <div className="hint">
-              Autopilot holds the one or two names among GLD, UUP, TLT, IEF, XLU, XLP, DBMF, and KMLM that
+              Autopilot holds the one or two names among GLD, UUP, TLT, IEF, XLU, XLP, DBMF, KMLM, and CLSE that
               beat BIL on 63-session return and sit above their own 200dma while RISK OFF. Two qualifiers
               split the 40% overlay 50/50; one takes the full sleeve; none sits in BIL. If #1 is CTA
-              (DBMF/KMLM), #2 prefers a non-CTA name. Flattened on RISK ON. Modest size so puts still have
+              (DBMF/KMLM), #2 prefers a non-CTA name (CLSE can fill that slot). Flattened on RISK ON. Modest size so puts still have
               room.
             </div>
             <table>

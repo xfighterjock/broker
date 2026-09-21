@@ -40,6 +40,8 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **CC** — Covered call. Manual overlay on the options sleeve, tagged to an ownership or SPCX thesis. Not sold by autopilot. Never naked.
 
+**CLSE** — Convergence Long/Short Equity ETF. Multi-factor long/short equity candidate on the risk-off 63d RS overlay (valuation/growth/momentum/quality). Same 63d-vs-BIL and own-200 gates as the other overlay names. Not CTA (not in RISKOFF_ETF_CTA_FAMILY); can fill non-CTA #2 when RS #1 is DBMF/KMLM. Aimed at HYG-only RISK OFF when puts are gated. Paper / MockBroker only.
+
 **CME** — CME Group. Home of the gated futures roots (MES, ES, NQ, Treasuries, FX, SR3).
 
 **CPI** — Consumer Price Index print. Seed calendar event; freeze card; flatten 15:45 ET. Day-sleeve event clock only.
@@ -68,7 +70,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **ET** — America/New_York clock. Gate windows, 15:50 vertical cutoff, session marks, E*TRADE renew window, flatten times.
 
-**ETF** — Exchange-traded fund. Risk-off 63d RS overlay is GLD/UUP/TLT/IEF/XLU/XLP/DBMF/KMLM/BIL sized at RISKOFF_ETF_NOTIONAL_FRAC (40% of the $100k book) when SPY is below 200, or RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED (60%) while SPY is above 200 and puts stay gated; split 50/50 across the top-2 qualifiers (beat BIL and above own 200). Missing overlay bars debounce via RISKOFF_ETF_MISSING_BARS_MAX_MISSES (hold last sleeve; do not flatten on a single miss). Gated duration is a separate TLT/IEF long at RISKOFF_DURATION_NOTIONAL_FRAC (20%). Gate names are SPY/ACWI/HYG/UUP.
+**ETF** — Exchange-traded fund. Risk-off 63d RS overlay is GLD/UUP/TLT/IEF/XLU/XLP/DBMF/KMLM/CLSE/BIL sized at RISKOFF_ETF_NOTIONAL_FRAC (40% of the $100k book) when SPY is below 200, or RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED (60%) while SPY is above 200 and puts stay gated; split 50/50 across the top-2 qualifiers (beat BIL and above own 200). Missing overlay bars debounce via RISKOFF_ETF_MISSING_BARS_MAX_MISSES (hold last sleeve; do not flatten on a single miss). Gated duration is a separate TLT/IEF long at RISKOFF_DURATION_NOTIONAL_FRAC (20%). Gate names are SPY/ACWI/HYG/UUP.
 
 **EVENT_GATE_OPS_TOKEN** — Optional long-lived HTTPS ops bearer (VPS `/opt/broker/.env`, never git). When set, `Authorization: Bearer` matching the env value authenticates a narrow ops scope: GET /api/status, GET/PUT /api/freeze, GET /api/health, GET /api/sleeves, POST /api/paper/auto, POST /api/flatten, POST /api/paper/reset, POST /api/gate/enable, POST /api/knowledge-time (print-day vetoes: flatten + GATE OFF; paper sleeve reset without a delayed last; same knowledge_time stamp as a user). Same GATE route also GATE ON (`{ enabled: true }` or omitted, defaults ON) — no separate disable path. Not a users-table session. Paper orders, PIN, mock inject, cancel-stops, user admin stay 401. When unset, behavior unchanged. Agents freeze-save, status-check, toggle AUTO, flatten, reset one mock sleeve, GATE OFF, and stamp knowledge_time at https://broker.logikmancer.com without the Mac.
 
@@ -192,7 +194,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **risk_flip** — FCM eventType when the global RISK ON/OFF badge changes. Last-known state is in memory and Redis `risk:on` so a restart does not false-flip.
 
-**RS** — Relative strength. Momentum score vs SPY; risk-off ETF overlay is 63-session total return of GLD/UUP/TLT/IEF/XLU/XLP/DBMF/KMLM vs BIL, sized at RISKOFF_ETF_NOTIONAL_FRAC (40%, SPY below 200) or RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED (60%, SPY above 200 / puts gated) and split top-2 50/50 among qualifiers (beat BIL and above own 200). Mild 50bp hysteresis (RISKOFF_ETF_RS_HYSTERESIS) only when the 63d universe is complete — missing bars debounce (RISKOFF_ETF_MISSING_BARS_MAX_MISSES) short-circuits first. CTA family {DBMF, KMLM} diversifies #2 when #1 is CTA. Gated TLT/IEF duration is not an RS pick.
+**RS** — Relative strength. Momentum score vs SPY; risk-off ETF overlay is 63-session total return of GLD/UUP/TLT/IEF/XLU/XLP/DBMF/KMLM/CLSE vs BIL, sized at RISKOFF_ETF_NOTIONAL_FRAC (40%, SPY below 200) or RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED (60%, SPY above 200 / puts gated) and split top-2 50/50 among qualifiers (beat BIL and above own 200). Mild 50bp hysteresis (RISKOFF_ETF_RS_HYSTERESIS) only when the 63d universe is complete — missing bars debounce (RISKOFF_ETF_MISSING_BARS_MAX_MISSES) short-circuits first. CTA family {DBMF, KMLM} diversifies #2 when #1 is CTA (CLSE is not CTA and can fill that #2). Gated TLT/IEF duration is not an RS pick.
 
 **RTH** — Regular trading hours, 09:30-16:00 ET. Day-sleeve VWAP and entry window (09:35-15:45) use RTH only. Distinct from `marketSession.cashOpen`, which is the NYSE calendar day (not “are we inside 09:30–16:00 right now”).
 
