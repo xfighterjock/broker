@@ -140,6 +140,8 @@ export function opsRouteAllowed(method: string, path: string): boolean {
   // { enabled: true } or omitted enabled (handler defaults ON) also GATE ON.
   if (m === "POST" && path === "/gate/enable") return true;
   if (m === "POST" && path === "/knowledge-time") return true;
+  // Keep-alive idle-expiry reset only (GET oauth/renew_access_token). PIN handshake stays user-session.
+  if (m === "POST" && path === "/etrade/renew") return true;
   return false;
 }
 

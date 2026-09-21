@@ -1,7 +1,7 @@
 import http from "node:http";
 import express from "express";
 import session from "express-session";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { seedEvents } from "../shared/clock";
 import { eventGateOpsToken, opsRouteAllowed } from "../server/src/auth";
 import { buildApp } from "../server/src/app";
@@ -132,11 +132,13 @@ describe("EVENT_GATE_OPS_TOKEN helpers", () => {
     expect(opsRouteAllowed("POST", "/paper/reset")).toBe(true);
     expect(opsRouteAllowed("POST", "/gate/enable")).toBe(true);
     expect(opsRouteAllowed("POST", "/knowledge-time")).toBe(true);
+    expect(opsRouteAllowed("POST", "/etrade/renew")).toBe(true);
     expect(opsRouteAllowed("POST", "/paper/order")).toBe(false);
     expect(opsRouteAllowed("GET", "/activity")).toBe(false);
     expect(opsRouteAllowed("GET", "/log")).toBe(false);
     expect(opsRouteAllowed("POST", "/cancel-stops")).toBe(false);
     expect(opsRouteAllowed("POST", "/mock/inject-stop")).toBe(false);
+    expect(opsRouteAllowed("POST", "/etrade/oauth/start")).toBe(false);
     expect(opsRouteAllowed("POST", "/etrade/oauth/pin")).toBe(false);
     expect(opsRouteAllowed("PUT", "/sleeves/day")).toBe(false);
   });
@@ -154,6 +156,7 @@ describe("EVENT_GATE_OPS_TOKEN HTTPS ops scope", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     if (savedMode === undefined) delete process.env.AUTH_MODE;
     else process.env.AUTH_MODE = savedMode;
     if (savedPassword === undefined) delete process.env.GATE_PASSWORD;
@@ -305,6 +308,78 @@ describe("EVENT_GATE_OPS_TOKEN HTTPS ops scope", () => {
       expect(JSON.stringify(snap)).not.toContain(OPS_TOKEN);
     } finally {
       await srv.close();
+    }
+  });
+
+  it("lets the ops bearer POST /api/etrade/renew and 401s PIN handshake routes", async () => {
+    const realFetch = globalThis.fetch;
+    const etradeKeys = [
+      "ETRADE_ENV",
+      "ETRADE_PROD_KEY",
+      "ETRADE_PROD_SECRET",
+      "ETRADE_PROD_ACCESS_TOKEN",
+      "ETRADE_PROD_ACCESS_SECRET",
+    ] as const;
+    const savedEtrade: Record<string, string | undefined> = {};
+    for (const k of etradeKeys) savedEtrade[k] = process.env[k];
+    process.env.ETRADE_ENV = "production";
+    process.env.ETRADE_PROD_KEY = "ck-test-ops-renew";
+    process.env.ETRADE_PROD_SECRET = "cs-test-ops-renew";
+    process.env.ETRADE_PROD_ACCESS_TOKEN = "at-test-ops-renew";
+    process.env.ETRADE_PROD_ACCESS_SECRET = "as-test-ops-renew";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("127.0.0.1") || url.includes("localhost")) {
+          return realFetch(input as RequestInfo, init);
+        }
+        expect(url).toBe("https://api.etrade.com/oauth/renew_access_token");
+        expect(url).not.toContain("/v1/order");
+        expect(url).not.toContain("/v1/accounts");
+        return {
+          ok: true,
+          status: 200,
+          text: async () => "Access Token has been renewed",
+        };
+      }),
+    );
+    const dir = await seededUsers();
+    const { app } = makeApp(dir);
+    const srv = await listen(app);
+    try {
+      const renew = await realFetch(`${srv.url}/api/etrade/renew`, {
+        method: "POST",
+        headers: opsHeaders(),
+      });
+      expect(renew.status).toBe(200);
+      const body = (await renew.json()) as { ok?: boolean };
+      expect(body).toEqual({ ok: true });
+      expect(JSON.stringify(body)).not.toContain(OPS_TOKEN);
+
+      const start = await realFetch(`${srv.url}/api/etrade/oauth/start`, {
+        method: "POST",
+        headers: { ...opsHeaders(), "Content-Type": "application/json" },
+        body: "{}",
+      });
+      expect(start.status).toBe(401);
+
+      const pin = await realFetch(`${srv.url}/api/etrade/oauth/pin`, {
+        method: "POST",
+        headers: { ...opsHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ pin: "000000" }),
+      });
+      expect(pin.status).toBe(401);
+      const pinBody = (await pin.json()) as { error?: string };
+      expect(pinBody.error).toBe("ops token not permitted");
+      expect(JSON.stringify(pinBody)).not.toContain("000000");
+    } finally {
+      await srv.close();
+      vi.unstubAllGlobals();
+      for (const k of etradeKeys) {
+        if (savedEtrade[k] === undefined) delete process.env[k];
+        else process.env[k] = savedEtrade[k];
+      }
     }
   });
 
