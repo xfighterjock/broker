@@ -159,6 +159,7 @@ export const RISKOFF_QUOTE_STRIP = [
   "XLP",
   "DBMF",
   "KMLM",
+  "CLSE",
   "LQD",
   "JNK",
   "SJB",
@@ -167,7 +168,8 @@ export type RiskoffQuoteSymbol = (typeof RISKOFF_QUOTE_STRIP)[number];
 /**
  * Second risk-off expression: ETF RS overlay vs BIL. Paper only.
  * Preference order for an exact RS tie: GLD > UUP > duration (TLT, IEF)
- * > defensives (XLU, XLP) > trend (DBMF, KMLM). BIL is the cash/T-bill benchmark, last.
+ * > defensives (XLU, XLP) > trend (DBMF, KMLM) > long/short equity (CLSE).
+ * BIL is the cash/T-bill benchmark, last. CLSE is not CTA.
  */
 export const RISKOFF_ETF_SYMBOLS = [
   "GLD",
@@ -178,6 +180,7 @@ export const RISKOFF_ETF_SYMBOLS = [
   "XLP",
   "DBMF",
   "KMLM",
+  "CLSE",
   "BIL",
 ] as const;
 export type RiskoffEtfSymbol = (typeof RISKOFF_ETF_SYMBOLS)[number];
