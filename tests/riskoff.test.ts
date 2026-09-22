@@ -705,7 +705,7 @@ describe("HTTP riskoff put vertical (mocked E*TRADE chain)", () => {
 
   it("POST /api/paper/order accepts GLD on riskoff and refuses other stock names", async () => {
     const { app, broker } = makeTestApp();
-    stubMarketFetch({ lastBySymbol: { GLD: 180, SPY: 500, TLT: 90, DBMF: 28, KMLM: 27, CLSE: 25 } });
+    stubMarketFetch({ lastBySymbol: { GLD: 180, SPY: 500, TLT: 90, DBMF: 28, KMLM: 27, CLSE: 25, USMV: 85 } });
     const srv = await listen(app);
     try {
       const gld = await fetch(`${srv.url}/api/paper/order`, {
@@ -742,7 +742,7 @@ describe("HTTP riskoff put vertical (mocked E*TRADE chain)", () => {
       });
       expect(spy.status).toBe(400);
       const body = (await spy.json()) as { error: string };
-      expect(body.error).toMatch(/GLD\/UUP\/TLT\/IEF\/XLU\/XLP\/DBMF\/KMLM\/CLSE\/BIL|put debit/i);
+      expect(body.error).toMatch(/GLD\/UUP\/TLT\/IEF\/XLU\/XLP\/DBMF\/KMLM\/CLSE\/USMV\/BIL|put debit/i);
 
       const tlt = await fetch(`${srv.url}/api/paper/order`, {
         method: "POST",
@@ -799,6 +799,20 @@ describe("HTTP riskoff put vertical (mocked E*TRADE chain)", () => {
         }),
       });
       expect(clse.status).toBe(200);
+
+      const usmv = await fetch(`${srv.url}/api/paper/order`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sleeveId: "riskoff",
+          symbol: "USMV",
+          side: "Buy",
+          qty: 5,
+          stopPrice: 78,
+          thesis: "manual USMV",
+        }),
+      });
+      expect(usmv.status).toBe(200);
 
       const lqd = await fetch(`${srv.url}/api/paper/order`, {
         method: "POST",
@@ -916,6 +930,7 @@ const xlpWins = etfRs({ XLP: 0.11 });
 const dbmfWins = etfRs({ DBMF: 0.15 });
 const kmlmWins = etfRs({ KMLM: 0.16 });
 const clseWins = etfRs({ CLSE: 0.17 });
+const usmvWins = etfRs({ USMV: 0.18 });
 const allEtfQuotes = etfQuotes({
   GLD: 180,
   UUP: 28,
@@ -926,6 +941,7 @@ const allEtfQuotes = etfQuotes({
   DBMF: 28,
   KMLM: 27,
   CLSE: 25,
+  USMV: 85,
   BIL: 91,
 });
 
@@ -1006,7 +1022,7 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(pickRiskoffEtfWinner(etfRs({ GLD: null, UUP: 0.2 }))).toBeNull();
   });
 
-  it("ranks TLT/IEF/XLU/XLP/DBMF/KMLM/CLSE when they beat BIL and the rest of the sleeve", () => {
+  it("ranks TLT/IEF/XLU/XLP/DBMF/KMLM/CLSE/USMV when they beat BIL and the rest of the sleeve", () => {
     expect(pickRiskoffEtfWinner(tltWins)).toBe("TLT");
     expect(pickRiskoffEtfWinner(iefWins)).toBe("IEF");
     expect(pickRiskoffEtfWinner(xluWins)).toBe("XLU");
@@ -1014,17 +1030,20 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(pickRiskoffEtfWinner(dbmfWins)).toBe("DBMF");
     expect(pickRiskoffEtfWinner(kmlmWins)).toBe("KMLM");
     expect(pickRiskoffEtfWinner(clseWins)).toBe("CLSE");
-    expect(RISKOFF_ETF_CANDIDATES).toEqual(["GLD", "UUP", "TLT", "IEF", "XLU", "XLP", "DBMF", "KMLM", "CLSE"]);
-    expect(RISKOFF_ETF_SYMBOLS).toEqual(["GLD", "UUP", "TLT", "IEF", "XLU", "XLP", "DBMF", "KMLM", "CLSE", "BIL"]);
+    expect(pickRiskoffEtfWinner(usmvWins)).toBe("USMV");
+    expect(RISKOFF_ETF_CANDIDATES).toEqual(["GLD", "UUP", "TLT", "IEF", "XLU", "XLP", "DBMF", "KMLM", "CLSE", "USMV"]);
+    expect(RISKOFF_ETF_SYMBOLS).toEqual(["GLD", "UUP", "TLT", "IEF", "XLU", "XLP", "DBMF", "KMLM", "CLSE", "USMV", "BIL"]);
     expect(RISKOFF_ETF_CTA_FAMILY).toEqual(["DBMF", "KMLM"]);
     expect(RISKOFF_ETF_SYMBOLS).toContain("KMLM");
     expect(RISKOFF_ETF_SYMBOLS).toContain("CLSE");
+    expect(RISKOFF_ETF_SYMBOLS).toContain("USMV");
+    expect(RISKOFF_ETF_CANDIDATES).toContain("USMV");
     expect(RISKOFF_ETF_CTA_FAMILY).not.toContain("CLSE");
+    expect(RISKOFF_ETF_CTA_FAMILY).not.toContain("USMV");
     expect(isRiskoffEtfCta("CLSE")).toBe(false);
+    expect(isRiskoffEtfCta("USMV")).toBe(false);
     expect(RISKOFF_QUOTE_STRIP).toContain("CLSE");
-    expect(RISKOFF_ETF_SYMBOLS).not.toContain("USMV");
-    expect(RISKOFF_ETF_CANDIDATES).not.toContain("USMV");
-    expect(RISKOFF_QUOTE_STRIP).not.toContain("USMV");
+    expect(RISKOFF_QUOTE_STRIP).toContain("USMV");
   });
 
   it("keeps the held name on an exact RS tie if it is still eligible, else GLD > UUP > duration > defensives > trend", () => {
@@ -1545,6 +1564,7 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(pickRiskoffEtfWinner(etfRs({ DBMF: null, GLD: 0.2 }))).toBeNull();
     expect(pickRiskoffEtfWinner(etfRs({ KMLM: null, GLD: 0.2 }))).toBeNull();
     expect(pickRiskoffEtfWinner(etfRs({ CLSE: null, GLD: 0.2 }))).toBeNull();
+    expect(pickRiskoffEtfWinner(etfRs({ USMV: null, GLD: 0.2 }))).toBeNull();
 
     const kmlmUup = [etfPos("KMLM", 200, 27), etfPos("UUP", 200, 28)];
     const incomplete = etfRs({ GLD: null, UUP: 0.2 });
@@ -1801,6 +1821,30 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(book.getPositions().map((p) => p.symbol)).toEqual(["CLSE"]);
   });
 
+  it("2d. USMV beats the rest of the sleeve → paper long USMV at the same notional", async () => {
+    const book = paperBook();
+    const result = await runAutopilot({
+      enabled: true,
+      getPositions: book.getPositions,
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [],
+      featureRows: [],
+      scanReady: true,
+      riskOn: false,
+      riskoffEtfReturns: usmvWins,
+      riskoffEtfAbove200: etfAbove200(),
+      riskoffEtfQuotes: allEtfQuotes,
+      place: book.place,
+      close: book.close,
+      log: () => {},
+    });
+    expect(result.bought.map((b) => b.symbol)).toEqual(["USMV"]);
+    expect(result.bought[0].qty).toBe(sizeRiskoffEtfShares(85));
+    expect(result.bought[0].qty * 85).toBeLessThanOrEqual(DEFAULT_SLEEVE_EQUITY_USD * RISKOFF_ETF_NOTIONAL_FRAC);
+    expect(result.bought[0].stopPrice).toBeCloseTo(85 * RISKOFF_ETF_STOP_MUL);
+    expect(book.getPositions().map((p) => p.symbol)).toEqual(["USMV"]);
+  });
+
   it("top-2 equal-weight: two qualifiers split the 40% overlay 50/50", async () => {
     const two = etfRs({ GLD: 0.12, UUP: 0.08 });
     expect(riskoffEtfQualifiers(two, etfAbove200())).toEqual(["GLD", "UUP"]);
@@ -1989,6 +2033,63 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(below200.buy?.symbol).toBe("BIL");
   });
 
+  it("USMV ranks when it beats BIL and is above 200, is excluded below 200, and skips the CTA 21d gate", () => {
+    expect(isRiskoffEtfCta("USMV")).toBe(false);
+    expect(RISKOFF_ETF_CTA_FAMILY).toEqual(["DBMF", "KMLM"]);
+    expect(RISKOFF_ETF_CTA_FAMILY).not.toContain("USMV");
+    expect(pickRiskoffEtfWinner(usmvWins, null, etfAbove200())).toBe("USMV");
+    expect(pickRiskoffEtfSleeve(usmvWins, null, etfAbove200())).toEqual(["USMV"]);
+    expect(riskoffEtfQualifiers(usmvWins, etfAbove200())).toContain("USMV");
+    expect(pickRiskoffEtfWinner(etfRs({ USMV: 0.005 }), null, etfAbove200())).toBe("BIL");
+    expect(pickRiskoffEtfWinner(usmvWins, null, etfAbove200({ USMV: false }))).toBe("BIL");
+    expect(pickRiskoffEtfWinner(usmvWins, null, etfAbove200({ USMV: null }))).toBe("BIL");
+    expect(riskoffEtfQualifiers(usmvWins, etfAbove200({ USMV: false }))).not.toContain("USMV");
+    const usmvThenGld = etfRs({ USMV: 0.18, GLD: 0.08 });
+    expect(pickRiskoffEtfWinner(usmvThenGld, null, etfAbove200({ USMV: false }))).toBe("GLD");
+    expect(pickRiskoffEtfSleeve(usmvThenGld, null, etfAbove200())).toEqual(["USMV", "GLD"]);
+    const clseUsmvTie = etfRs({ CLSE: 0.1, USMV: 0.1 });
+    expect(pickRiskoffEtfWinner(clseUsmvTie, null, etfAbove200())).toBe("CLSE");
+    expect(pickRiskoffEtfWinner(clseUsmvTie, "USMV", etfAbove200())).toBe("USMV");
+    const tinyLead = etfRs({ USMV: 0.1, GLD: 0.104 });
+    expect(pickRiskoffEtfWinner(tinyLead, "USMV", etfAbove200())).toBe("USMV");
+    expect(pickRiskoffEtfWinner(etfRs({ USMV: 0.1, GLD: 0.106 }), "USMV", etfAbove200())).toBe("GLD");
+    const loses21 = etfRs21({ USMV: -0.4 });
+    expect(riskoffEtfCtaConfirms21d("USMV", loses21)).toBe(true);
+    expect(riskoffEtfCtaConfirms21d("USMV", etfRs21({ USMV: null }))).toBe(true);
+    expect(riskoffEtfCtaConfirms21d("USMV", null)).toBe(true);
+    expect(pickRiskoffEtfWinner(usmvWins, null, etfAbove200(), loses21)).toBe("USMV");
+    expect(pickRiskoffEtfSleeve(usmvWins, null, etfAbove200(), etfRs21({ USMV: null, BIL: null }))).toEqual([
+      "USMV",
+    ]);
+    const dbmfThenUsmv = etfRs({ DBMF: 0.2, KMLM: 0.16, USMV: 0.09 });
+    expect(pickRiskoffEtfSleeve(dbmfThenUsmv, null, etfAbove200(), etfRs21())).toEqual(["DBMF", "USMV"]);
+    const decided = decideRiskoffEtf({
+      riskOn: false,
+      positions: [],
+      sleeve: defaultSleeves().riskoff,
+      returns: usmvWins,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: loses21,
+    });
+    expect(decided.winners).toEqual(["USMV"]);
+    expect(decided.buy?.symbol).toBe("USMV");
+    expect(decided.buy?.qty).toBe(sizeRiskoffEtfShares(85));
+    const below200 = decideRiskoffEtf({
+      riskOn: false,
+      positions: [etfPos("USMV", 100, 85)],
+      sleeve: defaultSleeves().riskoff,
+      returns: usmvWins,
+      quotes: allEtfQuotes,
+      above200: etfAbove200({ USMV: false }),
+      returns21: loses21,
+    });
+    expect(below200.winner).toBe("BIL");
+    expect(below200.sells.map((s) => s.symbol)).toEqual(["USMV"]);
+    expect(below200.buy?.symbol).toBe("BIL");
+    expect(getRiskoffEtfMissingBarsMisses()).toBe(0);
+  });
+
   it("CTA diversifier prefers CLSE as non-CTA #2 when #1 is DBMF/KMLM", () => {
     const dbmfThenClse = etfRs({ DBMF: 0.18, KMLM: 0.16, CLSE: 0.09 });
     expect(isRiskoffEtfCta("CLSE")).toBe(false);
@@ -2031,6 +2132,7 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(RISKOFF_ETF_CTA_CONFIRM_DAYS).toBe(21);
     expect(RISKOFF_ETF_CTA_FAMILY).toEqual(["DBMF", "KMLM"]);
     expect(isRiskoffEtfCta("CLSE")).toBe(false);
+    expect(isRiskoffEtfCta("USMV")).toBe(false);
     const closes = Array.from({ length: 40 }, () => 100);
     closes[closes.length - 1] = 110;
     expect(periodReturn(closes, RISKOFF_ETF_CTA_CONFIRM_DAYS)).toBeCloseTo(0.1);
@@ -2059,10 +2161,11 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(pickRiskoffEtfSleeve(kmlmThenXlp, null, etfAbove200(), kmlmFails21)).toEqual(["XLP"]);
     expect(pickRiskoffEtfWinner(kmlmWins, null, etfAbove200(), etfRs21({ KMLM: 0.01 }))).toBe("BIL");
 
-    const gldLoses21 = etfRs21({ GLD: -0.5, UUP: -0.4, XLP: -0.3, CLSE: -0.2 });
+    const gldLoses21 = etfRs21({ GLD: -0.5, UUP: -0.4, XLP: -0.3, CLSE: -0.2, USMV: -0.25 });
     expect(pickRiskoffEtfWinner(gldWins, null, etfAbove200(), gldLoses21)).toBe("GLD");
     expect(pickRiskoffEtfWinner(xlpWins, null, etfAbove200(), gldLoses21)).toBe("XLP");
     expect(pickRiskoffEtfWinner(clseWins, null, etfAbove200(), gldLoses21)).toBe("CLSE");
+    expect(pickRiskoffEtfWinner(usmvWins, null, etfAbove200(), gldLoses21)).toBe("USMV");
     expect(pickRiskoffEtfSleeve(etfRs({ UUP: 0.11, GLD: 0.04 }), null, etfAbove200(), gldLoses21)).toEqual([
       "UUP",
       "GLD",
@@ -2136,7 +2239,7 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(getRiskoffEtfMissingBarsMisses()).toBe(0);
   });
 
-  it("put-gated overlay: SPY above 200 → ~60%; SPY below 200 → ~40%; no USMV", () => {
+  it("put-gated overlay: SPY above 200 → ~60%; SPY below 200 → ~40%", () => {
     expect(RISKOFF_ETF_NOTIONAL_FRAC).toBe(0.4);
     expect(RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED).toBe(0.6);
     expect(RISKOFF_ETF_RESIZE_NOTIONAL_FRAC).toBe(0.08);
@@ -2144,7 +2247,7 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(riskoffEtfNotionalFrac(false)).toBe(RISKOFF_ETF_NOTIONAL_FRAC);
     expect(riskoffEtfNotionalFrac(undefined)).toBe(RISKOFF_ETF_NOTIONAL_FRAC);
     expect(riskoffEtfNotionalFrac(null)).toBe(RISKOFF_ETF_NOTIONAL_FRAC);
-    expect(RISKOFF_ETF_SYMBOLS).not.toContain("USMV");
+    expect(RISKOFF_ETF_CTA_FAMILY).toEqual(["DBMF", "KMLM"]);
 
     const qty40 = sizeRiskoffEtfShares(180);
     const qty60 = sizeRiskoffEtfShares(180, DEFAULT_SLEEVE_EQUITY_USD, RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED);
