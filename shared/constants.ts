@@ -194,9 +194,10 @@ export const RISKOFF_ETF_CANDIDATES = RISKOFF_ETF_SYMBOLS.filter(
 /**
  * Managed-futures / CTA-style sleeve family on the 63d RS overlay.
  * DBMF and KMLM are the same diversifier sleeve. CLSE and USMV are not in this set.
- * When RS #1 is in this set, #2 prefers the highest-ranked qualifier
- * outside the family; the other CTA is #2 only if no non-CTA qualifier
- * exists. Members must also beat BIL on RISKOFF_ETF_CTA_CONFIRM_DAYS.
+ * When RS #1 is in this set, #2 is the highest-ranked qualifier outside
+ * the family. If no non-CTA name clears beat-BIL and own-200, #2 is BIL
+ * at 50/50 — never two CTA names together (no KMLM+DBMF). Members must
+ * also beat BIL on RISKOFF_ETF_CTA_CONFIRM_DAYS.
  * Add future CTA tickers here (and to RISKOFF_ETF_SYMBOLS) so both rules
  * pick them up.
  */
@@ -246,6 +247,24 @@ export const RISKOFF_ETF_STOP_MUL = 0.92;
  * apply when held is ineligible (≤ BIL) or missing.
  */
 export const RISKOFF_ETF_RS_HYSTERESIS = 0.005;
+/**
+ * NY cash sessions an overlay name must be held before RS may rotate it
+ * off. The entry session counts as session 1; the name may leave on the
+ * cash close of session 5. Stops, missing-bars flatten, RISK ON, and the
+ * sleeve loss cap still exit immediately. BIL is not held to this clock.
+ * Paper / MockBroker only.
+ */
+export const RISKOFF_ETF_MIN_HOLD_SESSIONS = 5;
+/**
+ * Overlay RS re-rank and notional resize run once per NY cash session, at
+ * or after this minute-of-day (16:00 ET). Early-close days use
+ * RISKOFF_ETF_EARLY_CLOSE_REBALANCE_MINUTE (13:00 ET). Weekends and full
+ * holidays do not rebalance. Midday bars do not rotate or resize. Paper /
+ * MockBroker only.
+ */
+export const RISKOFF_ETF_REBALANCE_MINUTE = 16 * 60;
+/** NYSE early-close cash close. Same once-per-session overlay rebalance. */
+export const RISKOFF_ETF_EARLY_CLOSE_REBALANCE_MINUTE = 13 * 60;
 /**
  * Consecutive failed "missing bars / incomplete returns" overlay decisions
  * before fail-closed flatten. A miss is `returns === null` or any name in

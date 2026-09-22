@@ -1,13 +1,17 @@
+import { etParts, pad2 } from "../../shared/clock";
 import {
   DEFAULT_SLEEVE_EQUITY_USD,
   RISKOFF_ETF_CANDIDATES,
   RISKOFF_ETF_CASH_SYMBOL,
   RISKOFF_ETF_CTA_CONFIRM_DAYS,
   RISKOFF_ETF_CTA_FAMILY,
+  RISKOFF_ETF_EARLY_CLOSE_REBALANCE_MINUTE,
   RISKOFF_ETF_LOOKBACK_DAYS,
+  RISKOFF_ETF_MIN_HOLD_SESSIONS,
   RISKOFF_ETF_MISSING_BARS_MAX_MISSES,
   RISKOFF_ETF_NOTIONAL_FRAC,
   RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED,
+  RISKOFF_ETF_REBALANCE_MINUTE,
   RISKOFF_ETF_REQUIRE_ABOVE_200,
   RISKOFF_ETF_RESIZE_NOTIONAL_FRAC,
   RISKOFF_ETF_RS_HYSTERESIS,
@@ -16,6 +20,7 @@ import {
   RISKOFF_ETF_TOP_N,
   type RiskoffEtfSymbol,
 } from "../../shared/constants";
+import { nyseDayOn } from "../../shared/marketSession";
 import type { Position, SleeveCard } from "../../shared/types";
 import { fetchMassiveDailyBars, type DailyBar } from "./massive";
 
@@ -65,13 +70,88 @@ export type RiskoffEtfDecision = {
 
 /** Consecutive missing-bars / incomplete-returns decisions. Process-local. */
 let missingBarsMisses = 0;
+/** NY date (YYYY-MM-DD) of the last cash-close RS rebalance. Process-local. */
+let lastRebalanceYmd: string | null = null;
+/** Sleeve to restore after an intraday missing-bars flatten, until the next cash-close rebalance. */
+let priorOverlayTargets: RiskoffEtfSymbol[] = [];
+/** Set when missing bars flatten an open sleeve. Cleared by RISK ON, loss cap, or a cash-close rebalance. */
+let pendingPriorRebuy = false;
+/** NY session date an overlay candidate was entered. BIL is not tracked. Process-local. */
+const entrySessionBySymbol = new Map<string, string>();
 
 export function getRiskoffEtfMissingBarsMisses(): number {
   return missingBarsMisses;
 }
 
+/** Clears missing-bars streak and the overlay rebalance clock (entry sessions, prior rebuy, last close). */
 export function resetRiskoffEtfMissingBarsMisses(): void {
   missingBarsMisses = 0;
+  lastRebalanceYmd = null;
+  priorOverlayTargets = [];
+  pendingPriorRebuy = false;
+  entrySessionBySymbol.clear();
+}
+
+export function riskoffEtfNyYmd(now: Date): string {
+  const p = etParts(now);
+  return `${p.year}-${pad2(p.month)}-${pad2(p.day)}`;
+}
+
+function parseYmd(ymd: string): { year: number; month: number; day: number } | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
+  if (!m) return null;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  return { year, month, day };
+}
+
+/**
+ * Minute-of-day of the NY cash close, or null on weekends and full holidays.
+ * Early-close days close at 13:00 ET. A non-null result means the date is a
+ * trading session for the overlay hold clock.
+ */
+export function riskoffEtfCashCloseMinute(year: number, month: number, day: number): number | null {
+  const wd = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+  if (wd === 0 || wd === 6) return null;
+  const info = nyseDayOn(year, month, day);
+  if (info?.kind === "holiday") return null;
+  if (info?.kind === "early_close") return RISKOFF_ETF_EARLY_CLOSE_REBALANCE_MINUTE;
+  return RISKOFF_ETF_REBALANCE_MINUTE;
+}
+
+/** True at or after today's NY cash close, and not yet rebalanced this session. */
+export function riskoffEtfRebalanceDue(now: Date, lastYmd: string | null): boolean {
+  const p = etParts(now);
+  const closeMin = riskoffEtfCashCloseMinute(p.year, p.month, p.day);
+  if (closeMin === null) return false;
+  if (p.hour * 60 + p.minute < closeMin) return false;
+  return lastYmd !== riskoffEtfNyYmd(now);
+}
+
+/**
+ * Inclusive count of NY cash sessions from the entry date through asOf.
+ * Weekends and full holidays do not count. Early-close days do.
+ * Entry session is 1. A name may be RS-rotated off once this is >= 
+ * RISKOFF_ETF_MIN_HOLD_SESSIONS.
+ */
+export function riskoffEtfSessionsHeld(entryYmd: string, asOfYmd: string): number {
+  const start = parseYmd(entryYmd);
+  const end = parseYmd(asOfYmd);
+  if (!start || !end) return 0;
+  let t = Date.UTC(start.year, start.month - 1, start.day);
+  const endT = Date.UTC(end.year, end.month - 1, end.day);
+  if (endT < t) return 0;
+  let n = 0;
+  while (t <= endT) {
+    const d = new Date(t);
+    if (riskoffEtfCashCloseMinute(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate()) !== null) {
+      n += 1;
+    }
+    t += 86_400_000;
+  }
+  return n;
 }
 
 export function isRiskoffEtfCta(symbol: string): boolean {
@@ -230,13 +310,19 @@ export function riskoffEtfReturnsReady(returns: RiskoffEtfReturns): boolean {
  * While RISK OFF, pickRiskoffEtfSleeve then takes the top-2 qualifiers at
  * 50/50 overlay notional (one name at full size; none → BIL). Overlay
  * notional is 60% while spyAbove200 === true (puts gated) and 40% when SPY
- * is below 200. When #1 is in RISKOFF_ETF_CTA_FAMILY, #2 prefers a non-CTA
- * qualifier. Pass returns21 to also require each CTA-family name to beat
- * BIL on RISKOFF_ETF_CTA_CONFIRM_DAYS (strict >; missing bars fail closed
- * for that CTA only). Omit returns21 to test 63d RS in isolation. Non-CTA
- * names ignore returns21. A failed CTA is dropped from the ranked basket;
- * the next remaining qualifier (another CTA only if it passes 21d, else
- * the next non-CTA) fills the slot. None left → BIL.
+ * is below 200. When #1 is in RISKOFF_ETF_CTA_FAMILY, #2 is the highest
+ * non-CTA qualifier. If none clears beat-BIL and own-200, #2 is BIL at
+ * 50/50 — never two CTAs (no KMLM+DBMF). A lone CTA is still 50/50 with
+ * BIL, not the full overlay. Pass returns21 to also require each CTA-family
+ * name to beat BIL on RISKOFF_ETF_CTA_CONFIRM_DAYS (strict >; missing bars
+ * fail closed for that CTA only). Omit returns21 to test 63d RS in
+ * isolation. Non-CTA names ignore returns21. A failed CTA is dropped from
+ * the ranked basket; the next remaining qualifier fills the slot (a CTA
+ * only if that name passes 21d, else the next non-CTA). None left → BIL.
+ * RS re-rank and resize run once per NY session at cash close when `now`
+ * is passed. A name held fewer than RISKOFF_ETF_MIN_HOLD_SESSIONS cash
+ * sessions is not rotated off for RS. Omit `now` to score the rebalance
+ * itself (unit tests).
  */
 function heldCandidateNames(held?: string | string[] | null): RiskoffEtfCandidate[] {
   const raw = Array.isArray(held) ? held : held ? [held] : [];
@@ -334,22 +420,24 @@ function pickFromPool(
 }
 
 /**
- * Second sleeve name: highest remaining qualifier, except when #1 is CTA —
- * then prefer the highest-ranked non-CTA qualifier, and only pair two CTAs
- * if no non-CTA qualifier exists. Hysteresis still applies inside that pool.
+ * Second sleeve name. When #1 is CTA, only a non-CTA qualifier may take #2.
+ * No non-CTA that clears the gates → BIL (50/50), never the other CTA.
+ * Hysteresis still applies inside the non-CTA pool. A non-CTA #1 uses the
+ * ordinary remaining pool (a CTA may be #2).
  */
 export function pickRiskoffEtfSecond(
   remaining: RiskoffEtfCandidate[],
   first: RiskoffEtfCandidate,
   returns: RiskoffEtfReturns,
   held: readonly string[] = [],
-): RiskoffEtfCandidate | null {
+): RiskoffEtfSymbol | null {
+  if (isRiskoffEtfCta(first)) {
+    const nonCta = remaining.filter((s) => !isRiskoffEtfCta(s));
+    if (nonCta.length === 0) return RISKOFF_ETF_CASH_SYMBOL;
+    return pickFromPool(nonCta, returns, held);
+  }
   if (remaining.length === 0) return null;
-  const pool =
-    isRiskoffEtfCta(first) && remaining.some((s) => !isRiskoffEtfCta(s))
-      ? remaining.filter((s) => !isRiskoffEtfCta(s))
-      : remaining;
-  return pickFromPool(pool, returns, held);
+  return pickFromPool(remaining, returns, held);
 }
 
 export function pickRiskoffEtfSleeve(
@@ -364,9 +452,13 @@ export function pickRiskoffEtfSleeve(
   if (qualifiers.length === 0) return [RISKOFF_ETF_CASH_SYMBOL];
   const first = pickFromPool(qualifiers, returns, heldNames);
   if (!first) return [RISKOFF_ETF_CASH_SYMBOL];
-  if (qualifiers.length === 1) return [first];
   const remaining = qualifiers.filter((s) => s !== first);
-  const second = pickRiskoffEtfSecond(remaining, first, returns, heldNames.filter((s) => s !== first));
+  const second = pickRiskoffEtfSecond(
+    remaining,
+    first,
+    returns,
+    heldNames.filter((s) => s !== first),
+  );
   if (!second) return [first];
   return [first, second];
 }
@@ -469,12 +561,199 @@ function decideMissingBars(
   const misses = priorMisses + 1;
   missingBarsMisses = misses;
   if (misses < RISKOFF_ETF_MISSING_BARS_MAX_MISSES) {
+    const held = overlayNamesFromOpen(open);
+    if (held.length) priorOverlayTargets = held;
     return holdLastSleeve(
       open,
       `missing risk-off ETF bars: hold last sleeve (${misses}/${RISKOFF_ETF_MISSING_BARS_MAX_MISSES})`,
     );
   }
+  const names = overlayNamesFromOpen(open);
+  if (names.length) {
+    priorOverlayTargets = names;
+    pendingPriorRebuy = true;
+  }
   return flattenOpen(open, "missing risk-off ETF bars", null);
+}
+
+function clearOverlayBookMemory(): void {
+  pendingPriorRebuy = false;
+  priorOverlayTargets = [];
+  entrySessionBySymbol.clear();
+}
+
+function entryMapFromInput(
+  entrySessions?: Partial<Record<string, string>> | null,
+): Map<string, string> {
+  const entries = new Map<string, string>();
+  if (entrySessions) {
+    for (const [k, v] of Object.entries(entrySessions)) {
+      if (typeof v === "string" && v) entries.set(k.trim().toUpperCase(), v);
+    }
+    return entries;
+  }
+  for (const [k, v] of entrySessionBySymbol) entries.set(k, v);
+  return entries;
+}
+
+function commitEntrySessions(
+  entries: Map<string, string>,
+  winners: RiskoffEtfSymbol[],
+  asOf: string,
+): void {
+  for (const s of winners) {
+    if (s === RISKOFF_ETF_CASH_SYMBOL) continue;
+    if (!entries.has(s)) entries.set(s, asOf);
+  }
+  for (const s of [...entries.keys()]) {
+    if (!winners.includes(s as RiskoffEtfSymbol)) entries.delete(s);
+  }
+  entrySessionBySymbol.clear();
+  for (const [k, v] of entries) entrySessionBySymbol.set(k, v);
+}
+
+/**
+ * Held candidates whose cash-session count is still inside the minimum
+ * hold. A missing stamp is recorded as `asOf` (this rebalance), so a
+ * restart does not immediately RS-rotate a name that is already on the book.
+ * Caller drops names that no longer clear beat-BIL / own-200 / CTA 21d.
+ */
+function protectedOverlayNames(
+  held: string[],
+  asOf: string,
+  entries: Map<string, string>,
+): RiskoffEtfSymbol[] {
+  const out: RiskoffEtfSymbol[] = [];
+  for (const raw of held) {
+    const symbol = raw.trim().toUpperCase();
+    if (!isRiskoffEtfSymbol(symbol) || symbol === RISKOFF_ETF_CASH_SYMBOL) continue;
+    if (!entries.has(symbol)) entries.set(symbol, asOf);
+    const entry = entries.get(symbol) as string;
+    if (riskoffEtfSessionsHeld(entry, asOf) < RISKOFF_ETF_MIN_HOLD_SESSIONS && !out.includes(symbol)) {
+      out.push(symbol);
+    }
+  }
+  return out;
+}
+
+/** Keep names still inside the minimum hold. Never leave two CTAs in the sleeve. */
+function applyOverlayMinHold(
+  desired: RiskoffEtfSymbol[],
+  protectedNames: RiskoffEtfSymbol[],
+): RiskoffEtfSymbol[] {
+  if (protectedNames.length === 0) return desired;
+  let kept = protectedNames.slice(0, RISKOFF_ETF_TOP_N);
+  const ctaKept = kept.filter((s) => isRiskoffEtfCta(s));
+  if (ctaKept.length >= 2) {
+    const prefer = desired.find((d) => ctaKept.includes(d)) ?? ctaKept[0];
+    kept = [prefer];
+  }
+  if (kept.length >= RISKOFF_ETF_TOP_N) return kept.slice(0, RISKOFF_ETF_TOP_N);
+  const anchor = kept[0];
+  const filler = desired.find((d) => d !== anchor && !(isRiskoffEtfCta(anchor) && isRiskoffEtfCta(d)));
+  if (!filler || (filler === RISKOFF_ETF_CASH_SYMBOL && !isRiskoffEtfCta(anchor))) {
+    return isRiskoffEtfCta(anchor) ? [anchor, RISKOFF_ETF_CASH_SYMBOL] : [anchor];
+  }
+  return [anchor, filler];
+}
+
+function retainProtectedWinners(
+  winners: RiskoffEtfSymbol[],
+  protectedNames: RiskoffEtfSymbol[],
+): RiskoffEtfSymbol[] {
+  if (protectedNames.length === 0) return winners;
+  const out = [...winners];
+  for (const name of protectedNames) {
+    if (out.includes(name)) continue;
+    if (out.length < RISKOFF_ETF_TOP_N) {
+      out.push(name);
+      continue;
+    }
+    const replaceAt = out.findIndex((s) => !protectedNames.includes(s));
+    if (replaceAt >= 0) out[replaceAt] = name;
+  }
+  const ctas = out.filter((s) => isRiskoffEtfCta(s));
+  if (ctas.length >= 2) {
+    const keep = protectedNames.find((s) => ctas.includes(s)) ?? ctas[0];
+    const rest = out.filter((s) => s !== keep && !isRiskoffEtfCta(s));
+    return [keep, rest[0] ?? RISKOFF_ETF_CASH_SYMBOL];
+  }
+  return out.slice(0, RISKOFF_ETF_TOP_N);
+}
+
+function rebuyPriorOverlay(
+  targets: RiskoffEtfSymbol[],
+  quotes: Map<string, number>,
+  spyAbove200?: boolean | null,
+): RiskoffEtfDecision {
+  const names = targets.filter((s) => isRiskoffEtfSymbol(s));
+  const totalFrac = riskoffEtfNotionalFrac(spyAbove200);
+  const frac = riskoffEtfSleeveFrac(names.length, totalFrac);
+  const buys: RiskoffEtfBuy[] = [];
+  for (const name of names) {
+    const last = quotes.get(name);
+    if (last === undefined) continue;
+    const qty = sizeRiskoffEtfShares(last, DEFAULT_SLEEVE_EQUITY_USD, frac);
+    if (qty < 1) continue;
+    const thesis = overlayThesis(names, null);
+    buys.push({
+      sleeveId: "riskoff",
+      symbol: name,
+      side: "Buy",
+      qty,
+      stopPrice: last * RISKOFF_ETF_STOP_MUL,
+      thesis: names.length >= 2 ? `${thesis} ${name}` : thesis,
+    });
+  }
+  if (buys.length === 0) {
+    return {
+      winner: names[0] ?? null,
+      winners: names,
+      reason: "prior overlay unquoted: cash",
+      sells: [],
+      buy: null,
+      buys: [],
+    };
+  }
+  const winners = buys.map((b) => b.symbol);
+  return {
+    winner: winners[0] ?? null,
+    winners,
+    reason: "rebuy prior overlay until NY cash close",
+    sells: [],
+    buy: buys[0] ?? null,
+    buys,
+  };
+}
+
+/** Midday (and post-rebalance) path: no RS rotate, no resize. Prior targets may be rebought. */
+function decideIntradayOverlay(input: {
+  now: Date;
+  open: Position[];
+  quotes: Map<string, number>;
+  spyAbove200?: boolean | null;
+}): RiskoffEtfDecision {
+  const ymd = riskoffEtfNyYmd(input.now);
+  if (input.open.length > 0) {
+    const names = overlayNamesFromOpen(input.open);
+    if (names.length) priorOverlayTargets = names;
+    const reason =
+      lastRebalanceYmd === ymd
+        ? "hold overlay: rebalanced this NY session"
+        : "hold overlay until NY cash close";
+    return holdLastSleeve(input.open, reason);
+  }
+  if (pendingPriorRebuy && priorOverlayTargets.length > 0) {
+    return rebuyPriorOverlay(priorOverlayTargets, input.quotes, input.spyAbove200);
+  }
+  return {
+    winner: null,
+    winners: [],
+    reason: "overlay rebalance waits for NY cash close",
+    sells: [],
+    buy: null,
+    buys: [],
+  };
 }
 
 function overlayThesis(
@@ -514,16 +793,33 @@ export function decideRiskoffEtf(input: {
    * to isolate a single call. A successful RS path resets the streak to 0.
    */
   missingBarsMisses?: number;
+  /**
+   * Valuation clock. When set, RS re-rank and notional resize run only once
+   * per NY session at/after the cash close (16:00 ET, 13:00 on early-close
+   * days). Midday calls hold the open sleeve. After a missing-bars flatten,
+   * bars that return before that close rebuy the prior targets. Omit to
+   * apply the rebalance decision immediately (RS unit tests). Autopilot
+   * passes this from the paper clock.
+   */
+  now?: Date | null;
+  /**
+   * NY session date (YYYY-MM-DD) each overlay name was entered. Used with
+   * `now` for the 5-session minimum hold. Omit to use process memory.
+   * A held name with no stamp is treated as entered on this rebalance.
+   */
+  entrySessions?: Partial<Record<string, string>> | null;
 }): RiskoffEtfDecision {
   const open = openRiskoffEtfPositions(input.positions);
   const priorMisses = input.missingBarsMisses ?? missingBarsMisses;
 
   if (input.riskOn) {
     missingBarsMisses = 0;
+    clearOverlayBookMemory();
     return flattenOpen(open, "risk on: flatten risk-off ETF", null);
   }
   if (input.sleeve.paper.realizedPnlUsd <= -input.sleeve.lossCapUsd) {
     missingBarsMisses = 0;
+    clearOverlayBookMemory();
     return flattenOpen(open, "sleeve loss cap", null);
   }
   if (!input.returns) {
@@ -534,13 +830,40 @@ export function decideRiskoffEtf(input: {
   const above200 = input.above200 ?? emptyRiskoffEtfAbove200();
   const returns21 = input.returns21 ?? emptyRiskoffEtfReturns();
   const rsSleeve = pickRiskoffEtfSleeve(input.returns, heldNames, undefined, returns21);
-  const sleeve = pickRiskoffEtfSleeve(input.returns, heldNames, above200, returns21);
+  let sleeve = pickRiskoffEtfSleeve(input.returns, heldNames, above200, returns21);
   if (sleeve === null || rsSleeve === null) {
     return decideMissingBars(open, priorMisses);
   }
   missingBarsMisses = 0;
 
   const quotes = lastBySymbol(input.quotes);
+  if (input.now && !riskoffEtfRebalanceDue(input.now, lastRebalanceYmd)) {
+    return decideIntradayOverlay({
+      now: input.now,
+      open,
+      quotes,
+      spyAbove200: input.spyAbove200,
+    });
+  }
+
+  const asOf = input.now ? riskoffEtfNyYmd(input.now) : null;
+  let entries: Map<string, string> | null = null;
+  let protectedNames: RiskoffEtfSymbol[] = [];
+  if (input.now && asOf) {
+    entries = entryMapFromInput(input.entrySessions);
+    const stillQualified = new Set(riskoffEtfQualifiers(input.returns, above200, returns21));
+    protectedNames = protectedOverlayNames(heldNames, asOf, entries).filter((name) =>
+      stillQualified.has(name),
+    );
+    sleeve = applyOverlayMinHold(sleeve, protectedNames);
+    lastRebalanceYmd = asOf;
+    pendingPriorRebuy = false;
+  }
+  const finish = (decision: RiskoffEtfDecision): RiskoffEtfDecision => {
+    if (entries && asOf) commitEntrySessions(entries, decision.winners, asOf);
+    if (decision.winners.length) priorOverlayTargets = [...decision.winners];
+    return decision;
+  };
   const totalFrac = riskoffEtfNotionalFrac(input.spyAbove200);
   const canSize = (name: RiskoffEtfSymbol, frac: number): boolean => {
     const last = quotes.get(name);
@@ -564,10 +887,11 @@ export function decideRiskoffEtf(input: {
     const reason =
       trendPark ??
       (head === RISKOFF_ETF_CASH_SYMBOL ? "BIL unquoted: cash" : `${head} unquoted: cash`);
-    return flattenOpen(open, reason, sleeve);
+    return finish(flattenOpen(open, reason, sleeve));
   }
 
-  const winners = tradable.slice(0, RISKOFF_ETF_TOP_N);
+  let winners = tradable.slice(0, RISKOFF_ETF_TOP_N);
+  if (protectedNames.length) winners = retainProtectedWinners(winners, protectedNames);
   const winner = winners[0];
   const frac = riskoffEtfSleeveFrac(winners.length, totalFrac);
   const want = new Set(winners.map((s) => s.toUpperCase()));
@@ -606,14 +930,14 @@ export function decideRiskoffEtf(input: {
   }
 
   if (toBuy.length === 0) {
-    return {
+    return finish({
       winner,
       winners,
       reason: `hold ${label}`,
       sells,
       buy: null,
       buys: [],
-    };
+    });
   }
 
   const buys: RiskoffEtfBuy[] = [];
@@ -635,17 +959,17 @@ export function decideRiskoffEtf(input: {
 
   if (buys.length === 0) {
     const reason = trendPark ?? "size rounds to 0: cash";
-    return flattenOpen(open, reason, winners);
+    return finish(flattenOpen(open, reason, winners));
   }
 
-  return {
+  return finish({
     winner,
     winners,
     reason: trendPark ?? (resized ? `resize overlay to ${pct}%` : `buy ${label}`),
     sells,
     buy: buys[0] ?? null,
     buys,
-  };
+  });
 }
 
 async function fetchRiskoffEtfBars(): Promise<Partial<
