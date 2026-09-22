@@ -2,6 +2,7 @@ import {
   DEFAULT_SLEEVE_EQUITY_USD,
   RISKOFF_ETF_CANDIDATES,
   RISKOFF_ETF_CASH_SYMBOL,
+  RISKOFF_ETF_CTA_CONFIRM_DAYS,
   RISKOFF_ETF_CTA_FAMILY,
   RISKOFF_ETF_LOOKBACK_DAYS,
   RISKOFF_ETF_MISSING_BARS_MAX_MISSES,
@@ -23,7 +24,13 @@ export type RiskoffEtfReturns = Record<RiskoffEtfSymbol, number | null>;
 export type RiskoffEtfAbove200 = Record<RiskoffEtfSymbol, boolean | null>;
 
 export type RiskoffEtfOverlaySnapshot = {
+  /** 63d total returns. Incomplete universe → missing-bars debounce. */
   returns: RiskoffEtfReturns;
+  /**
+   * RISKOFF_ETF_CTA_CONFIRM_DAYS total returns from the same dailies.
+   * CTA-family confirmation only. A missing name does not debounce the overlay.
+   */
+  returns21: RiskoffEtfReturns;
   above200: RiskoffEtfAbove200;
 };
 
@@ -108,16 +115,20 @@ export function closesFromBars(bars: DailyBar[] | null | undefined): number[] {
   return closes;
 }
 
-export function riskoffEtfReturnFromBars(bars: DailyBar[] | null | undefined): number | null {
-  return periodReturn(closesFromBars(bars), RISKOFF_ETF_LOOKBACK_DAYS);
+export function riskoffEtfReturnFromBars(
+  bars: DailyBar[] | null | undefined,
+  period = RISKOFF_ETF_LOOKBACK_DAYS,
+): number | null {
+  return periodReturn(closesFromBars(bars), period);
 }
 
 export function riskoffEtfReturnsFromBars(
   bars: Partial<Record<RiskoffEtfSymbol, DailyBar[] | null | undefined>>,
+  period = RISKOFF_ETF_LOOKBACK_DAYS,
 ): RiskoffEtfReturns {
   const out = emptyRiskoffEtfReturns();
   for (const s of RISKOFF_ETF_SYMBOLS) {
-    out[s] = riskoffEtfReturnFromBars(bars[s]);
+    out[s] = riskoffEtfReturnFromBars(bars[s], period);
   }
   return out;
 }
@@ -220,7 +231,12 @@ export function riskoffEtfReturnsReady(returns: RiskoffEtfReturns): boolean {
  * 50/50 overlay notional (one name at full size; none → BIL). Overlay
  * notional is 60% while spyAbove200 === true (puts gated) and 40% when SPY
  * is below 200. When #1 is in RISKOFF_ETF_CTA_FAMILY, #2 prefers a non-CTA
- * qualifier.
+ * qualifier. Pass returns21 to also require each CTA-family name to beat
+ * BIL on RISKOFF_ETF_CTA_CONFIRM_DAYS (strict >; missing bars fail closed
+ * for that CTA only). Omit returns21 to test 63d RS in isolation. Non-CTA
+ * names ignore returns21. A failed CTA is dropped from the ranked basket;
+ * the next remaining qualifier (another CTA only if it passes 21d, else
+ * the next non-CTA) fills the slot. None left → BIL.
  */
 function heldCandidateNames(held?: string | string[] | null): RiskoffEtfCandidate[] {
   const raw = Array.isArray(held) ? held : held ? [held] : [];
@@ -258,15 +274,42 @@ function sortQualifiersByRs(
   });
 }
 
-/** Beat-BIL names; when above200 is passed, also require known-above-own-200. */
+/**
+ * CTA-family 21d confirmation. Non-CTA names always pass. A null map, a
+ * missing/non-finite BIL 21d return, or a missing/non-finite CTA 21d return
+ * fails that CTA closed. Beat means strict greater-than, same as 63d RS.
+ */
+export function riskoffEtfCtaConfirms21d(
+  symbol: string,
+  returns21: RiskoffEtfReturns | null | undefined,
+): boolean {
+  if (!isRiskoffEtfCta(symbol)) return true;
+  if (!returns21) return false;
+  const bil = returns21[RISKOFF_ETF_CASH_SYMBOL];
+  const own = returns21[symbol.trim().toUpperCase() as RiskoffEtfSymbol];
+  if (typeof bil !== "number" || !Number.isFinite(bil)) return false;
+  if (typeof own !== "number" || !Number.isFinite(own)) return false;
+  return own > bil;
+}
+
+/**
+ * Beat-BIL names; when above200 is passed, also require known-above-own-200.
+ * When returns21 is passed (including null), CTA-family names must also beat
+ * BIL on that 21d map. Omit returns21 to leave the 21d gate off.
+ */
 export function riskoffEtfQualifiers(
   returns: RiskoffEtfReturns,
   above200?: Partial<Record<RiskoffEtfSymbol, boolean | null>> | null,
+  returns21?: RiskoffEtfReturns | null,
 ): RiskoffEtfCandidate[] {
   const bil = returns[RISKOFF_ETF_CASH_SYMBOL] as number;
   const beatBil = RISKOFF_ETF_CANDIDATES.filter((s) => (returns[s] as number) > bil);
-  if (above200 === undefined || !RISKOFF_ETF_REQUIRE_ABOVE_200) return beatBil;
-  return beatBil.filter((s) => above200?.[s] === true);
+  const trend =
+    above200 === undefined || !RISKOFF_ETF_REQUIRE_ABOVE_200
+      ? beatBil
+      : beatBil.filter((s) => above200?.[s] === true);
+  if (returns21 === undefined) return trend;
+  return trend.filter((s) => riskoffEtfCtaConfirms21d(s, returns21));
 }
 
 function pickFromPool(
@@ -313,10 +356,11 @@ export function pickRiskoffEtfSleeve(
   returns: RiskoffEtfReturns,
   held?: string | string[] | null,
   above200?: Partial<Record<RiskoffEtfSymbol, boolean | null>> | null,
+  returns21?: RiskoffEtfReturns | null,
 ): RiskoffEtfSymbol[] | null {
   if (!riskoffEtfReturnsReady(returns)) return null;
   const heldNames = heldCandidateNames(held);
-  const qualifiers = riskoffEtfQualifiers(returns, above200);
+  const qualifiers = riskoffEtfQualifiers(returns, above200, returns21);
   if (qualifiers.length === 0) return [RISKOFF_ETF_CASH_SYMBOL];
   const first = pickFromPool(qualifiers, returns, heldNames);
   if (!first) return [RISKOFF_ETF_CASH_SYMBOL];
@@ -331,8 +375,9 @@ export function pickRiskoffEtfWinner(
   returns: RiskoffEtfReturns,
   held?: string | null,
   above200?: Partial<Record<RiskoffEtfSymbol, boolean | null>> | null,
+  returns21?: RiskoffEtfReturns | null,
 ): RiskoffEtfSymbol | null {
-  const sleeve = pickRiskoffEtfSleeve(returns, held, above200);
+  const sleeve = pickRiskoffEtfSleeve(returns, held, above200, returns21);
   return sleeve?.[0] ?? null;
 }
 
@@ -452,6 +497,13 @@ export function decideRiskoffEtf(input: {
   /** Own-200 map from the same Massive dailies as `returns`. Missing 200 → not a qualifier. */
   above200?: Partial<Record<RiskoffEtfSymbol, boolean | null>> | null;
   /**
+   * RISKOFF_ETF_CTA_CONFIRM_DAYS total returns from the same dailies.
+   * Omit or null → every CTA fails closed (non-CTA path unchanged). A
+   * missing CTA or BIL 21d return skips that CTA only; it is not a 63d
+   * missing-bars miss.
+   */
+  returns21?: RiskoffEtfReturns | null;
+  /**
    * Same spyAbove200 as the put gate (riskoffEquityPutsAllowed). True → 60%
    * overlay (puts gated). False/missing → 40%. Does not change RISK ON flatten.
    */
@@ -480,8 +532,9 @@ export function decideRiskoffEtf(input: {
 
   const heldNames = open.map((p) => p.symbol);
   const above200 = input.above200 ?? emptyRiskoffEtfAbove200();
-  const rsSleeve = pickRiskoffEtfSleeve(input.returns, heldNames);
-  const sleeve = pickRiskoffEtfSleeve(input.returns, heldNames, above200);
+  const returns21 = input.returns21 ?? emptyRiskoffEtfReturns();
+  const rsSleeve = pickRiskoffEtfSleeve(input.returns, heldNames, undefined, returns21);
+  const sleeve = pickRiskoffEtfSleeve(input.returns, heldNames, above200, returns21);
   if (sleeve === null || rsSleeve === null) {
     return decideMissingBars(open, priorMisses);
   }
@@ -610,12 +663,13 @@ async function fetchRiskoffEtfBars(): Promise<Partial<
   return bars;
 }
 
-/** Same Massive dailies for 63d returns and each name's 200dma. One fetch. */
+/** Same Massive dailies for 63d returns, CTA 21d confirmation, and each name's 200dma. One fetch. */
 export async function fetchRiskoffEtfOverlay(): Promise<RiskoffEtfOverlaySnapshot | null> {
   const bars = await fetchRiskoffEtfBars();
   if (!bars) return null;
   return {
     returns: riskoffEtfReturnsFromBars(bars),
+    returns21: riskoffEtfReturnsFromBars(bars, RISKOFF_ETF_CTA_CONFIRM_DAYS),
     above200: riskoffEtfAbove200FromBars(bars),
   };
 }

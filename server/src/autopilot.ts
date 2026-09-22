@@ -893,6 +893,12 @@ export type AutopilotCtx = {
   /** 63d total returns for the risk-off ETF overlay vs BIL. Missing/incomplete → missing-bars debounce, then flatten. */
   riskoffEtfReturns?: RiskoffEtfReturns | null;
   /**
+   * 21d total returns for the CTA beat-BIL confirmation. Same Massive dailies
+   * as riskoffEtfReturns. Omit/null fails CTA names closed; non-CTA unchanged.
+   * Does not drive the 63d missing-bars debounce.
+   */
+  riskoffEtfReturns21?: RiskoffEtfReturns | null;
+  /**
    * Own-200 map from the same Massive dailies as riskoffEtfReturns.
    * Own-200 qualifier filter: name not known above 200 is skipped; none → BIL.
    */
@@ -990,6 +996,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
         returns: ctx.riskoffEtfReturns ?? null,
         quotes: ctx.riskoffEtfQuotes ?? [],
         above200: ctx.riskoffEtfAbove200 ?? null,
+        returns21: ctx.riskoffEtfReturns21 ?? null,
         spyAbove200,
       })
     : { sells: [] as AutoSell[], buy: null as AutoBuy | null, buys: [] as AutoBuy[], winner: null, winners: [] as string[] };

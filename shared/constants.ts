@@ -190,13 +190,23 @@ export const RISKOFF_ETF_CANDIDATES = RISKOFF_ETF_SYMBOLS.filter(
 );
 /**
  * Managed-futures / CTA-style sleeve family on the 63d RS overlay.
- * DBMF and KMLM are the same diversifier sleeve. When RS #1 is in this
- * set, #2 prefers the highest-ranked qualifier outside the family; the
- * other CTA is #2 only if no non-CTA qualifier exists. Add future CTA
- * tickers here (and to RISKOFF_ETF_SYMBOLS) so the rule picks them up.
+ * DBMF and KMLM are the same diversifier sleeve. CLSE is not in this set.
+ * When RS #1 is in this set, #2 prefers the highest-ranked qualifier
+ * outside the family; the other CTA is #2 only if no non-CTA qualifier
+ * exists. Members must also beat BIL on RISKOFF_ETF_CTA_CONFIRM_DAYS.
+ * Add future CTA tickers here (and to RISKOFF_ETF_SYMBOLS) so both rules
+ * pick them up.
  */
 export const RISKOFF_ETF_CTA_FAMILY = ["DBMF", "KMLM"] as const;
 export type RiskoffEtfCtaSymbol = (typeof RISKOFF_ETF_CTA_FAMILY)[number];
+/**
+ * Extra beat-BIL window for RISKOFF_ETF_CTA_FAMILY only. Same total-return
+ * definition as RISKOFF_ETF_LOOKBACK_DAYS (`last / close N sessions earlier
+ * − 1`), strict greater-than BIL. Missing or non-finite 21d on the CTA or
+ * on BIL skips that CTA (fail closed). Does not gate non-CTA names and does
+ * not count as a 63d missing-bars miss. Paper / MockBroker only.
+ */
+export const RISKOFF_ETF_CTA_CONFIRM_DAYS = 21;
 /** While RISK OFF, split overlay notional 50/50 across this many qualifiers. */
 export const RISKOFF_ETF_TOP_N = 2;
 /**
