@@ -56,6 +56,7 @@ describe("defaultSleeves", () => {
     expect(sleeves.riskoff.instruments).toMatch(/DBMF/);
     expect(sleeves.riskoff.instruments).toMatch(/KMLM/);
     expect(sleeves.riskoff.instruments).toMatch(/CLSE/);
+    expect(sleeves.riskoff.instruments).toMatch(/USMV/);
     expect(sleeves.riskoff.instruments).toMatch(/LQD/);
     expect(sleeves.riskoff.instruments).toMatch(/JNK/);
     expect(sleeves.day.paper).toEqual(emptyPaperStats());
