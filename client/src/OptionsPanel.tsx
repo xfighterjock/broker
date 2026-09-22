@@ -410,8 +410,8 @@ export function OptionsPanel({
             <div className="hint">
               Autopilot holds the one or two names among GLD, UUP, TLT, IEF, XLU, XLP, DBMF, KMLM, CLSE, and USMV that
               beat BIL on 63-session return and sit above their own 200dma while RISK OFF. Two qualifiers
-              split the 40% overlay 50/50; one takes the full sleeve; none sits in BIL. If #1 is CTA
-              (DBMF/KMLM), #2 prefers a non-CTA name (CLSE or USMV can fill that slot). USMV is min-vol equity, not CTA, so a weak 21-session return does not skip it. Flattened on RISK ON. Modest size so puts still have
+              split the overlay 50/50; one non-CTA takes the full sleeve; a lone CTA is 50/50 with BIL; none sits in BIL. If #1 is CTA
+              (DBMF/KMLM), #2 is a non-CTA name when one clears (CLSE or USMV can fill that slot); otherwise #2 is BIL. Never KMLM+DBMF. Re-rank only at the NY cash close, and do not RS-rotate a name off until it has been held 5 trading sessions. USMV is min-vol equity, not CTA, so a weak 21-session return does not skip it. Flattened on RISK ON. Modest size so puts still have
               room.
             </div>
             <table>
