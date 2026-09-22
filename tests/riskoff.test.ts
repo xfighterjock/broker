@@ -29,6 +29,7 @@ import {
 import {
   DEFAULT_SLEEVE_EQUITY_USD,
   RISKOFF_ETF_CANDIDATES,
+  RISKOFF_ETF_CTA_CONFIRM_DAYS,
   RISKOFF_ETF_CTA_FAMILY,
   RISKOFF_ETF_LOOKBACK_DAYS,
   RISKOFF_ETF_MISSING_BARS_MAX_MISSES,
@@ -48,6 +49,7 @@ import {
   decideRiskoffEtf,
   emptyRiskoffEtfAbove200,
   emptyRiskoffEtfReturns,
+  getRiskoffEtfMissingBarsMisses,
   isRiskoffEtfCta,
   overlayLotNeedsResize,
   periodReturn,
@@ -56,6 +58,8 @@ import {
   pickRiskoffEtfWinner,
   resetRiskoffEtfMissingBarsMisses,
   riskoffEtfAbove200FromBars,
+  riskoffEtfCtaConfirms21d,
+  riskoffEtfReturnFromBars,
   riskoffEtfNotionalFrac,
   riskoffEtfQualifiers,
   riskoffEtfSleeveFrac,
@@ -880,6 +884,17 @@ function etfRs(overrides: Partial<Record<RiskoffEtfSymbol, number | null>>): Ris
   return out;
 }
 
+/** 21d CTA confirmation map. Default: DBMF and KMLM beat BIL. */
+function etfRs21(
+  overrides: Partial<Record<RiskoffEtfSymbol, number | null>> = {},
+): RiskoffEtfReturns {
+  const out = etfRs({ DBMF: 0.05, KMLM: 0.05 });
+  for (const [k, v] of Object.entries(overrides) as Array<[RiskoffEtfSymbol, number | null]>) {
+    out[k] = v;
+  }
+  return out;
+}
+
 function etfAbove200(
   overrides: Partial<Record<RiskoffEtfSymbol, boolean | null>> = {},
 ): RiskoffEtfAbove200 {
@@ -1045,6 +1060,7 @@ describe("risk-off ETF relative-strength expression", () => {
       returns: dbmfTinyLead,
       quotes: allEtfQuotes,
       above200: etfAbove200(),
+      returns21: etfRs21(),
     });
     expect(hold.winner).toBe("GLD");
     expect(hold.winners).toEqual(["GLD", "DBMF"]);
@@ -1066,6 +1082,7 @@ describe("risk-off ETF relative-strength expression", () => {
       returns: dbmfClearLead,
       quotes: allEtfQuotes,
       above200: etfAbove200(),
+      returns21: etfRs21(),
     });
     expect(rotate.winner).toBe("DBMF");
     expect(rotate.winners).toEqual(["DBMF", "GLD"]);
@@ -1224,6 +1241,7 @@ describe("risk-off ETF relative-strength expression", () => {
       returns: dbmfTinyLead,
       quotes: allEtfQuotes,
       above200: etfAbove200({ GLD: false }),
+      returns21: etfRs21(),
     });
     expect(flatten.winner).toBe("DBMF");
     expect(flatten.winners).toEqual(["DBMF"]);
@@ -1366,6 +1384,7 @@ describe("risk-off ETF relative-strength expression", () => {
       scanReady: true,
       riskOn: false,
       riskoffEtfReturns: dbmfWins,
+      riskoffEtfReturns21: etfRs21(),
       riskoffEtfAbove200: etfAbove200(),
       riskoffEtfQuotes: allEtfQuotes,
       place: book.place,
@@ -1655,6 +1674,7 @@ describe("risk-off ETF relative-strength expression", () => {
       returns: kmlmUup,
       quotes: allEtfQuotes,
       above200: etfAbove200(),
+      returns21: etfRs21(),
       missingBarsMisses: 1,
     });
     expect(recovered.reason).toBe("hold KMLM+UUP");
@@ -1673,6 +1693,7 @@ describe("risk-off ETF relative-strength expression", () => {
       returns: tiny,
       quotes: allEtfQuotes,
       above200: etfAbove200(),
+      returns21: etfRs21(),
     });
     expect(afterGap.winner).toBe("GLD");
     expect(afterGap.winners).toEqual(["GLD", "DBMF"]);
@@ -1742,6 +1763,7 @@ describe("risk-off ETF relative-strength expression", () => {
       scanReady: true,
       riskOn: false,
       riskoffEtfReturns: kmlmWins,
+      riskoffEtfReturns21: etfRs21(),
       riskoffEtfAbove200: etfAbove200(),
       riskoffEtfQuotes: allEtfQuotes,
       place: book.place,
@@ -1866,6 +1888,7 @@ describe("risk-off ETF relative-strength expression", () => {
       returns: ctaLead,
       quotes: allEtfQuotes,
       above200: etfAbove200(),
+      returns21: etfRs21(),
     });
     expect(decided.winners).toEqual(["DBMF", "GLD"]);
     expect(decided.winners).not.toContain("KMLM");
@@ -1883,6 +1906,7 @@ describe("risk-off ETF relative-strength expression", () => {
       returns: ctaOnly,
       quotes: allEtfQuotes,
       above200: etfAbove200(),
+      returns21: etfRs21(),
     });
     expect(decided.winners).toEqual(["DBMF", "KMLM"]);
     expect(decided.buys.map((b) => b.symbol)).toEqual(["DBMF", "KMLM"]);
@@ -1924,6 +1948,7 @@ describe("risk-off ETF relative-strength expression", () => {
       returns: withGold,
       quotes: allEtfQuotes,
       above200: etfAbove200(),
+      returns21: etfRs21(),
     });
     expect(decided.winners).toEqual(["DBMF", "GLD"]);
     expect(decided.sells.map((s) => s.symbol)).toEqual(["KMLM"]);
@@ -1980,6 +2005,7 @@ describe("risk-off ETF relative-strength expression", () => {
       returns: dbmfThenClse,
       quotes: allEtfQuotes,
       above200: etfAbove200(),
+      returns21: etfRs21(),
     });
     expect(decided.winners).toEqual(["DBMF", "CLSE"]);
     expect(decided.winners).not.toContain("KMLM");
@@ -1994,10 +2020,120 @@ describe("risk-off ETF relative-strength expression", () => {
       returns: dbmfThenClse,
       quotes: allEtfQuotes,
       above200: etfAbove200(),
+      returns21: etfRs21(),
     });
     expect(heldCtaPair.winners).toEqual(["DBMF", "CLSE"]);
     expect(heldCtaPair.sells.map((s) => s.symbol)).toEqual(["KMLM"]);
     expect(heldCtaPair.buy?.symbol).toBe("CLSE");
+  });
+
+  it("CTA 21d confirmation: pass both, fail 21d, ignore on non-CTA, fall through", () => {
+    expect(RISKOFF_ETF_CTA_CONFIRM_DAYS).toBe(21);
+    expect(RISKOFF_ETF_CTA_FAMILY).toEqual(["DBMF", "KMLM"]);
+    expect(isRiskoffEtfCta("CLSE")).toBe(false);
+    const closes = Array.from({ length: 40 }, () => 100);
+    closes[closes.length - 1] = 110;
+    expect(periodReturn(closes, RISKOFF_ETF_CTA_CONFIRM_DAYS)).toBeCloseTo(0.1);
+    expect(periodReturn(closes.slice(-RISKOFF_ETF_CTA_CONFIRM_DAYS), RISKOFF_ETF_CTA_CONFIRM_DAYS)).toBeNull();
+    const bars = closes.map((close) => ({ close, volume: 1 }));
+    expect(riskoffEtfReturnFromBars(bars, RISKOFF_ETF_CTA_CONFIRM_DAYS)).toBeCloseTo(0.1);
+    expect(riskoffEtfReturnFromBars(bars.slice(-21), RISKOFF_ETF_CTA_CONFIRM_DAYS)).toBeNull();
+
+    const both = etfRs21();
+    expect(riskoffEtfCtaConfirms21d("KMLM", both)).toBe(true);
+    expect(riskoffEtfCtaConfirms21d("DBMF", both)).toBe(true);
+    expect(riskoffEtfCtaConfirms21d("GLD", both)).toBe(true);
+    expect(riskoffEtfCtaConfirms21d("XLP", etfRs21({ XLP: -0.4 }))).toBe(true);
+    expect(pickRiskoffEtfWinner(kmlmWins, null, etfAbove200(), both)).toBe("KMLM");
+    expect(pickRiskoffEtfWinner(dbmfWins, null, etfAbove200(), both)).toBe("DBMF");
+    expect(pickRiskoffEtfSleeve(etfRs({ DBMF: 0.18, GLD: 0.1 }), null, etfAbove200(), both)).toEqual([
+      "DBMF",
+      "GLD",
+    ]);
+
+    const kmlmFails21 = etfRs21({ KMLM: 0 });
+    expect(kmlmFails21.KMLM).toBeLessThanOrEqual(kmlmFails21.BIL as number);
+    const kmlmThenXlp = etfRs({ KMLM: 0.22, XLP: 0.09 });
+    expect(riskoffEtfQualifiers(kmlmThenXlp, etfAbove200(), kmlmFails21)).not.toContain("KMLM");
+    expect(pickRiskoffEtfWinner(kmlmThenXlp, null, etfAbove200(), kmlmFails21)).toBe("XLP");
+    expect(pickRiskoffEtfSleeve(kmlmThenXlp, null, etfAbove200(), kmlmFails21)).toEqual(["XLP"]);
+    expect(pickRiskoffEtfWinner(kmlmWins, null, etfAbove200(), etfRs21({ KMLM: 0.01 }))).toBe("BIL");
+
+    const gldLoses21 = etfRs21({ GLD: -0.5, UUP: -0.4, XLP: -0.3, CLSE: -0.2 });
+    expect(pickRiskoffEtfWinner(gldWins, null, etfAbove200(), gldLoses21)).toBe("GLD");
+    expect(pickRiskoffEtfWinner(xlpWins, null, etfAbove200(), gldLoses21)).toBe("XLP");
+    expect(pickRiskoffEtfWinner(clseWins, null, etfAbove200(), gldLoses21)).toBe("CLSE");
+    expect(pickRiskoffEtfSleeve(etfRs({ UUP: 0.11, GLD: 0.04 }), null, etfAbove200(), gldLoses21)).toEqual([
+      "UUP",
+      "GLD",
+    ]);
+
+    const bothCtaFail = etfRs21({ DBMF: -0.02, KMLM: 0.005 });
+    const ranked = etfRs({ KMLM: 0.22, DBMF: 0.18, XLP: 0.09, GLD: 0.04 });
+    expect(pickRiskoffEtfWinner(ranked, null, etfAbove200(), bothCtaFail)).toBe("XLP");
+    expect(pickRiskoffEtfSleeve(ranked, null, etfAbove200(), bothCtaFail)).toEqual(["XLP", "GLD"]);
+    const onlyCtas = etfRs({ KMLM: 0.22, DBMF: 0.18 });
+    expect(pickRiskoffEtfWinner(onlyCtas, null, etfAbove200(), bothCtaFail)).toBe("BIL");
+    expect(pickRiskoffEtfSleeve(onlyCtas, null, etfAbove200(), bothCtaFail)).toEqual(["BIL"]);
+    const parked = decideRiskoffEtf({
+      riskOn: false,
+      positions: [etfPos("KMLM", 100, 27)],
+      sleeve: defaultSleeves().riskoff,
+      returns: onlyCtas,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: bothCtaFail,
+    });
+    expect(parked.winner).toBe("BIL");
+    expect(parked.winners).toEqual(["BIL"]);
+    expect(parked.sells.map((s) => s.symbol)).toEqual(["KMLM"]);
+    expect(parked.buy?.symbol).toBe("BIL");
+    expect(parked.reason).toBe("buy BIL");
+    expect(getRiskoffEtfMissingBarsMisses()).toBe(0);
+
+    const otherCta = etfRs21({ KMLM: -0.02 });
+    expect(pickRiskoffEtfWinner(etfRs({ KMLM: 0.22, DBMF: 0.15 }), null, etfAbove200(), otherCta)).toBe(
+      "DBMF",
+    );
+    expect(pickRiskoffEtfSleeve(etfRs({ KMLM: 0.2, XLP: 0.08 }), "KMLM", etfAbove200(), kmlmFails21)).toEqual([
+      "XLP",
+    ]);
+  });
+
+  it("CTA 21d confirmation fails closed on missing bars without debouncing the overlay", () => {
+    const withXlp = etfRs({ KMLM: 0.2, DBMF: 0.16, XLP: 0.08 });
+    expect(pickRiskoffEtfWinner(withXlp, null, etfAbove200(), etfRs21({ KMLM: null }))).toBe("DBMF");
+    expect(pickRiskoffEtfWinner(withXlp, null, etfAbove200(), etfRs21({ BIL: null }))).toBe("XLP");
+    expect(pickRiskoffEtfWinner(withXlp, null, etfAbove200(), null)).toBe("XLP");
+    expect(pickRiskoffEtfWinner(etfRs({ DBMF: 0.2 }), null, etfAbove200(), etfRs21({ DBMF: null }))).toBe(
+      "BIL",
+    );
+    expect(riskoffEtfCtaConfirms21d("DBMF", emptyRiskoffEtfReturns())).toBe(false);
+    expect(riskoffEtfCtaConfirms21d("GLD", null)).toBe(true);
+    const fellThrough = decideRiskoffEtf({
+      riskOn: false,
+      positions: [],
+      sleeve: defaultSleeves().riskoff,
+      returns: withXlp,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+    });
+    expect(fellThrough.winner).toBe("XLP");
+    expect(fellThrough.winners).toEqual(["XLP"]);
+    expect(fellThrough.reason).not.toMatch(/missing risk-off ETF bars/);
+    expect(getRiskoffEtfMissingBarsMisses()).toBe(0);
+    const noNonCta = decideRiskoffEtf({
+      riskOn: false,
+      positions: [],
+      sleeve: defaultSleeves().riskoff,
+      returns: kmlmWins,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: etfRs21({ KMLM: null, BIL: null }),
+    });
+    expect(noNonCta.winner).toBe("BIL");
+    expect(noNonCta.reason).toBe("buy BIL");
+    expect(getRiskoffEtfMissingBarsMisses()).toBe(0);
   });
 
   it("put-gated overlay: SPY above 200 → ~60%; SPY below 200 → ~40%; no USMV", () => {
