@@ -84,6 +84,7 @@ const allEtfQuotes = etfQuotes({
   CLSE: 25,
   USMV: 85,
   FTLS: 62,
+  PDBC: 14,
   BIL: 91,
 });
 
