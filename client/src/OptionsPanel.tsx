@@ -272,7 +272,7 @@ export function OptionsPanel({
       <div className="body">
         <div className="hint">
           {putsOnly
-            ? "Massive Starter chain (DELAYED 15m). Paper put debit verticals on MockBroker (SPY/QQQ/IWM after SPY 200dma break; HYG/LQD/JNK when that credit name is below its own 200dma). The defensive ETF overlay (GLD/UUP/TLT/IEF/XLU/XLP/DBMF/KMLM/CLSE/USMV/FTLS vs BIL; top-2 50/50) is a separate sleeve position when RISK OFF. Never a live send."
+            ? "Massive Starter chain (DELAYED 15m). Paper put debit verticals on MockBroker (SPY/QQQ/IWM after SPY 200dma break; HYG/LQD/JNK when that credit name is below its own 200dma). The defensive ETF overlay (GLD/PDBC/UUP/TLT/IEF/XLU/XLP/DBMF/KMLM/CLSE/USMV/FTLS vs BIL; top-2 50/50) is a separate sleeve position when RISK OFF. Never a live send."
             : HINT}
         </div>
         <div className="paper-form options-form">
