@@ -272,7 +272,7 @@ export function OptionsPanel({
       <div className="body">
         <div className="hint">
           {putsOnly
-            ? "Massive Starter chain (DELAYED 15m). Paper put debit verticals on MockBroker (SPY/QQQ/IWM after SPY 200dma break; HYG/LQD/JNK when that credit name is below its own 200dma). The defensive ETF overlay (GLD/UUP/TLT/IEF/XLU/XLP/DBMF/KMLM/CLSE/USMV vs BIL; top-2 50/50) is a separate sleeve position when RISK OFF. Never a live send."
+            ? "Massive Starter chain (DELAYED 15m). Paper put debit verticals on MockBroker (SPY/QQQ/IWM after SPY 200dma break; HYG/LQD/JNK when that credit name is below its own 200dma). The defensive ETF overlay (GLD/UUP/TLT/IEF/XLU/XLP/DBMF/KMLM/CLSE/USMV/FTLS vs BIL; top-2 50/50) is a separate sleeve position when RISK OFF. Never a live send."
             : HINT}
         </div>
         <div className="paper-form options-form">
@@ -408,10 +408,10 @@ export function OptionsPanel({
           <>
             <label>{RISKOFF_ETF_SYMBOLS.join(" / ")} (top-2 50/50)</label>
             <div className="hint">
-              Autopilot holds the one or two names among GLD, UUP, TLT, IEF, XLU, XLP, DBMF, KMLM, CLSE, and USMV that
+              Autopilot holds the one or two names among GLD, UUP, TLT, IEF, XLU, XLP, DBMF, KMLM, CLSE, USMV, and FTLS that
               beat BIL on 63-session return and sit above their own 200dma while RISK OFF. Two qualifiers
               split the overlay 50/50; one non-CTA takes the full sleeve; a lone CTA is 50/50 with BIL; none sits in BIL. If #1 is CTA
-              (DBMF/KMLM), #2 is a non-CTA name when one clears (CLSE or USMV can fill that slot); otherwise #2 is BIL. Never KMLM+DBMF. Re-rank only at the NY cash close, and do not RS-rotate a name off until it has been held 5 trading sessions. USMV is min-vol equity, not CTA, so a weak 21-session return does not skip it. Flattened on RISK ON. Modest size so puts still have
+              (DBMF/KMLM), #2 is a non-CTA name when one clears (CLSE, USMV, or FTLS can fill that slot); otherwise #2 is BIL. Never KMLM+DBMF. Re-rank only at the NY cash close, and do not RS-rotate a name off until it has been held 5 trading sessions. USMV is min-vol equity and FTLS is long/short equity; neither is CTA, so a weak 21-session return does not skip them. Flattened on RISK ON. Modest size so puts still have
               room.
             </div>
             <table>

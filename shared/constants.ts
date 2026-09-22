@@ -161,6 +161,7 @@ export const RISKOFF_QUOTE_STRIP = [
   "KMLM",
   "CLSE",
   "USMV",
+  "FTLS",
   "LQD",
   "JNK",
   "SJB",
@@ -170,8 +171,8 @@ export type RiskoffQuoteSymbol = (typeof RISKOFF_QUOTE_STRIP)[number];
  * Second risk-off expression: ETF RS overlay vs BIL. Paper only.
  * Preference order for an exact RS tie: GLD > UUP > duration (TLT, IEF)
  * > defensives (XLU, XLP) > trend (DBMF, KMLM) > long/short equity (CLSE)
- * > min-vol equity (USMV).
- * BIL is the cash/T-bill benchmark, last. CLSE and USMV are not CTA.
+ * > min-vol equity (USMV) > long/short equity (FTLS).
+ * BIL is the cash/T-bill benchmark, last. CLSE, USMV, and FTLS are not CTA.
  */
 export const RISKOFF_ETF_SYMBOLS = [
   "GLD",
@@ -184,6 +185,7 @@ export const RISKOFF_ETF_SYMBOLS = [
   "KMLM",
   "CLSE",
   "USMV",
+  "FTLS",
   "BIL",
 ] as const;
 export type RiskoffEtfSymbol = (typeof RISKOFF_ETF_SYMBOLS)[number];
@@ -193,7 +195,7 @@ export const RISKOFF_ETF_CANDIDATES = RISKOFF_ETF_SYMBOLS.filter(
 );
 /**
  * Managed-futures / CTA-style sleeve family on the 63d RS overlay.
- * DBMF and KMLM are the same diversifier sleeve. CLSE and USMV are not in this set.
+ * DBMF and KMLM are the same diversifier sleeve. CLSE, USMV, and FTLS are not in this set.
  * When RS #1 is in this set, #2 is the highest-ranked qualifier outside
  * the family. If no non-CTA name clears beat-BIL and own-200, #2 is BIL
  * at 50/50 — never two CTA names together (no KMLM+DBMF). Members must
