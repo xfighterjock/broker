@@ -1004,7 +1004,7 @@ export default function App() {
                 {tab === "options"
                   ? "Paper debit verticals on MockBroker. Massive Starter chain (15m delayed). Not live."
                   : tab === "riskoff"
-                    ? "Paper put debit verticals: SPY/QQQ/IWM only after SPY breaks 200dma; HYG/LQD/JNK ATM puts when that credit name is below its own 200dma. Plus a 63d RS ETF overlay (GLD/UUP/TLT/IEF/XLU/XLP/DBMF/KMLM/CLSE/USMV vs BIL; top-2 50/50 when two names beat BIL and sit above own 200; CTA family DBMF/KMLM must also beat BIL over 21 sessions; #2 is a non-CTA or else BIL (never two CTAs); rebalance once per NY cash close after a 5-session hold; USMV is not CTA) on MockBroker when RISK OFF. Massive delayed dailies for the ETF RS. Not live. Day book is not gated by this sleeve."
+                    ? "Paper put debit verticals: SPY/QQQ/IWM only after SPY breaks 200dma; HYG/LQD/JNK ATM puts when that credit name is below its own 200dma. Plus a 63d RS ETF overlay (GLD/UUP/TLT/IEF/XLU/XLP/DBMF/KMLM/CLSE/USMV/FTLS vs BIL; top-2 50/50 when two names beat BIL and sit above own 200; CTA family DBMF/KMLM must also beat BIL over 21 sessions; #2 is a non-CTA or else BIL (never two CTAs); rebalance once per NY cash close after a 5-session hold; USMV and FTLS are not CTA) on MockBroker when RISK OFF. Massive delayed dailies for the ETF RS. Not live. Day book is not gated by this sleeve."
                     : "Paper buy/sell fills at delayed last on MockBroker. Iterate from fills. Not live."}
               </div>
               <div className="kv">

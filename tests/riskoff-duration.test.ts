@@ -83,6 +83,7 @@ const allEtfQuotes = etfQuotes({
   KMLM: 27,
   CLSE: 25,
   USMV: 85,
+  FTLS: 62,
   BIL: 91,
 });
 
