@@ -15,6 +15,7 @@ import {
 import {
   emptyRiskoffEtfAbove200,
   emptyRiskoffEtfReturns,
+  riskoffEtfSleeveFrac,
   sizeRiskoffEtfShares,
   type RiskoffEtfAbove200,
   type RiskoffEtfReturns,
@@ -74,6 +75,7 @@ const gldWins = etfRs({ GLD: 0.12 });
 const tltWins = etfRs({ TLT: 0.14 });
 const allEtfQuotes = etfQuotes({
   GLD: 180,
+  GDX: 40,
   UUP: 28,
   TLT: 90,
   IEF: 95,
@@ -149,7 +151,7 @@ describe("gated TLT/IEF duration", () => {
     });
     const durationBuys = result.bought.filter((b) => b.gatedDuration);
     const overlayBuys = result.bought.filter((b) => b.sleeveId === "riskoff" && !b.gatedDuration);
-    expect(overlayBuys.map((b) => b.symbol)).toEqual(["GLD"]);
+    expect(overlayBuys.map((b) => b.symbol)).toEqual(["GLD", "BIL"]);
     expect(durationBuys).toHaveLength(1);
     expect(durationBuys[0].symbol).toBe("TLT");
     expect(durationBuys[0].thesis).toMatch(/gated duration TLT \(SPY below 200, dollar clear\)/);
@@ -209,7 +211,11 @@ describe("gated TLT/IEF duration", () => {
     expect(result.bought.filter((b) => b.gatedDuration)).toEqual([]);
     const overlayGld = book.getPositions().find((p) => p.symbol === "GLD" && !p.gatedDuration);
     expect(overlayGld?.qty).toBe(
-      sizeRiskoffEtfShares(180, DEFAULT_SLEEVE_EQUITY_USD, RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED),
+      sizeRiskoffEtfShares(
+        180,
+        DEFAULT_SLEEVE_EQUITY_USD,
+        riskoffEtfSleeveFrac(2, RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED),
+      ),
     );
   });
 

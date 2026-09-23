@@ -96,6 +96,7 @@ describe("mapTicker / parseInstrumentTickers", () => {
     expect(RISKOFF_QUOTE_STRIP).toContain("USMV");
     expect(RISKOFF_QUOTE_STRIP).toContain("FTLS");
     expect(RISKOFF_QUOTE_STRIP).toContain("PDBC");
+    expect(RISKOFF_QUOTE_STRIP).toContain("GDX");
     sleeves.riskoff.instruments = "SPY / QQQ / HYG / GLD / UUP / BIL";
     expect(symbolsForSleeve(sleeves.riskoff, "riskoff")).toEqual([...RISKOFF_QUOTE_STRIP]);
     expect(symbolsForSleeve(sleeves.riskoff, "riskoff")).toContain("DBMF");
@@ -104,6 +105,7 @@ describe("mapTicker / parseInstrumentTickers", () => {
     expect(symbolsForSleeve(sleeves.riskoff, "riskoff")).toContain("USMV");
     expect(symbolsForSleeve(sleeves.riskoff, "riskoff")).toContain("FTLS");
     expect(symbolsForSleeve(sleeves.riskoff, "riskoff")).toContain("PDBC");
+    expect(symbolsForSleeve(sleeves.riskoff, "riskoff")).toContain("GDX");
     sleeves.momentum.instruments = "ES, NQ, SPY";
     expect(symbolsForSleeve(sleeves.momentum, "momentum")).toEqual(["ES=F", "NQ=F", "SPY"]);
   });
