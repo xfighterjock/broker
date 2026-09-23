@@ -151,6 +151,7 @@ export const RISKOFF_QUOTE_STRIP = [
   "QQQ",
   "HYG",
   "GLD",
+  "GDX",
   "PDBC",
   "UUP",
   "BIL",
@@ -170,15 +171,17 @@ export const RISKOFF_QUOTE_STRIP = [
 export type RiskoffQuoteSymbol = (typeof RISKOFF_QUOTE_STRIP)[number];
 /**
  * Second risk-off expression: ETF RS overlay vs BIL. Paper only.
- * Preference order for an exact RS tie: GLD > broad commodities (PDBC)
- * > UUP > duration (TLT, IEF) > defensives (XLU, XLP) > trend (DBMF, KMLM)
+ * Preference order for an exact RS tie: GLD > GDX > PDBC > UUP
+ * > duration (TLT, IEF) > defensives (XLU, XLP) > trend (DBMF, KMLM)
  * > long/short equity (CLSE) > min-vol equity (USMV) > long/short equity (FTLS).
- * PDBC sits with commodities (after GLD, before UUP). Gold still wins a tie.
- * No new family — array order is the tie-break. BIL is the cash/T-bill
- * benchmark, last. PDBC, CLSE, USMV, and FTLS are not CTA.
+ * GDX (equity-levered gold beta) sits with gold, immediately after GLD and
+ * before PDBC. Bullion still wins an exact tie. Array order is the tie-break.
+ * BIL is the cash/T-bill benchmark, last. GDX, PDBC, CLSE, USMV, and FTLS
+ * are not CTA.
  */
 export const RISKOFF_ETF_SYMBOLS = [
   "GLD",
+  "GDX",
   "PDBC",
   "UUP",
   "TLT",
@@ -199,7 +202,7 @@ export const RISKOFF_ETF_CANDIDATES = RISKOFF_ETF_SYMBOLS.filter(
 );
 /**
  * Managed-futures / CTA-style sleeve family on the 63d RS overlay.
- * DBMF and KMLM are the same diversifier sleeve. PDBC, CLSE, USMV, and FTLS are not in this set.
+ * DBMF and KMLM are the same diversifier sleeve. GDX, PDBC, CLSE, USMV, and FTLS are not in this set.
  * When RS #1 is in this set, #2 is the highest-ranked qualifier outside
  * the family. If no non-CTA name clears beat-BIL and own-200, #2 is BIL
  * at 50/50 — never two CTA names together (no KMLM+DBMF). Members must
@@ -209,6 +212,19 @@ export const RISKOFF_ETF_CANDIDATES = RISKOFF_ETF_SYMBOLS.filter(
  */
 export const RISKOFF_ETF_CTA_FAMILY = ["DBMF", "KMLM"] as const;
 export type RiskoffEtfCtaSymbol = (typeof RISKOFF_ETF_CTA_FAMILY)[number];
+/**
+ * Gold-beta sleeve family on the 63d RS overlay. GLD (bullion) and GDX
+ * (VanEck Gold Miners, equity-levered gold beta) are the same diversifier
+ * sleeve. GDX is not CTA and does not need the 21-session beat-BIL
+ * confirmation. When RS #1 is in this set, #2 is the highest-ranked
+ * qualifier outside the family. If no non-gold name clears beat-BIL and
+ * own-200, #2 is BIL at 50/50 — never GLD+GDX. A non-gold #1 may still
+ * take one gold name as #2. A CTA #1 may still take GDX as non-CTA #2.
+ * Add future gold-family tickers here (and to RISKOFF_ETF_SYMBOLS).
+ * Paper / MockBroker only.
+ */
+export const RISKOFF_ETF_GOLD_FAMILY = ["GLD", "GDX"] as const;
+export type RiskoffEtfGoldSymbol = (typeof RISKOFF_ETF_GOLD_FAMILY)[number];
 /**
  * Extra beat-BIL window for RISKOFF_ETF_CTA_FAMILY only. Same total-return
  * definition as RISKOFF_ETF_LOOKBACK_DAYS (`last / close N sessions earlier

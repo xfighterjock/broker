@@ -5,6 +5,7 @@ import {
   RISKOFF_ETF_CASH_SYMBOL,
   RISKOFF_ETF_CTA_CONFIRM_DAYS,
   RISKOFF_ETF_CTA_FAMILY,
+  RISKOFF_ETF_GOLD_FAMILY,
   RISKOFF_ETF_EARLY_CLOSE_REBALANCE_MINUTE,
   RISKOFF_ETF_LOOKBACK_DAYS,
   RISKOFF_ETF_MIN_HOLD_SESSIONS,
@@ -158,6 +159,10 @@ export function isRiskoffEtfCta(symbol: string): boolean {
   return (RISKOFF_ETF_CTA_FAMILY as readonly string[]).includes(symbol.trim().toUpperCase());
 }
 
+export function isRiskoffEtfGold(symbol: string): boolean {
+  return (RISKOFF_ETF_GOLD_FAMILY as readonly string[]).includes(symbol.trim().toUpperCase());
+}
+
 export function isRiskoffEtfSymbol(symbol: string): symbol is RiskoffEtfSymbol {
   return (RISKOFF_ETF_SYMBOLS as readonly string[]).includes(symbol.trim().toUpperCase());
 }
@@ -302,18 +307,23 @@ export function riskoffEtfReturnsReady(returns: RiskoffEtfReturns): boolean {
  * Among names that beat BIL, pick the highest 63d return. If a held name is still eligible, keep it
  * unless a challenger leads by RISKOFF_ETF_RS_HYSTERESIS or more. Exact RS
  * tie keeps a held name when it is still eligible, else preference order
- * GLD > PDBC > UUP > TLT > IEF > XLU > XLP > DBMF > KMLM > CLSE > USMV > FTLS. Hysteresis does not apply
+ * GLD > GDX > PDBC > UUP > TLT > IEF > XLU > XLP > DBMF > KMLM > CLSE > USMV > FTLS. Hysteresis does not apply
  * when held is missing, not an overlay candidate, or ineligible (return ≤ BIL).
  * Pass above200 to treat own-200 as a qualifier filter (beat BIL and above
  * 200); omit it to test RS/hysteresis in isolation. Names that fail 200 are
  * skipped; if none qualify → BIL. BIL itself is never 200-filtered.
  * While RISK OFF, pickRiskoffEtfSleeve then takes the top-2 qualifiers at
- * 50/50 overlay notional (one name at full size; none → BIL). Overlay
+ * 50/50 overlay notional (one non-gold non-CTA name at full size; a lone
+ * CTA or a lone gold name is 50/50 with BIL; none → BIL). Overlay
  * notional is 60% while spyAbove200 === true (puts gated) and 40% when SPY
  * is below 200. When #1 is in RISKOFF_ETF_CTA_FAMILY, #2 is the highest
- * non-CTA qualifier. If none clears beat-BIL and own-200, #2 is BIL at
- * 50/50 — never two CTAs (no KMLM+DBMF). A lone CTA is still 50/50 with
- * BIL, not the full overlay. Pass returns21 to also require each CTA-family
+ * non-CTA qualifier (a gold name may fill that slot). If none clears
+ * beat-BIL and own-200, #2 is BIL at 50/50 — never two CTAs (no KMLM+DBMF).
+ * A lone CTA is still 50/50 with BIL, not the full overlay. When #1 is in
+ * RISKOFF_ETF_GOLD_FAMILY, #2 is the highest non-gold qualifier (a CTA may
+ * fill that slot if it cleared the 21d gate). If none does, #2 is BIL at
+ * 50/50 — never GLD+GDX. A lone gold name is 50/50 with BIL. CTA filter
+ * runs first, then gold, if a name were ever in both sets. Pass returns21 to also require each CTA-family
  * name to beat BIL on RISKOFF_ETF_CTA_CONFIRM_DAYS (strict >; missing bars
  * fail closed for that CTA only). Omit returns21 to test 63d RS in
  * isolation. Non-CTA names ignore returns21. A failed CTA is dropped from
@@ -420,10 +430,13 @@ function pickFromPool(
 }
 
 /**
- * Second sleeve name. When #1 is CTA, only a non-CTA qualifier may take #2.
- * No non-CTA that clears the gates → BIL (50/50), never the other CTA.
- * Hysteresis still applies inside the non-CTA pool. A non-CTA #1 uses the
- * ordinary remaining pool (a CTA may be #2).
+ * Second sleeve name. Family filters compose: CTA first, then gold.
+ * When #1 is CTA, #2 comes from the non-CTA pool (gold names may remain,
+ * so GDX can diversify a CTA #1). Empty non-CTA pool → BIL, never the
+ * other CTA. When #1 is gold, #2 comes from the non-gold pool (CTAs may
+ * remain if they already cleared the 21d gate). Empty non-gold pool → BIL,
+ * never GLD+GDX. A non-family #1 uses the ordinary remaining pool.
+ * Hysteresis still applies inside the filtered pool.
  */
 export function pickRiskoffEtfSecond(
   remaining: RiskoffEtfCandidate[],
@@ -431,13 +444,17 @@ export function pickRiskoffEtfSecond(
   returns: RiskoffEtfReturns,
   held: readonly string[] = [],
 ): RiskoffEtfSymbol | null {
+  let pool = remaining;
   if (isRiskoffEtfCta(first)) {
-    const nonCta = remaining.filter((s) => !isRiskoffEtfCta(s));
-    if (nonCta.length === 0) return RISKOFF_ETF_CASH_SYMBOL;
-    return pickFromPool(nonCta, returns, held);
+    pool = pool.filter((s) => !isRiskoffEtfCta(s));
+    if (pool.length === 0) return RISKOFF_ETF_CASH_SYMBOL;
   }
-  if (remaining.length === 0) return null;
-  return pickFromPool(remaining, returns, held);
+  if (isRiskoffEtfGold(first)) {
+    pool = pool.filter((s) => !isRiskoffEtfGold(s));
+    if (pool.length === 0) return RISKOFF_ETF_CASH_SYMBOL;
+  }
+  if (pool.length === 0) return null;
+  return pickFromPool(pool, returns, held);
 }
 
 export function pickRiskoffEtfSleeve(
@@ -637,23 +654,41 @@ function protectedOverlayNames(
   return out;
 }
 
-/** Keep names still inside the minimum hold. Never leave two CTAs in the sleeve. */
+function sameFamilyPair(anchor: string, candidate: string): boolean {
+  if (isRiskoffEtfCta(anchor) && isRiskoffEtfCta(candidate)) return true;
+  if (isRiskoffEtfGold(anchor) && isRiskoffEtfGold(candidate)) return true;
+  return false;
+}
+
+function anchorPairsWithBil(anchor: string): boolean {
+  return isRiskoffEtfCta(anchor) || isRiskoffEtfGold(anchor);
+}
+
+function collapseDualFamily(
+  kept: RiskoffEtfSymbol[],
+  desired: RiskoffEtfSymbol[],
+  isMember: (symbol: string) => boolean,
+): RiskoffEtfSymbol[] {
+  const members = kept.filter((s) => isMember(s));
+  if (members.length < 2) return kept;
+  const prefer = desired.find((d) => members.includes(d)) ?? members[0];
+  return [prefer];
+}
+
+/** Keep names still inside the minimum hold. Never leave two CTAs or two gold names. */
 function applyOverlayMinHold(
   desired: RiskoffEtfSymbol[],
   protectedNames: RiskoffEtfSymbol[],
 ): RiskoffEtfSymbol[] {
   if (protectedNames.length === 0) return desired;
   let kept = protectedNames.slice(0, RISKOFF_ETF_TOP_N);
-  const ctaKept = kept.filter((s) => isRiskoffEtfCta(s));
-  if (ctaKept.length >= 2) {
-    const prefer = desired.find((d) => ctaKept.includes(d)) ?? ctaKept[0];
-    kept = [prefer];
-  }
+  kept = collapseDualFamily(kept, desired, isRiskoffEtfCta);
+  kept = collapseDualFamily(kept, desired, isRiskoffEtfGold);
   if (kept.length >= RISKOFF_ETF_TOP_N) return kept.slice(0, RISKOFF_ETF_TOP_N);
   const anchor = kept[0];
-  const filler = desired.find((d) => d !== anchor && !(isRiskoffEtfCta(anchor) && isRiskoffEtfCta(d)));
-  if (!filler || (filler === RISKOFF_ETF_CASH_SYMBOL && !isRiskoffEtfCta(anchor))) {
-    return isRiskoffEtfCta(anchor) ? [anchor, RISKOFF_ETF_CASH_SYMBOL] : [anchor];
+  const filler = desired.find((d) => d !== anchor && !sameFamilyPair(anchor, d));
+  if (!filler || (filler === RISKOFF_ETF_CASH_SYMBOL && !anchorPairsWithBil(anchor))) {
+    return anchorPairsWithBil(anchor) ? [anchor, RISKOFF_ETF_CASH_SYMBOL] : [anchor];
   }
   return [anchor, filler];
 }
@@ -673,13 +708,20 @@ function retainProtectedWinners(
     const replaceAt = out.findIndex((s) => !protectedNames.includes(s));
     if (replaceAt >= 0) out[replaceAt] = name;
   }
-  const ctas = out.filter((s) => isRiskoffEtfCta(s));
-  if (ctas.length >= 2) {
-    const keep = protectedNames.find((s) => ctas.includes(s)) ?? ctas[0];
-    const rest = out.filter((s) => s !== keep && !isRiskoffEtfCta(s));
-    return [keep, rest[0] ?? RISKOFF_ETF_CASH_SYMBOL];
-  }
-  return out.slice(0, RISKOFF_ETF_TOP_N);
+  const broken = breakDualFamily(breakDualFamily(out, protectedNames, isRiskoffEtfCta), protectedNames, isRiskoffEtfGold);
+  return broken.slice(0, RISKOFF_ETF_TOP_N);
+}
+
+function breakDualFamily(
+  out: RiskoffEtfSymbol[],
+  protectedNames: RiskoffEtfSymbol[],
+  isMember: (symbol: string) => boolean,
+): RiskoffEtfSymbol[] {
+  const members = out.filter((s) => isMember(s));
+  if (members.length < 2) return out.slice(0, RISKOFF_ETF_TOP_N);
+  const keep = protectedNames.find((s) => members.includes(s)) ?? members[0];
+  const rest = out.filter((s) => s !== keep && !isMember(s));
+  return [keep, rest[0] ?? RISKOFF_ETF_CASH_SYMBOL];
 }
 
 function rebuyPriorOverlay(
