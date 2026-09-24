@@ -94,8 +94,10 @@ import {
   closeSideFor,
   detectStopHits,
   lastFromQuotes,
+  matchedQuote,
   makeFill,
   nySessionDate,
+  openLotDayPnl,
   oppositeSide,
   parsePaperClose,
   parsePaperOrder,
@@ -144,6 +146,7 @@ import {
   matchingOwnershipLong,
   optionsFreeCash,
   overlayPackageSymbol,
+  overlayDayPnl,
   overlayThesisTag,
   overlayUnrealized,
   parsePaperOverlay,
@@ -162,6 +165,7 @@ import {
   validateDebitVertical,
   valuationNow,
   verticalEntryWindowError,
+  verticalDayPnl,
   verticalPackageSymbol,
   verticalStopCooling,
   verticalUnrealized,
@@ -676,9 +680,14 @@ export function buildApp(deps: AppDeps): express.Express {
     const still = deps.broker.getPositionsSync().filter((p) => p.side !== "Flat" && p.qty > 0);
     for (const p of still) {
       if (isVerticalPosition(p) || isOverlayPosition(p)) continue;
-      const last = lastFromQuotes(quotes, p.symbol);
-      if (last === null) continue;
-      deps.broker.setUnrealizedPnl(p.symbol, signedPnl(p.side, p.avgPrice, last, p.qty, p.symbol));
+      const quote = matchedQuote(quotes, p.symbol);
+      if (!quote || quote.last === null) continue;
+      const last = quote.last;
+      deps.broker.setUnrealizedPnl(
+        p.symbol,
+        signedPnl(p.side, p.avgPrice, last, p.qty, p.symbol),
+        openLotDayPnl(p, quote),
+      );
     }
     const vHits = await markVerticalsQuiet();
     const oHits = await markOverlaysQuiet();
@@ -726,6 +735,7 @@ export function buildApp(deps: AppDeps): express.Express {
       deps.broker.patchPosition(p.symbol, {
         vertical: next,
         unrealizedPnl: u === null ? p.unrealizedPnl : u,
+        dayPnl: verticalDayPnl(next),
       });
     }
     const marked = deps.broker
@@ -815,6 +825,7 @@ export function buildApp(deps: AppDeps): express.Express {
       deps.broker.patchPosition(p.symbol, {
         overlay: next,
         unrealizedPnl: u === null ? p.unrealizedPnl : u,
+        dayPnl: overlayDayPnl(next),
       });
     }
     const marked = deps.broker
@@ -977,6 +988,7 @@ export function buildApp(deps: AppDeps): express.Express {
       side: "Short",
       avgPrice: v.premiumPerShare,
       unrealizedPnl: 0,
+      dayPnl: overlayDayPnl(meta),
       sleeveId: "options",
       overlay: meta,
     });
@@ -1077,6 +1089,7 @@ export function buildApp(deps: AppDeps): express.Express {
       side: "Long",
       avgPrice: v.netDebitPerShare,
       unrealizedPnl: 0,
+      dayPnl: verticalDayPnl(meta),
       sleeveId: parsed.sleeveId,
       vertical: meta,
     });
@@ -1122,7 +1135,8 @@ export function buildApp(deps: AppDeps): express.Express {
     const mockErr = assertMockOnly();
     if (mockErr) return { ok: false, error: mockErr };
     const quotes = await fetchDelayedQuotes([parsed.symbol]);
-    const last = lastFromQuotes(quotes, parsed.symbol);
+    const quote = matchedQuote(quotes, parsed.symbol);
+    const last = quote?.last ?? null;
     if (last === null) return { ok: false, error: "no delayed last" };
     await ensureSleeves();
     const clock = computeClock(new Date(), deps.getEvents());
@@ -1141,12 +1155,14 @@ export function buildApp(deps: AppDeps): express.Express {
     if (v.warn) {
       deps.engine.log(`paper risk note ${v.mapped}: ${v.warn}`);
     }
+    const side = positionSideFor(parsed.side);
     deps.broker.injectPosition({
       symbol: v.mapped,
       qty: parsed.qty,
-      side: positionSideFor(parsed.side),
+      side,
       avgPrice: last,
       unrealizedPnl: 0,
+      dayPnl: openLotDayPnl({ side, qty: parsed.qty, symbol: v.mapped }, quote),
       sleeveId: parsed.sleeveId,
       gatedDuration: parsed.gatedDuration === true,
     });

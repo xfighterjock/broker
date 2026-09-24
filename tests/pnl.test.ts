@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SLEEVE_EQUITY_USD } from "../shared/constants";
 import { defaultSleeves, type Position } from "../shared/types";
+import { overlayDayPnl } from "../server/src/overlay";
 import {
   applySessionPnl,
   computeSleevePnl,
   nySessionDate,
+  openLotDayPnl,
   openSessionMark,
   sleeveBook,
 } from "../server/src/paper";
+import { verticalDayPnl } from "../server/src/vertical";
 
 describe("sleeve daily + total P/L", () => {
   it("totalPnl is equity minus 100k starting book", () => {
@@ -108,5 +111,60 @@ describe("sleeve daily + total P/L", () => {
 
   it("nySessionDate is YYYY-MM-DD", () => {
     expect(nySessionDate(new Date("2026-08-27T22:00:00.000Z"))).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+});
+
+describe("open-lot day P/L", () => {
+  it("uses signedPnl vs prior close, including futures point value and short sign", () => {
+    expect(
+      openLotDayPnl(
+        { side: "Long", qty: 3, symbol: "SPY" },
+        { last: 102, prevClose: 100, change: 5 },
+      ),
+    ).toBe(6);
+    expect(
+      openLotDayPnl(
+        { side: "Short", qty: 1, symbol: "MES=F" },
+        { last: 5802, prevClose: 5800, change: 2 },
+      ),
+    ).toBe(-10);
+  });
+
+  it("falls back to the quote day change only when prior close is missing", () => {
+    expect(
+      openLotDayPnl(
+        { side: "Long", qty: 2, symbol: "QQQ" },
+        { last: 400, prevClose: null, change: 1.5 },
+      ),
+    ).toBe(3);
+    expect(
+      openLotDayPnl(
+        { side: "Short", qty: 1, symbol: "MES=F" },
+        { last: null, prevClose: null, change: 2 },
+      ),
+    ).toBe(-10);
+  });
+
+  it("does not invent a day P/L for a flat lot or a quote with no day move", () => {
+    expect(
+      openLotDayPnl(
+        { side: "Flat", qty: 0, symbol: "SPY" },
+        { last: 102, prevClose: 100, change: 2 },
+      ),
+    ).toBeNull();
+    expect(
+      openLotDayPnl(
+        { side: "Long", qty: 1, symbol: "SPY" },
+        { last: 102, prevClose: null, change: null },
+      ),
+    ).toBeNull();
+    expect(openLotDayPnl({ side: "Long", qty: 1, symbol: "SPY" }, null)).toBeNull();
+  });
+
+  it("dollarizes option netChange with the 100 multiplier", () => {
+    expect(verticalDayPnl({ qty: 2, long: { netChange: 0.1 }, short: { netChange: -0.05 } })).toBeCloseTo(30);
+    expect(verticalDayPnl({ qty: 1, long: { netChange: 0.1 }, short: {} })).toBeNull();
+    expect(overlayDayPnl({ qty: 1, leg: { netChange: 0.1 } })).toBe(-10);
+    expect(overlayDayPnl({ qty: 1, leg: {} })).toBeNull();
   });
 });

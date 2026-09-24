@@ -562,6 +562,79 @@ describe("flatten on stop cross", () => {
   });
 });
 
+describe("open-lot day P/L mark", () => {
+  beforeEach(() => {
+    delete process.env.GATE_PASSWORD;
+    resetQuoteCache();
+    resetMassiveCache();
+    resetRiskCache();
+  });
+  afterEach(() => {
+    clearMassiveTestKey();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    resetQuoteCache();
+    resetMassiveCache();
+    resetRiskCache();
+  });
+
+  it("stamps day P/L from prior close beside unrealized", async () => {
+    const { app, broker } = makeTestApp();
+    stubQuotes({ SPY: 110 });
+    broker.injectPosition({
+      symbol: "SPY",
+      qty: 2,
+      side: "Long",
+      avgPrice: 100,
+      unrealizedPnl: 0,
+      sleeveId: "momentum",
+    });
+    const srv = await listen(app);
+    try {
+      const q = await fetch(`${srv.url}/api/quotes?sleeve=momentum`);
+      expect(q.status).toBe(200);
+      const snapRes = await fetch(`${srv.url}/api/status`);
+      const snap = (await snapRes.json()) as StatusSnapshot;
+      const pos = snap.broker.positions.find((p) => p.symbol === "SPY" && p.side !== "Flat");
+      expect(pos?.unrealizedPnl).toBeCloseTo(20);
+      expect(pos?.dayPnl).toBeCloseTo(2);
+      expect(snap.broker.dayPnl).not.toBe(pos?.dayPnl);
+    } finally {
+      await srv.close();
+      broker.reset();
+    }
+  });
+
+  it("stores day P/L on the fill quote while unrealized stays flat at entry", async () => {
+    const { app, broker } = makeTestApp();
+    stubQuotes(110);
+    const srv = await listen(app);
+    try {
+      const placed = await fetch(`${srv.url}/api/paper/order`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sleeveId: "momentum",
+          symbol: "SPY",
+          side: "Buy",
+          qty: 1,
+          stopPrice: 100,
+          thesis: "day-pnl",
+        }),
+      });
+      expect(placed.status).toBe(200);
+      const snap = (await placed.json()) as StatusSnapshot;
+      const pos = snap.broker.positions.find((p) => p.symbol === "SPY" && p.side !== "Flat");
+      expect(pos?.avgPrice).toBe(110);
+      expect(pos?.unrealizedPnl).toBe(0);
+      expect(pos?.dayPnl).toBeCloseTo(1);
+    } finally {
+      await srv.close();
+      broker.reset();
+    }
+  });
+});
+
 describe("paper path never calls tradovate", () => {
   it("paper.ts and the paper routes do not reference tradovate", () => {
     const paper = readFileSync(resolve("server/src/paper.ts"), "utf8");

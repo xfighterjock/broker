@@ -14,6 +14,11 @@ function nid(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function writeDayPnl(p: Position, dayPnl: number | null): void {
+  if (dayPnl === null || !Number.isFinite(dayPnl)) delete p.dayPnl;
+  else p.dayPnl = dayPnl;
+}
+
 /**
  * In-memory mock book. Optionally persists to Redis so a refresh keeps
  * working orders/positions. Tests construct without Redis.
@@ -128,6 +133,7 @@ export class MockBroker implements BrokerClient {
       overlay: input.overlay,
       gatedDuration: input.gatedDuration,
     };
+    if (input.dayPnl != null && Number.isFinite(input.dayPnl)) pos.dayPnl = input.dayPnl;
     this.positions = this.positions.filter((p) => p.symbol !== input.symbol);
     this.positions.push(pos);
     this.persist();
@@ -161,6 +167,7 @@ export class MockBroker implements BrokerClient {
       p.qty = 0;
       p.side = "Flat";
       p.unrealizedPnl = 0;
+      delete p.dayPnl;
       flat.push({ ...p });
     }
     for (const o of this.orders) {
@@ -174,12 +181,13 @@ export class MockBroker implements BrokerClient {
     return flat;
   }
 
-  setUnrealizedPnl(symbol: string, pnl: number): void {
+  setUnrealizedPnl(symbol: string, pnl: number, dayPnl?: number | null): void {
     const want = symbol.toUpperCase();
     for (const p of this.positions) {
       if (p.side === "Flat") continue;
       if (p.symbol.toUpperCase() === want || (p.root !== null && p.root === want)) {
         p.unrealizedPnl = pnl;
+        if (dayPnl !== undefined) writeDayPnl(p, dayPnl);
       }
     }
     this.persist();
@@ -191,6 +199,7 @@ export class MockBroker implements BrokerClient {
       if (p.side === "Flat") continue;
       if (p.symbol.toUpperCase() === want) {
         if (patch.unrealizedPnl !== undefined) p.unrealizedPnl = patch.unrealizedPnl;
+        if (patch.dayPnl !== undefined) writeDayPnl(p, patch.dayPnl);
         if (patch.vertical) p.vertical = patch.vertical;
         if (patch.overlay) p.overlay = patch.overlay;
         if (patch.avgPrice !== undefined) p.avgPrice = patch.avgPrice;
@@ -269,6 +278,7 @@ export class MockBroker implements BrokerClient {
         p.qty = 0;
         p.side = "Flat";
         p.unrealizedPnl = 0;
+        delete p.dayPnl;
       }
       this.persist();
       return { ...p };

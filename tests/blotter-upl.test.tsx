@@ -4,7 +4,12 @@
 import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { BlotterOpenPositions, blotterOpenUnrealizedPnl, blotterPositionOnSleeve } from "../client/src/BlotterOpen";
+import {
+  BlotterOpenPositions,
+  blotterOpenDayPnl,
+  blotterOpenUnrealizedPnl,
+  blotterPositionOnSleeve,
+} from "../client/src/BlotterOpen";
 import { PaperBlotter } from "../client/src/App";
 import type { PaperFill, Position, SleeveId } from "../shared/types";
 
@@ -79,6 +84,33 @@ describe("blotter open unrealized P/L", () => {
     ).toBeNull();
   });
 
+  it("returns stored day P/L and does not copy unrealized when day is missing", () => {
+    expect(
+      blotterOpenDayPnl(position({ id: "a", symbol: "SPY", unrealizedPnl: 12.5, dayPnl: 3 })),
+    ).toBe(3);
+    expect(
+      blotterOpenDayPnl(
+        position({ id: "b", symbol: "MES", side: "Short", unrealizedPnl: -8, dayPnl: -2.5 }),
+      ),
+    ).toBe(-2.5);
+    expect(blotterOpenDayPnl(position({ id: "z", symbol: "QQQ", unrealizedPnl: 40 }))).toBeNull();
+    expect(
+      blotterOpenDayPnl(
+        position({ id: "n", symbol: "SPY", unrealizedPnl: 1, dayPnl: Number.NaN }),
+      ),
+    ).toBeNull();
+    expect(
+      blotterOpenDayPnl(
+        position({ id: "f", symbol: "SPY", side: "Flat", qty: 0, dayPnl: 9 }),
+      ),
+    ).toBeNull();
+    expect(
+      blotterOpenDayPnl(
+        position({ id: "q", symbol: "SPY", qty: 0, unrealizedPnl: 4, dayPnl: 4 }),
+      ),
+    ).toBeNull();
+  });
+
   it("keeps untagged lots on the day sleeve only", () => {
     expect(blotterPositionOnSleeve("day", undefined)).toBe(true);
     expect(blotterPositionOnSleeve("momentum", undefined)).toBe(false);
@@ -97,6 +129,7 @@ describe("BlotterOpenPositions", () => {
       sleeveId: "day",
       avgPrice: 5800,
       unrealizedPnl: 25,
+      dayPnl: 10,
       gated: true,
     }),
     position({
@@ -107,6 +140,7 @@ describe("BlotterOpenPositions", () => {
       qty: 2,
       avgPrice: 500,
       unrealizedPnl: -8,
+      dayPnl: 3,
     }),
     position({
       id: "flat",
@@ -126,6 +160,7 @@ describe("BlotterOpenPositions", () => {
       id: "untagged",
       symbol: "GLD",
       unrealizedPnl: 4,
+      dayPnl: -1.5,
     }),
   ];
 
@@ -147,6 +182,17 @@ describe("BlotterOpenPositions", () => {
       { text: "—", className: "muted blotter-upl" },
       { text: "+$4.00", className: "ok blotter-upl" },
     ]);
+    const day = Array.from(table.querySelectorAll(".blotter-dpnl")).map((el) => ({
+      text: el.textContent,
+      className: el.className,
+    }));
+    expect(day).toEqual([
+      { text: "+$10.00", className: "ok blotter-dpnl" },
+      { text: "—", className: "muted blotter-dpnl" },
+      { text: "-$1.50", className: "err blotter-dpnl" },
+    ]);
+    const headers = Array.from(table.querySelectorAll("th")).map((th) => th.textContent);
+    expect(headers).toEqual(["Sym", "Side", "Qty", "Avg", "uPnL", "dPnL"]);
     expect(table.textContent).not.toContain("IWM");
     expect(table.textContent).not.toContain("99");
     expect(table.textContent).not.toContain("SPY");
@@ -160,6 +206,9 @@ describe("BlotterOpenPositions", () => {
     const cell = table.querySelector(".blotter-upl");
     expect(cell?.textContent).toBe("-$8.00");
     expect(cell?.className).toBe("err blotter-upl");
+    const day = table.querySelector(".blotter-dpnl");
+    expect(day?.textContent).toBe("+$3.00");
+    expect(day?.className).toBe("ok blotter-dpnl");
     expect(table.textContent).not.toContain("MESU6");
     expect(table.textContent).not.toContain("GLD");
   });
@@ -168,6 +217,7 @@ describe("BlotterOpenPositions", () => {
     const table = openTable("ownership");
     expect(table.textContent).toContain("flat");
     expect(table.querySelector(".blotter-upl")).toBeNull();
+    expect(table.querySelector(".blotter-dpnl")).toBeNull();
   });
 
   it("prints a zero mark as $0.00 without a gain/loss color", () => {
@@ -175,13 +225,16 @@ describe("BlotterOpenPositions", () => {
       <BlotterOpenPositions
         sleeveId="options"
         positions={[
-          position({ id: "opt", symbol: "SPY", sleeveId: "options", unrealizedPnl: 0 }),
+          position({ id: "opt", symbol: "SPY", sleeveId: "options", unrealizedPnl: 0, dayPnl: 0 }),
         ]}
       />,
     );
     const cell = node.querySelector(".blotter-upl");
     expect(cell?.textContent).toBe("$0.00");
     expect(cell?.className).toBe("muted blotter-upl");
+    const day = node.querySelector(".blotter-dpnl");
+    expect(day?.textContent).toBe("$0.00");
+    expect(day?.className).toBe("muted blotter-dpnl");
   });
 });
 
@@ -208,6 +261,7 @@ describe("PaperBlotter fill journal", () => {
             root: "MES",
             sleeveId: "day",
             unrealizedPnl: 15,
+            dayPnl: 6,
             gated: true,
           }),
         ]}
@@ -223,9 +277,14 @@ describe("PaperBlotter fill journal", () => {
     expect(headers).toEqual(["Ts", "Sym", "Side", "Qty", "Px", "Notes", ""]);
     expect(fills!.textContent).toContain("stop hit");
     expect(fills!.querySelector(".blotter-upl")).toBeNull();
+    expect(fills!.querySelector(".blotter-dpnl")).toBeNull();
     expect(fills!.textContent).not.toContain("+$15.00");
+    expect(fills!.textContent).not.toContain("+$6.00");
     const openCell = node.querySelector("table.blotter-open .blotter-upl");
     expect(openCell?.textContent).toBe("+$15.00");
+    const openDay = node.querySelector("table.blotter-open .blotter-dpnl");
+    expect(openDay?.textContent).toBe("+$6.00");
+    expect(openDay?.className).toBe("ok blotter-dpnl");
     expect(node.querySelector("table.blotter-open .sym-tip")?.getAttribute("title")).toBe(
       "CME Micro E-mini S&P 500 futures",
     );

@@ -161,6 +161,12 @@ export interface Position {
   side: PositionSide;
   avgPrice: number;
   unrealizedPnl: number;
+  /**
+   * Open-lot day P/L (blotter dPnL). Stock/futures: signed mark vs prior close.
+   * Vertical/overlay: E*TRADE netChange × 100. Absent until the paper mark runs.
+   * Not MockBroker.getDayPnl() / account `dayPnl`.
+   */
+  dayPnl?: number | null;
   gated: boolean;
   sleeveId?: SleeveId;
   /** Two-leg debit vertical on the options or riskoff sleeve. Absent for stock/futures paper. */
@@ -600,6 +606,8 @@ export interface OptionLeg {
   bid: number | null;
   ask: number | null;
   last: number | null;
+  /** E*TRADE netChange: premium points vs prior close. Absent on hand-built legs. */
+  netChange?: number | null;
   bidSize: number | null;
   askSize: number | null;
   openInterest: number | null;

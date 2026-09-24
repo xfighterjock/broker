@@ -52,9 +52,11 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **day_loss_cap** — FCM eventType for a paper loss flatten. Two payloads: GATE daily-loss on mock dayPnl (`day_loss_cap:gate_daily:{NY date}`) vs the day sleeve’s own `lossCapUsd` (`day_loss_cap:sleeve:{NY date}`). The sleeve body is used only when that sleeve’s book actually crossed its cap.
 
-**dayPnl** — MockBroker.getDayPnl(): Redis `mock:day_pnl` realized accumulator plus open unrealized. GATE flatten-on-daily-loss ($500 dailyLossUsd). Not the day sleeve `lossCapUsd`. Does not roll with NY session marks. POST `/api/paper/reset` rebuilds it from remaining sleeves' session daily; POST `/api/day-pnl` sets it by hand.
+**dayPnl** — MockBroker.getDayPnl(): Redis `mock:day_pnl` realized accumulator plus open unrealized. GATE flatten-on-daily-loss ($500 dailyLossUsd). Not the day sleeve `lossCapUsd`. Not the blotter **dPnL** column (that is one open lot's mark vs prior close). Does not roll with NY session marks. POST `/api/paper/reset` rebuilds it from remaining sleeves' session daily; POST `/api/day-pnl` sets it by hand.
 
 **DBMF** — iMGP DBi Managed Futures Strategy ETF. Managed-futures / CTA-family candidate on the risk-off 63d RS overlay (RISKOFF_ETF_CTA_FAMILY with KMLM; trend bucket after defensives XLU/XLP). Also needs a 21-session total return strictly above BIL (RISKOFF_ETF_CTA_CONFIRM_DAYS); missing 21d bars skip DBMF.
+
+**dPnL** — Day P/L on one open mock lot in the paper blotter (`Position.dayPnl`). Stock and futures: same `signedPnl` as uPnL (side, qty, point value) vs prior close, or the quote's day change when prior close is missing. Debit vertical: (long netChange − short netChange) × 100 × qty. Short overlay: −netChange × 100 × qty. Signed dollars, green/red, same as sleeve-tab P/L. Distinct from uPnL and from account dayPnl. Flat or zero qty is not an open row. Fill journal has no dPnL column.
 
 **DTE** — Days to expiration. Auto verticals target 30-45 DTE and exit at 21 DTE (OPTIONS_DTE_EXIT). Credit-leg AUTO may try up to 3 expiries in that band (closest to midpoint first) when the first expiry's strikes fail the liquidity gate. Paper-only credit-leg fallback: if the 30-45 band is empty, one standard monthly (3rd Friday) in 21–60 DTE (RISKOFF_CREDIT_LEG_MONTHLY_DTE_MIN/MAX). Equity-index puts and options-sleeve calls do not use that fallback.
 
@@ -260,7 +262,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **USMV** — iShares MSCI USA Min Vol Factor ETF. Min-vol equity candidate on the risk-off 63d RS overlay. Same gates as the other non-CTA names: 63d total return strictly above BIL, and last above its own 200dma, or that name is skipped (none left → BIL). Exact RS ties use preference order after CLSE and before FTLS (GLD > GDX > PDBC > UUP > duration > defensives > trend > CLSE > USMV > FTLS). Top-2 50/50 and the 50bp hysteresis apply. Not CTA (not in RISKOFF_ETF_CTA_FAMILY) and not subject to the 21-session beat-BIL confirmation; a weak or missing 21d return does not skip USMV. Can fill non-CTA #2 when RS #1 is DBMF/KMLM. If no non-CTA clears, that #2 is BIL rather than the other CTA. Paper / MockBroker only.
 
-**uPnL** — Unrealized profit and loss on open mock positions. Marks from delayed last (or vertical/overlay MTM). The paper blotter shows that mark on each open sleeve row as signed dollars (green/red). Flat or zero qty is not an open row.
+**uPnL** — Unrealized profit and loss on open mock positions. Marks from delayed last (or vertical/overlay MTM). The paper blotter shows that mark on each open sleeve row as signed dollars (green/red), beside dPnL. Flat or zero qty is not an open row.
 
 **Vite** — Client bundler/dev server for the React SPA.
 

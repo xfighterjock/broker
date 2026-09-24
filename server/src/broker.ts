@@ -17,6 +17,8 @@ export interface InjectPositionInput {
   side: "Long" | "Short";
   avgPrice?: number;
   unrealizedPnl?: number;
+  /** Open-lot day P/L. Omit when the mark has no prior close / netChange. */
+  dayPnl?: number | null;
   sleeveId?: SleeveId;
   vertical?: VerticalMeta;
   overlay?: OverlayMeta;
