@@ -97,13 +97,50 @@ export function signedPnl(
   return (exit - avgPrice) * dir * qty * value;
 }
 
-export function lastFromQuotes(quotes: DelayedQuote[], symbol: string): number | null {
+/** Same symbol match as lastFromQuotes. Skips a quote with no positive last. */
+export function matchedQuote(quotes: DelayedQuote[], symbol: string): DelayedQuote | null {
   const mapped = (mapTicker(symbol) ?? symbol).toUpperCase();
   const raw = symbol.trim().toUpperCase();
   for (const q of quotes) {
     const qs = q.symbol.toUpperCase();
     if (q.last === null || !Number.isFinite(q.last) || q.last <= 0) continue;
-    if (qs === mapped || qs === raw || qs === `${raw}=F` || mapped === `${qs}`) return q.last;
+    if (qs === mapped || qs === raw || qs === `${raw}=F` || mapped === `${qs}`) return q;
+  }
+  return null;
+}
+
+export function lastFromQuotes(quotes: DelayedQuote[], symbol: string): number | null {
+  return matchedQuote(quotes, symbol)?.last ?? null;
+}
+
+/**
+ * Open-lot day P/L. Same signedPnl as unrealized (side, qty, point value),
+ * with prior close as the reference instead of average price.
+ * When prior close is missing, quote.change is that point move (signedPnl from 0).
+ * Flat, zero qty, or no day move → null. Does not copy unrealizedPnl.
+ * Not the account mock:day_pnl accumulator.
+ */
+export function openLotDayPnl(
+  pos: Pick<Position, "side" | "qty" | "symbol">,
+  quote: Pick<DelayedQuote, "last" | "prevClose" | "change"> | null,
+): number | null {
+  if (pos.side === "Flat" || !(pos.qty > 0)) return null;
+  if (!quote) return null;
+  const last = quote.last;
+  const prev = quote.prevClose;
+  if (
+    last !== null &&
+    prev !== null &&
+    Number.isFinite(last) &&
+    Number.isFinite(prev) &&
+    last > 0 &&
+    prev > 0
+  ) {
+    return signedPnl(pos.side, prev, last, pos.qty, pos.symbol);
+  }
+  const change = quote.change;
+  if (change !== null && Number.isFinite(change)) {
+    return signedPnl(pos.side, 0, change, pos.qty, pos.symbol);
   }
   return null;
 }

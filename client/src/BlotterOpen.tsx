@@ -24,6 +24,20 @@ export function blotterOpenUnrealizedPnl(
   return position.unrealizedPnl;
 }
 
+/**
+ * Open-lot day P/L already stored on the position (`dayPnl`).
+ * Mark vs prior close (or option netChange), not account mock dayPnl and not uPnL.
+ * Missing or non-finite stays blank — do not copy unrealizedPnl.
+ */
+export function blotterOpenDayPnl(
+  position: Pick<Position, "side" | "qty" | "dayPnl">,
+): number | null {
+  if (position.side === "Flat" || !(position.qty > 0)) return null;
+  if (position.dayPnl === null || position.dayPnl === undefined) return null;
+  if (!Number.isFinite(position.dayPnl)) return null;
+  return position.dayPnl;
+}
+
 function formatPx(n: number | null): string {
   if (n === null || !Number.isFinite(n)) return "—";
   const abs = Math.abs(n);
@@ -60,11 +74,13 @@ export function BlotterOpenPositions({
             <th>Qty</th>
             <th>Avg</th>
             <th>uPnL</th>
+            <th title="Day P/L, mark vs prior close">dPnL</th>
           </tr>
         </thead>
         <tbody>
           {open.map((p) => {
             const upl = blotterOpenUnrealizedPnl(p);
+            const day = blotterOpenDayPnl(p);
             return (
               <tr key={p.id}>
                 <td>
@@ -76,12 +92,15 @@ export function BlotterOpenPositions({
                 <td className={upl === null ? "muted blotter-upl" : `${pnlClass(upl)} blotter-upl`}>
                   {upl === null ? "—" : formatPnlUsd(upl)}
                 </td>
+                <td className={day === null ? "muted blotter-dpnl" : `${pnlClass(day)} blotter-dpnl`}>
+                  {day === null ? "—" : formatPnlUsd(day)}
+                </td>
               </tr>
             );
           })}
           {open.length === 0 && (
             <tr>
-              <td colSpan={5} className="muted">
+              <td colSpan={6} className="muted">
                 flat
               </td>
             </tr>

@@ -401,6 +401,24 @@ export function verticalUnrealized(meta: VerticalMeta, long: OptionLeg, short: O
   return close - meta.netDebitPaid;
 }
 
+/**
+ * Day P/L of a long debit vertical from each leg's E*TRADE netChange
+ * (premium vs prior close). Long the long leg, short the short leg.
+ * Same 100 multiplier as verticalUnrealized. Missing netChange → null.
+ */
+export function verticalDayPnl(meta: {
+  qty: number;
+  long: { netChange?: number | null };
+  short: { netChange?: number | null };
+}): number | null {
+  const longChg = meta.long.netChange;
+  const shortChg = meta.short.netChange;
+  if (longChg == null || shortChg == null) return null;
+  if (!Number.isFinite(longChg) || !Number.isFinite(shortChg)) return null;
+  if (!(meta.qty > 0)) return null;
+  return (longChg - shortChg) * OPTIONS_MULTIPLIER * meta.qty;
+}
+
 export type VerticalExit = {
   position: Position;
   reason: string;

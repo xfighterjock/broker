@@ -299,6 +299,20 @@ export function overlayUnrealized(meta: OverlayMeta, leg: OptionLeg): number | n
   return meta.premiumReceived - close;
 }
 
+/**
+ * Day P/L of a short overlay from the leg's E*TRADE netChange.
+ * A rise in premium is a loss. Same 100 multiplier as overlayUnrealized.
+ */
+export function overlayDayPnl(meta: {
+  qty: number;
+  leg: { netChange?: number | null };
+}): number | null {
+  const chg = meta.leg.netChange;
+  if (chg == null || !Number.isFinite(chg)) return null;
+  if (!(meta.qty > 0)) return null;
+  return -chg * OPTIONS_MULTIPLIER * meta.qty;
+}
+
 export function applyOverlayMarks(meta: OverlayMeta, leg: OptionLeg): OverlayMeta {
   return {
     ...meta,

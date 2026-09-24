@@ -893,6 +893,7 @@ export function parseOptionLeg(
     bid: num(o.bid),
     ask: num(o.ask),
     last: num(o.lastPrice),
+    netChange: num(o.netChange),
     bidSize: num(o.bidSize),
     askSize: num(o.askSize),
     openInterest: num(o.openInterest),

@@ -160,6 +160,7 @@ describe("parse E*TRADE option chain + greeks", () => {
       theta: -0.045,
       vega: 0.11,
       iv: 0.21,
+      netChange: 0.1,
     });
     const put70 = snap.legs.find((l) => l.right === "P" && l.strike === 70);
     expect(put70?.delta).toBe(-0.58);
@@ -443,6 +444,9 @@ describe("HTTP options chain + paper vertical (mocked E*TRADE)", () => {
       expect(pos?.vertical?.maxProfit).toBeCloseTo(590);
       expect(pos?.vertical?.long.osiKey).toContain("C00065000");
       expect(pos?.vertical?.short.osiKey).toContain("C00075000");
+      expect(pos?.vertical?.long.netChange).toBe(0.1);
+      expect(pos?.vertical?.short.netChange).toBe(0.02);
+      expect(pos?.dayPnl).toBeCloseTo(8);
       const buys = snap.paperBlotter.filter((f) => f.notes.includes("vertical long"));
       const sells = snap.paperBlotter.filter((f) => f.notes.includes("vertical short"));
       expect(buys).toHaveLength(1);
