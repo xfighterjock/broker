@@ -11,6 +11,8 @@ import type {
   StatusSnapshot,
 } from "../../shared/types";
 import { api } from "./api";
+import { SymbolLabel, SymbolList } from "./SymbolLabel";
+import { symbolHoverTitle } from "../../shared/symbolDescriptions";
 
 function fmt(n: number | null | undefined, d = 2): string {
   if (n === null || n === undefined || !Number.isFinite(n)) return "—";
@@ -265,7 +267,7 @@ export function OptionsPanel({
         <span className="badge delayed">DELAYED · MOCK</span>
         {chain && (
           <span className="muted scan-asof">
-            chain {chain.underlying} {chain.expiry} ({chain.source})
+            chain <SymbolLabel symbol={chain.underlying} /> {chain.expiry} ({chain.source})
           </span>
         )}
       </h2>
@@ -280,6 +282,7 @@ export function OptionsPanel({
             <label>Underlyer</label>
             <input
               value={symbolDraft}
+              title={symbolHoverTitle(symbolDraft)}
               onChange={(e) => setSymbolDraft(e.target.value.toUpperCase())}
               onBlur={() => {
                 const t = symbolDraft.trim().toUpperCase() || "SPY";
@@ -406,7 +409,9 @@ export function OptionsPanel({
         </div>
         {putsOnly && (
           <>
-            <label>{RISKOFF_ETF_SYMBOLS.join(" / ")} (top-2 50/50)</label>
+            <label>
+              <SymbolList symbols={RISKOFF_ETF_SYMBOLS} /> (top-2 50/50)
+            </label>
             <div className="hint">
               Autopilot holds the one or two names among GLD, GDX, UUP, TLT, IEF, XLU, XLP, DBMF, KMLM, CLSE, USMV, and FTLS that
               beat BIL on 63-session return and sit above their own 200dma while RISK OFF. Two qualifiers
@@ -427,7 +432,7 @@ export function OptionsPanel({
               <tbody>
                 {etfOpen.map((p) => (
                   <tr key={p.id}>
-                    <td>{p.symbol}</td>
+                    <td><SymbolLabel symbol={p.symbol} /></td>
                     <td>{p.qty}</td>
                     <td>{fmt(p.avgPrice)}</td>
                     <td>{fmtUsd(p.unrealizedPnl)}</td>
@@ -472,7 +477,7 @@ export function OptionsPanel({
               const days = dte(v.expiry, v.asOf);
               return (
                 <tr key={p.id}>
-                  <td>{p.symbol}</td>
+                  <td><SymbolLabel symbol={p.symbol} /></td>
                   <td>{v.qty}</td>
                   <td>{fmtUsd(v.netDebitPaid)}</td>
                   <td>{fmtUsd(p.unrealizedPnl)}</td>
@@ -561,12 +566,13 @@ export function OptionsPanel({
               const o = p.overlay!;
               return (
                 <tr key={p.id}>
-                  <td>{p.symbol}</td>
+                  <td><SymbolLabel symbol={p.symbol} /></td>
                   <td>{o.kind}</td>
                   <td>
                     {o.thesisSleeve}
                     {o.taLevel ? ` · TA ${o.taLevel}` : ""}
-                    {` · ${o.thesisSymbol}`}
+                    {" · "}
+                    <SymbolLabel symbol={o.thesisSymbol} />
                   </td>
                   <td>{o.qty}</td>
                   <td>{fmtUsd(o.premiumReceived)}</td>

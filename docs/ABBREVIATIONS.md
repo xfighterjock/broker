@@ -240,6 +240,8 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **SR3** — CME Three-Month SOFR futures. Gated root; freeze-card liquid contract; day quote strip. Massive Futures product_code SR3 (front-month); Yahoo fallback SR3=F.
 
+**SYMBOL_DESCRIPTIONS** — Shared map in `shared/symbolDescriptions.ts` of Event Gate ticker → short full name (methodology ETFs/futures roots from this glossary: SPY, QQQ, HYG, GLD, GDX, PDBC, UUP, BIL, TLT, IEF, XLU, XLP, DBMF, KMLM, CLSE, USMV, FTLS, LQD, JNK, SJB, ACWI, IWM, and gated roots MES/MNQ/ES/NQ/ZN/ZF/ZT/ZB/SR3/6E/M6E). Web paper UI sets HTML `title` (and an accessibility label) on primary symbol labels: quote strips, sleeve instrument chips, positions, orders, blotter, overlay names, options underlyings, and gated-root chips. Dated futures (`MESU6`) and Yahoo `=F` resolve to the root; option packages resolve to the underlying. Unknown symbols show the bare ticker with no tooltip. Display only. Does not change MockBroker orders. iOS essentials does not list individual tickers, so it has no VoiceOver symbol description.
+
 **Stage-3** — Post-print window on an NFP/CPI/FOMC day after knowledge_time is stamped (manual, ops, or auto-stamp after the print when a freeze card exists). Day-sleeve MES stoch may open only then, and only while GATE is idle. Not PRE-ARM or NO-STOP BAND. iOS essentials shows whether Stage-3 is armed.
 
 **StopLimit** — Stop-limit order type. Cancelled as market-or-stop on gated roots in PRE-ARM and NO-STOP BAND.

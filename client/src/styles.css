@@ -390,6 +390,7 @@ tr.active-row { background: #1a2430; }
   font-size: 11px;
 }
 .quote .sym { color: var(--cyan); font-weight: 600; }
+.sym-tip[title] { cursor: help; }
 .quote.up .last, .quote.up .chg { color: var(--green); }
 .quote.down .last, .quote.down .chg { color: var(--red); }
 .badge.delayed {
