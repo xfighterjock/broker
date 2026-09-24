@@ -307,7 +307,7 @@ export function riskoffEtfReturnsReady(returns: RiskoffEtfReturns): boolean {
  * Among names that beat BIL, pick the highest 63d return. If a held name is still eligible, keep it
  * unless a challenger leads by RISKOFF_ETF_RS_HYSTERESIS or more. Exact RS
  * tie keeps a held name when it is still eligible, else preference order
- * GLD > GDX > PDBC > UUP > TLT > IEF > XLU > XLP > DBMF > KMLM > CLSE > USMV > FTLS. Hysteresis does not apply
+ * GLD > GDX > PDBC > UUP > TLT > IEF > XLU > XLP > DBMF > KMLM > CLSE > USMV > QUAL > FTLS. Hysteresis does not apply
  * when held is missing, not an overlay candidate, or ineligible (return ≤ BIL).
  * Pass above200 to treat own-200 as a qualifier filter (beat BIL and above
  * 200); omit it to test RS/hysteresis in isolation. Names that fail 200 are
