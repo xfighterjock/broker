@@ -260,7 +260,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **USMV** — iShares MSCI USA Min Vol Factor ETF. Min-vol equity candidate on the risk-off 63d RS overlay. Same gates as the other non-CTA names: 63d total return strictly above BIL, and last above its own 200dma, or that name is skipped (none left → BIL). Exact RS ties use preference order after CLSE and before FTLS (GLD > GDX > PDBC > UUP > duration > defensives > trend > CLSE > USMV > FTLS). Top-2 50/50 and the 50bp hysteresis apply. Not CTA (not in RISKOFF_ETF_CTA_FAMILY) and not subject to the 21-session beat-BIL confirmation; a weak or missing 21d return does not skip USMV. Can fill non-CTA #2 when RS #1 is DBMF/KMLM. If no non-CTA clears, that #2 is BIL rather than the other CTA. Paper / MockBroker only.
 
-**uPnL** — Unrealized profit and loss on open mock positions. Marks from delayed last (or vertical/overlay MTM).
+**uPnL** — Unrealized profit and loss on open mock positions. Marks from delayed last (or vertical/overlay MTM). The paper blotter shows that mark on each open sleeve row as signed dollars (green/red). Flat or zero qty is not an open row.
 
 **Vite** — Client bundler/dev server for the React SPA.
 

@@ -33,6 +33,7 @@ import { MobileEssentials, useEssentialsView } from "./MobileEssentials";
 import { PaperBanner, PaperTradeRow, type PaperPrefill } from "./PaperTrade";
 import { OptionsPanel } from "./OptionsPanel";
 import { ScanPanel } from "./ScanPanel";
+import { BlotterOpenPositions } from "./BlotterOpen";
 import { SymbolLabel } from "./SymbolLabel";
 import { splitInstrumentLabels, symbolHoverTitle } from "../../shared/symbolDescriptions";
 
@@ -125,9 +126,10 @@ function QuoteStrip({ quotes }: { quotes: DelayedQuote[] }) {
   );
 }
 
-function PaperBlotter({
+export function PaperBlotter({
   sleeveId,
   fills,
+  positions,
   quotes,
   apply,
   setAuthNeeded,
@@ -135,6 +137,7 @@ function PaperBlotter({
 }: {
   sleeveId: SleeveId;
   fills: PaperFill[];
+  positions: StatusSnapshot["broker"]["positions"];
   quotes: DelayedQuote[];
   apply: (s: StatusSnapshot) => void;
   setAuthNeeded: (v: boolean) => void;
@@ -253,7 +256,8 @@ function PaperBlotter({
           <button type="button" onClick={fillAtLast}>Fill at last</button>
           <button type="submit" className="good">Record paper fill</button>
         </form>
-        <table>
+        <BlotterOpenPositions sleeveId={sleeveId} positions={positions} />
+        <table className="blotter-fills">
           <thead>
             <tr>
               <th>Ts</th>
@@ -934,6 +938,7 @@ export default function App() {
         <PaperBlotter
           sleeveId="day"
           fills={state.paperBlotter ?? []}
+          positions={state.broker.positions}
           quotes={quotes}
           apply={apply}
           setAuthNeeded={setAuthNeeded}
@@ -1196,6 +1201,7 @@ export default function App() {
             <PaperBlotter
               sleeveId={tab}
               fills={state.paperBlotter ?? []}
+              positions={state.broker.positions}
               quotes={quotes}
               apply={apply}
               setAuthNeeded={setAuthNeeded}
