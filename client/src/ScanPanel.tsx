@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ScanResponse, ScanRow, ScanSleeve } from "../../shared/types";
 import { api } from "./api";
+import { SymbolLabel } from "./SymbolLabel";
 
 function fmtPx(n: number): string {
   const abs = Math.abs(n);
@@ -106,7 +107,7 @@ export function ScanPanel({
             <tbody>
               {rows.map((r) => (
                 <tr key={r.symbol}>
-                  <td className="mono">{r.symbol}</td>
+                  <td className="mono"><SymbolLabel symbol={r.symbol} /></td>
                   <td>{r.name}</td>
                   <td>{r.sector}</td>
                   <td className="mono">{fmtPx(r.last)}</td>

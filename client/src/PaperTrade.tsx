@@ -7,6 +7,8 @@ import type {
   WorkingOrder,
 } from "../../shared/types";
 import { api } from "./api";
+import { SymbolLabel } from "./SymbolLabel";
+import { symbolHoverTitle } from "../../shared/symbolDescriptions";
 
 export type PaperPrefill = {
   symbol: string;
@@ -176,6 +178,7 @@ export function PaperTradeRow({
             <label>Symbol</label>
             <input
               value={form.symbol}
+              title={symbolHoverTitle(form.symbol)}
               onChange={(e) => setForm({ ...form, symbol: e.target.value })}
               placeholder={sleeveId === "day" ? "MES" : "SPY"}
             />
@@ -240,7 +243,7 @@ export function PaperTradeRow({
           <tbody>
             {open.map((p) => (
               <tr key={p.id}>
-                <td>{p.symbol}</td>
+                <td><SymbolLabel symbol={p.symbol} /></td>
                 <td>{p.side}</td>
                 <td>{p.qty}</td>
                 <td>{formatPx(p.avgPrice)}</td>
@@ -269,7 +272,7 @@ export function PaperTradeRow({
           <tbody>
             {stops.map((o) => (
               <tr key={o.id}>
-                <td>{o.symbol}</td>
+                <td><SymbolLabel symbol={o.symbol} /></td>
                 <td>{o.type}</td>
                 <td>{o.side}</td>
                 <td>{o.qty}</td>

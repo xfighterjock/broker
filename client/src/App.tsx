@@ -33,6 +33,8 @@ import { MobileEssentials, useEssentialsView } from "./MobileEssentials";
 import { PaperBanner, PaperTradeRow, type PaperPrefill } from "./PaperTrade";
 import { OptionsPanel } from "./OptionsPanel";
 import { ScanPanel } from "./ScanPanel";
+import { SymbolLabel } from "./SymbolLabel";
+import { splitInstrumentLabels, symbolHoverTitle } from "../../shared/symbolDescriptions";
 
 function formatEventEt(iso: string): string {
   return new Date(iso).toLocaleString("en-US", {
@@ -109,7 +111,7 @@ function QuoteStrip({ quotes }: { quotes: DelayedQuote[] }) {
           q.change === null || q.change === 0 ? "flat" : q.change > 0 ? "up" : "down";
         return (
           <div key={q.symbol} className={`quote ${dir}`}>
-            <span className="sym">{q.symbol}</span>
+            <SymbolLabel symbol={q.symbol} className="sym" />
             <span className="last">{q.error ? "—" : formatPx(q.last)}</span>
             <span className="chg">{q.error ? q.error : formatChange(q)}</span>
             <span className="badge delayed">DELAYED</span>
@@ -211,6 +213,7 @@ function PaperBlotter({
             <label>Symbol</label>
             <input
               value={form.symbol}
+              title={symbolHoverTitle(form.symbol)}
               onChange={(e) => setForm({ ...form, symbol: e.target.value })}
               placeholder="MES=F"
             />
@@ -266,7 +269,7 @@ function PaperBlotter({
             {[...sleeveFills].reverse().map((f) => (
               <tr key={f.id}>
                 <td className="mono">{formatFillTs(f.ts)}</td>
-                <td>{f.symbol}</td>
+                <td><SymbolLabel symbol={f.symbol} /></td>
                 <td className={f.side === "Buy" ? "ok" : "err"}>{f.side}</td>
                 <td>{f.qty}</td>
                 <td>{formatPx(f.price)}</td>
@@ -310,8 +313,8 @@ function OwnershipOverlayNote({ positions }: { positions: StatusSnapshot["broker
             const o = p.overlay!;
             return (
               <li key={p.id}>
-                {o.kind} {p.symbol} · thesis {o.thesisSleeve}
-                {o.taLevel ? ` · TA ${o.taLevel}` : ""} · {o.thesisSymbol}
+                {o.kind} <SymbolLabel symbol={p.symbol} /> · thesis {o.thesisSleeve}
+                {o.taLevel ? ` · TA ${o.taLevel}` : ""} · <SymbolLabel symbol={o.thesisSymbol} />
               </li>
             );
           })}
@@ -841,7 +844,7 @@ export default function App() {
               <tbody>
                 {working.slice(-16).map((o) => (
                   <tr key={o.id}>
-                    <td>{o.symbol}</td>
+                    <td><SymbolLabel symbol={o.symbol} /></td>
                     <td>{o.type}</td>
                     <td>{o.side}</td>
                     <td>{o.qty}</td>
@@ -868,7 +871,7 @@ export default function App() {
               <tbody>
                 {state.broker.positions.map((p) => (
                   <tr key={p.id}>
-                    <td>{p.symbol}</td>
+                    <td><SymbolLabel symbol={p.symbol} /></td>
                     <td>{p.side}</td>
                     <td>{p.qty}</td>
                     <td>{p.unrealizedPnl}</td>
@@ -887,7 +890,11 @@ export default function App() {
             </div>
             <label>Inject stop (watch the gate cancel it — not a directional entry)</label>
             <div className="inject">
-              <input value={inject.symbol} onChange={(e) => setInject({ ...inject, symbol: e.target.value })} />
+              <input
+                value={inject.symbol}
+                title={symbolHoverTitle(inject.symbol)}
+                onChange={(e) => setInject({ ...inject, symbol: e.target.value })}
+              />
               <select value={inject.type} onChange={(e) => setInject({ ...inject, type: e.target.value })}>
                 {["StopMarket", "StopLimit", "Market", "MIT", "Limit"].map((t) => (
                   <option key={t}>{t}</option>
@@ -915,7 +922,7 @@ export default function App() {
             <label>Gated roots</label>
             <div className="roots">
               {state.gatedRoots.map((r) => (
-                <span key={r} className="mono">{r}</span>
+                <SymbolLabel key={r} symbol={r} className="mono" />
               ))}
             </div>
             <div className="hint">Paper buy/sell is MockBroker only. Live Tradovate stays off. Flatten sleeve + gate still bind the day book.</div>
@@ -1069,6 +1076,13 @@ export default function App() {
                 onChange={(e) => setSleeveDraft({ ...sleeveDraft, microDrivers: e.target.value })}
               />
               <label>Instruments</label>
+              {splitInstrumentLabels(sleeveDraft.instruments).length > 0 && (
+                <div className="roots" aria-label="Sleeve instruments">
+                  {splitInstrumentLabels(sleeveDraft.instruments).map((ticker) => (
+                    <SymbolLabel key={ticker} symbol={ticker} className="mono" />
+                  ))}
+                </div>
+              )}
               <input
                 value={sleeveDraft.instruments}
                 onChange={(e) => setSleeveDraft({ ...sleeveDraft, instruments: e.target.value })}
