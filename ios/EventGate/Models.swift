@@ -120,10 +120,15 @@ struct ClockSnapshot: Codable {
 
 struct MarketSessionSnap: Codable {
     let cashOpen: Bool?
+    /// Inside 09:30 until the cash close. Distinct from cashOpen (calendar day).
+    let inCashSession: Bool?
     let closedReason: String?
     let holidayName: String?
     let asOfEt: String?
     let nextOpenEt: String?
+    let nextCloseEt: String?
+    let nextOpenAt: String?
+    let nextCloseAt: String?
 }
 
 struct RiskChecks: Codable {

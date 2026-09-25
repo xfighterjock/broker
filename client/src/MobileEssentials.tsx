@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type { SleeveId, StatusSnapshot } from "../../shared/types";
 import { AutoPaperChips } from "./AutoPaperChips";
+import { CashCountdown } from "./CashCountdown";
 import {
   autoPaperAnyOn,
   autoPaperFlags,
@@ -72,7 +73,10 @@ export function MobileEssentials({
       <header className="essentials-top">
         <div className="essentials-brand">EVENT GATE</div>
         <div className="sim">PAPER · MOCK</div>
-        <div className="essentials-clock">{clock?.nowEt ?? "—"}</div>
+        <div className="essentials-clock-wrap">
+          <div className="essentials-clock">{clock?.nowEt ?? "—"}</div>
+          <CashCountdown session={state.marketSession} />
+        </div>
       </header>
 
       {marketSessionLine(state) && (

@@ -28,6 +28,7 @@ import {
   SLEEVE_TAB_LABELS as TAB_LABELS,
 } from "./essentials";
 import { AutoPaperChips } from "./AutoPaperChips";
+import { CashCountdown } from "./CashCountdown";
 import { EtradePinBar } from "./EtradePin";
 import { MobileEssentials, useEssentialsView } from "./MobileEssentials";
 import { PaperBanner, PaperTradeRow, type PaperPrefill } from "./PaperTrade";
@@ -574,6 +575,7 @@ export default function App() {
         <div className="muted">{state.broker.name}</div>
         <span className="sep">|</span>
         <div className="clock">{clock?.nowEt}</div>
+        <CashCountdown session={state.marketSession} />
         <div className="grow" />
         <label className="toggle">
           <input

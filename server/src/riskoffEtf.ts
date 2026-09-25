@@ -6,13 +6,11 @@ import {
   RISKOFF_ETF_CTA_CONFIRM_DAYS,
   RISKOFF_ETF_CTA_FAMILY,
   RISKOFF_ETF_GOLD_FAMILY,
-  RISKOFF_ETF_EARLY_CLOSE_REBALANCE_MINUTE,
   RISKOFF_ETF_LOOKBACK_DAYS,
   RISKOFF_ETF_MIN_HOLD_SESSIONS,
   RISKOFF_ETF_MISSING_BARS_MAX_MISSES,
   RISKOFF_ETF_NOTIONAL_FRAC,
   RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED,
-  RISKOFF_ETF_REBALANCE_MINUTE,
   RISKOFF_ETF_REQUIRE_ABOVE_200,
   RISKOFF_ETF_RESIZE_NOTIONAL_FRAC,
   RISKOFF_ETF_RS_HYSTERESIS,
@@ -21,7 +19,7 @@ import {
   RISKOFF_ETF_TOP_N,
   type RiskoffEtfSymbol,
 } from "../../shared/constants";
-import { nyseDayOn } from "../../shared/marketSession";
+import { cashSessionCloseMinute } from "../../shared/marketSession";
 import type { Position, SleeveCard } from "../../shared/types";
 import { fetchMassiveDailyBars, type DailyBar } from "./massive";
 
@@ -114,12 +112,7 @@ function parseYmd(ymd: string): { year: number; month: number; day: number } | n
  * trading session for the overlay hold clock.
  */
 export function riskoffEtfCashCloseMinute(year: number, month: number, day: number): number | null {
-  const wd = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
-  if (wd === 0 || wd === 6) return null;
-  const info = nyseDayOn(year, month, day);
-  if (info?.kind === "holiday") return null;
-  if (info?.kind === "early_close") return RISKOFF_ETF_EARLY_CLOSE_REBALANCE_MINUTE;
-  return RISKOFF_ETF_REBALANCE_MINUTE;
+  return cashSessionCloseMinute(year, month, day);
 }
 
 /** True at or after today's NY cash close, and not yet rebalanced this session. */

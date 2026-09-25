@@ -1,14 +1,33 @@
 import { etParts, formatEt, pad2, zonedTimeToUtc } from "./clock";
+import {
+  RISKOFF_ETF_EARLY_CLOSE_REBALANCE_MINUTE,
+  RISKOFF_ETF_REBALANCE_MINUTE,
+} from "./constants";
 
 export type MarketClosedReason = "weekend" | "holiday" | "early_close";
+
+/** NYSE cash open, 09:30 America/New_York. */
+const CASH_OPEN_MINUTE = 9 * 60 + 30;
 
 export interface MarketSession {
   /** True on Mon–Fri that are not NYSE full-day holidays. Orthogonal to GateMode. */
   cashOpen: boolean;
+  /**
+   * True only while now is inside today's cash session: 09:30 ET until the
+   * cash close (16:00 ET, 13:00 ET on early-close days). Distinct from cashOpen.
+   */
+  inCashSession: boolean;
   closedReason: MarketClosedReason | null;
   holidayName: string | null;
   asOfEt: string;
+  /** Next 09:30 ET cash open on a regular session day, display form. */
   nextOpenEt: string | null;
+  /** Cash close that ends the current or next session, display form (ET). */
+  nextCloseEt: string | null;
+  /** ISO-8601 instant of nextOpenEt. Client countdown source. */
+  nextOpenAt: string | null;
+  /** ISO-8601 instant of nextCloseEt. Client countdown source. */
+  nextCloseAt: string | null;
 }
 
 export type NyseDayKind = "holiday" | "early_close";
@@ -163,21 +182,79 @@ function isWeekend(year: number, month: number, day: number): boolean {
   return wd === 0 || wd === 6;
 }
 
-function isFullHoliday(year: number, month: number, day: number): NyseDayInfo | null {
+/**
+ * Minute-of-day of the NYSE cash close, or null on weekends and full holidays.
+ * Early-close days close at 13:00 ET. Same instants the risk-off overlay
+ * rebalance uses (RISKOFF_ETF_REBALANCE_MINUTE / EARLY_CLOSE).
+ */
+export function cashSessionCloseMinute(year: number, month: number, day: number): number | null {
+  if (isWeekend(year, month, day)) return null;
   const info = nyseDayOn(year, month, day);
-  return info?.kind === "holiday" ? info : null;
+  if (info?.kind === "holiday") return null;
+  if (info?.kind === "early_close") return RISKOFF_ETF_EARLY_CLOSE_REBALANCE_MINUTE;
+  return RISKOFF_ETF_REBALANCE_MINUTE;
 }
 
-function nextCashOpenEt(now: Date): string | null {
+function isSessionDay(year: number, month: number, day: number): boolean {
+  return cashSessionCloseMinute(year, month, day) !== null;
+}
+
+function sessionOpenInstant(year: number, month: number, day: number): Date {
+  const hour = Math.floor(CASH_OPEN_MINUTE / 60);
+  const minute = CASH_OPEN_MINUTE % 60;
+  return zonedTimeToUtc(year, month, day, hour, minute, 0);
+}
+
+function sessionCloseInstant(year: number, month: number, day: number): Date {
+  const minuteOfDay = cashSessionCloseMinute(year, month, day);
+  if (minuteOfDay === null) throw new Error("not a cash session day");
+  return zonedTimeToUtc(
+    year,
+    month,
+    day,
+    Math.floor(minuteOfDay / 60),
+    minuteOfDay % 60,
+    0,
+  );
+}
+
+/** Next 09:30 ET open strictly after `now` on a regular session day. */
+export function nextCashOpenDate(now: Date): Date | null {
   const p = etParts(now);
   for (let i = 0; i < 16; i++) {
     const d = addDays(p.year, p.month, p.day, i);
-    if (isWeekend(d.year, d.month, d.day)) continue;
-    if (isFullHoliday(d.year, d.month, d.day)) continue;
-    const open = zonedTimeToUtc(d.year, d.month, d.day, 9, 30, 0);
-    if (open.getTime() > now.getTime()) return formatEt(open);
+    if (!isSessionDay(d.year, d.month, d.day)) continue;
+    const open = sessionOpenInstant(d.year, d.month, d.day);
+    if (open.getTime() > now.getTime()) return open;
   }
   return null;
+}
+
+/**
+ * Next cash close strictly after `now`. On a session day before the close
+ * (including pre-open) that is today's close — 16:00 ET, or 13:00 ET when
+ * the calendar marks an early close. Otherwise the close of the next session.
+ */
+export function nextCashCloseDate(now: Date): Date | null {
+  const p = etParts(now);
+  if (isSessionDay(p.year, p.month, p.day)) {
+    const close = sessionCloseInstant(p.year, p.month, p.day);
+    if (close.getTime() > now.getTime()) return close;
+  }
+  const open = nextCashOpenDate(now);
+  if (!open) return null;
+  const op = etParts(open);
+  return sessionCloseInstant(op.year, op.month, op.day);
+}
+
+/** Inside [09:30, cash close) ET on a regular or early-close session day. */
+export function cashSessionIsOpen(now: Date): boolean {
+  const p = etParts(now);
+  if (!isSessionDay(p.year, p.month, p.day)) return false;
+  const open = sessionOpenInstant(p.year, p.month, p.day);
+  const close = sessionCloseInstant(p.year, p.month, p.day);
+  const t = now.getTime();
+  return t >= open.getTime() && t < close.getTime();
 }
 
 export function computeMarketSession(now: Date): MarketSession {
@@ -203,13 +280,77 @@ export function computeMarketSession(now: Date): MarketSession {
     holidayName = early.name;
   }
 
+  const nextOpen = nextCashOpenDate(now);
+  const nextClose = nextCashCloseDate(now);
+
   return {
     cashOpen,
+    inCashSession: cashSessionIsOpen(now),
     closedReason,
     holidayName,
     asOfEt: formatEt(now),
-    nextOpenEt: nextCashOpenEt(now),
+    nextOpenEt: nextOpen ? formatEt(nextOpen) : null,
+    nextCloseEt: nextClose ? formatEt(nextClose) : null,
+    nextOpenAt: nextOpen ? nextOpen.toISOString() : null,
+    nextCloseAt: nextClose ? nextClose.toISOString() : null,
   };
+}
+
+export type CashCountdownKind = "open" | "close";
+
+export interface CashCountdownTarget {
+  kind: CashCountdownKind;
+  atMs: number;
+}
+
+/** Session fields the client needs to pick a countdown without a new calendar. */
+export type CashCountdownSession = Pick<
+  MarketSession,
+  "inCashSession" | "nextOpenAt" | "nextCloseAt"
+>;
+
+function parseInstant(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * Which instant to count toward. Trusts server timestamps. If the phase
+ * instant has already passed (stale snapshot), flips to the other future
+ * instant so the label can change without another request.
+ */
+export function cashCountdownTarget(
+  session: CashCountdownSession,
+  nowMs: number,
+): CashCountdownTarget | null {
+  const openMs = parseInstant(session.nextOpenAt);
+  const closeMs = parseInstant(session.nextCloseAt);
+  if (session.inCashSession) {
+    if (closeMs !== null && closeMs > nowMs) return { kind: "close", atMs: closeMs };
+    if (openMs !== null && openMs > nowMs) return { kind: "open", atMs: openMs };
+    return null;
+  }
+  if (openMs !== null && openMs > nowMs) return { kind: "open", atMs: openMs };
+  if (closeMs !== null && closeMs > nowMs) return { kind: "close", atMs: closeMs };
+  return null;
+}
+
+/** `2h 14m 03s`, `14m 03s`, or `03s`. Drops zero higher units. Seconds always shown. */
+export function formatCashCountdown(ms: number): string {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  const sec = `${pad2(s)}s`;
+  if (h > 0) return `${h}h ${m}m ${sec}`;
+  if (m > 0) return `${m}m ${sec}`;
+  return sec;
+}
+
+export function cashCountdownLabel(kind: CashCountdownKind, remainingMs: number): string {
+  const head = kind === "open" ? "Cash open in" : "Cash close in";
+  return `${head} ${formatCashCountdown(remainingMs)}`;
 }
 
 /** Web + iOS copy. Null when the cash session is a normal weekday (no early-close note). */
