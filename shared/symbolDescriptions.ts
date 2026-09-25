@@ -39,6 +39,7 @@ export const SYMBOL_DESCRIPTIONS: Readonly<Record<string, string>> = {
   USMV: "iShares MSCI USA Min Vol Factor ETF",
   QUAL: "iShares MSCI USA Quality Factor ETF",
   FTLS: "First Trust Long/Short Equity ETF",
+  BTAL: "AGF U.S. Market Neutral Anti-Beta Fund",
   ACWI: "iShares MSCI ACWI ETF",
 };
 

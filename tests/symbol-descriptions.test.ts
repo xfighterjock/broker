@@ -36,6 +36,7 @@ describe("symbol descriptions", () => {
     );
     expect(symbolDescription("GDX")).toBe("VanEck Gold Miners ETF");
     expect(symbolDescription("QUAL")).toBe("iShares MSCI USA Quality Factor ETF");
+    expect(symbolDescription("BTAL")).toBe("AGF U.S. Market Neutral Anti-Beta Fund");
     expect(symbolDescription("HYG")).toBe("iShares iBoxx $ High Yield Corporate Bond ETF");
     expect(symbolDescription("MES")).toBe("CME Micro E-mini S&P 500 futures");
     expect(symbolDescription("hyg")).toBe(symbolDescription("HYG"));
