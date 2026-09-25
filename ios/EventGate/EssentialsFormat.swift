@@ -119,6 +119,57 @@ enum EssentialsFormat {
         return "\(open.count) open · \(Int(lots)) lots"
     }
 
+    /// Matches `cashCountdownTarget` in shared/marketSession.ts.
+    /// Trusts server instants. If the phase instant has already passed
+    /// (stale snapshot), flips to the other future instant so the label
+    /// can change without another request. No parallel NYSE calendar.
+    static func cashCountdownTarget(_ session: MarketSessionSnap, now: Date) -> CashCountdownTarget? {
+        let open = session.nextOpenAt.flatMap { parseIso($0) }
+        let close = session.nextCloseAt.flatMap { parseIso($0) }
+        if session.inCashSession == true {
+            if let close, close > now { return CashCountdownTarget(kind: .close, at: close) }
+            if let open, open > now { return CashCountdownTarget(kind: .open, at: open) }
+            return nil
+        }
+        if let open, open > now { return CashCountdownTarget(kind: .open, at: open) }
+        if let close, close > now { return CashCountdownTarget(kind: .close, at: close) }
+        return nil
+    }
+
+    /// `2h 14m 03s`, `14m 03s`, or `03s`. Drops zero higher units. Seconds always shown.
+    /// A zero minute stays when hours are present (`2h 0m 03s`). Matches `formatCashCountdown`.
+    static func formatCashCountdown(_ ms: Int) -> String {
+        let totalSec = max(0, ms / 1000)
+        let h = totalSec / 3600
+        let m = (totalSec % 3600) / 60
+        let s = totalSec % 60
+        let sec = String(format: "%02ds", s)
+        if h > 0 { return "\(h)h \(m)m \(sec)" }
+        if m > 0 { return "\(m)m \(sec)" }
+        return sec
+    }
+
+    static func cashCountdownLabel(kind: CashCountdownKind, remainingMs: Int) -> String {
+        let head = kind == .open ? "Cash open in" : "Cash close in"
+        return "\(head) \(formatCashCountdown(remainingMs))"
+    }
+
+    /// Label plus the ET wall clock (`nextOpenEt` / `nextCloseEt`) for the chosen instant.
+    static func cashCountdownLine(session: MarketSessionSnap?, now: Date) -> CashCountdownLine? {
+        guard let session, let target = cashCountdownTarget(session, now: now) else { return nil }
+        let remaining = epochMs(target.at) - epochMs(now)
+        let wall = target.kind == .open ? session.nextOpenEt : session.nextCloseEt
+        return CashCountdownLine(
+            label: cashCountdownLabel(kind: target.kind, remainingMs: remaining),
+            wall: wall
+        )
+    }
+
+    /// Nearest millisecond, so the duration matches JS `Date` integer math.
+    static func epochMs(_ date: Date) -> Int {
+        Int((date.timeIntervalSince1970 * 1000).rounded())
+    }
+
     /// Matches `marketSessionBanner` in shared/marketSession.ts
     static func marketSessionBanner(_ snap: StatusSnapshot) -> String? {
         guard let session = snap.marketSession else { return nil }
@@ -207,6 +258,21 @@ enum EssentialsFormat {
         fmt.dateFormat = "EEE MM-dd HH:mm:ss"
         return fmt.string(from: date) + " ET"
     }
+}
+
+enum CashCountdownKind {
+    case open
+    case close
+}
+
+struct CashCountdownTarget {
+    let kind: CashCountdownKind
+    let at: Date
+}
+
+struct CashCountdownLine {
+    let label: String
+    let wall: String?
 }
 
 struct SleevePnlRow: Identifiable {

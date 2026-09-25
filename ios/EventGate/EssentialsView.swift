@@ -1,5 +1,50 @@
 import SwiftUI
 
+/// Live cash-open / cash-close countdown under the ET clock.
+/// Ticks on device from `marketSession` instants — no extra status poll.
+/// Mirrors `client/src/CashCountdown.tsx`.
+struct CashCountdownText: View {
+    let session: MarketSessionSnap?
+
+    var body: some View {
+        TimelineView(Self.tick) { context in
+            countdown(at: context.date)
+        }
+    }
+
+    /// Unix-epoch anchor so a 3s status refresh does not reset the one-second tick.
+    private static let tick = PeriodicTimelineSchedule(
+        from: Date(timeIntervalSince1970: 0),
+        by: 1
+    )
+
+    @ViewBuilder
+    private func countdown(at now: Date) -> some View {
+        if let line = EssentialsFormat.cashCountdownLine(session: session, now: now) {
+            CashCountdownLabel(label: line.label, wall: line.wall)
+        }
+    }
+}
+
+private struct CashCountdownLabel: View {
+    let label: String
+    let wall: String?
+
+    var body: some View {
+        let text = Text(label)
+            .font(.caption.monospaced().weight(.semibold))
+            .foregroundStyle(Color(red: 0.37, green: 0.78, blue: 0.86))
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .accessibilityIdentifier("cash-cd")
+        if let wall, !wall.isEmpty {
+            text.help(wall).accessibilityHint(wall)
+        } else {
+            text
+        }
+    }
+}
+
 struct EssentialsView: View {
     @EnvironmentObject private var status: StatusController
     @EnvironmentObject private var push: PushController
@@ -55,9 +100,14 @@ struct EssentialsView: View {
             Text("PAPER · MOCK")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(Color(red: 0.90, green: 0.69, blue: 0.24))
-            Spacer()
-            Text(snap?.clock?.nowEt ?? "—")
-                .font(.body.monospaced())
+            Spacer(minLength: 8)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(snap?.clock?.nowEt ?? "—")
+                    .font(.body.monospaced())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                CashCountdownText(session: snap?.marketSession)
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
