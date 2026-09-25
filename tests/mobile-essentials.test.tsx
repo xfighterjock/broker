@@ -53,10 +53,14 @@ function snapshot(over: Partial<StatusSnapshot> = {}): StatusSnapshot {
     },
     marketSession: {
       cashOpen: true,
+      inCashSession: true,
       closedReason: null,
       holidayName: null,
       asOfEt: "Tue 2026-09-01 13:32:01 EDT",
       nextOpenEt: "Wed 2026-09-02 09:30:00 EDT",
+      nextCloseEt: "Mon 2099-01-04 16:00:00 EST",
+      nextOpenAt: "2026-09-02T13:30:00.000Z",
+      nextCloseAt: "2099-01-04T21:00:00.000Z",
     },
     events: [],
     freeze: emptyFreeze(),
@@ -147,6 +151,7 @@ describe("MobileEssentials", () => {
         onFlatten={() => {}}
       />,
     );
+    expect(node.querySelector(".cash-cd")?.textContent).toMatch(/^Cash close in /);
     expect(node.textContent).toMatch(/EVENT GATE/);
     expect(node.textContent).toMatch(/PAPER · MOCK/);
     expect(node.textContent).toMatch(/13:32:01/);
@@ -176,10 +181,14 @@ describe("MobileEssentials", () => {
         state={snapshot({
           marketSession: {
             cashOpen: false,
+            inCashSession: false,
             closedReason: "holiday",
             holidayName: "Labor Day",
             asOfEt: "Mon 2026-09-07 10:00:00 EDT",
-            nextOpenEt: "Tue 2026-09-08 09:30:00 EDT",
+            nextOpenEt: "Mon 2099-01-04 09:30:00 EST",
+            nextCloseEt: "Mon 2099-01-04 16:00:00 EST",
+            nextOpenAt: "2099-01-04T14:30:00.000Z",
+            nextCloseAt: "2099-01-04T21:00:00.000Z",
           },
         })}
         onToggleGate={() => {}}
@@ -191,6 +200,7 @@ describe("MobileEssentials", () => {
     expect(node.querySelector(".essentials-market-closed")?.textContent).toBe(
       "US cash market closed — Labor Day",
     );
+    expect(node.querySelector(".cash-cd")?.textContent).toMatch(/^Cash open in /);
     expect(node.textContent).toMatch(/13:32:01/);
     expect(node.textContent).toMatch(/PRE-ARM/);
     expect(node.textContent).toMatch(/NFP/);

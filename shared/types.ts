@@ -542,7 +542,8 @@ export interface StatusSnapshot {
   tz: string;
   clock: ClockSnapshot;
   /**
-   * NYSE cash-session calendar (weekend / full holiday / early close).
+   * NYSE cash-session calendar (weekend / full holiday / early close) plus
+   * inCashSession and next open/close instants for the web countdown.
    * Top-level so clients do not overload GateMode. Does not flatten or pause AUTO.
    */
   marketSession: MarketSession;
