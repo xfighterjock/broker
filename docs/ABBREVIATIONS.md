@@ -108,9 +108,9 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **IEF** — iShares 7-10 Year Treasury Bond ETF. Intermediate-duration candidate on the risk-off 63d RS overlay (after TLT in the duration bucket). Also the fallback for gated duration when TLT is unquoted or sizes to 0.
 
-**inCashSession** — `marketSession` flag, true only from 09:30 ET until the NYSE cash close (16:00 ET, 13:00 ET on early-close days). Distinct from `cashOpen` (calendar day). Web countdown uses it to choose `Cash close in` vs `Cash open in`.
+**inCashSession** — `marketSession` flag, true only from 09:30 ET until the NYSE cash close (16:00 ET, 13:00 ET on early-close days). Distinct from `cashOpen` (calendar day). Web and iOS countdowns use it to choose `Cash close in` vs `Cash open in`.
 
-**iOS Event Gate** — Native SwiftUI app in ios/ (bundle com.logikmancer.mybroker). Phone Event Gate client: essentials (clock, US cash closed/holiday strip, GATE, RISK, AUTO PAPER chips, knowledge_time / Stage-3 arm + Stamp knowledge time, Flatten, sleeve P/L, E*TRADE PIN), paged Activity log, plus FCM. Users-table login + optional Face ID / Touch ID unlock of the Keychain session. Web `/m` remains for browsers. Push notification glyph is the AppIcon (same auto-agent artwork as the web favicon).
+**iOS Event Gate** — Native SwiftUI app in ios/ (bundle com.logikmancer.mybroker). Phone Event Gate client: essentials (clock, cash open/close countdown under the ET clock, US cash closed/holiday strip, GATE, RISK, AUTO PAPER chips, knowledge_time / Stage-3 arm + Stamp knowledge time, Flatten, sleeve P/L, E*TRADE PIN), paged Activity log, plus FCM. Users-table login + optional Face ID / Touch ID unlock of the Keychain session. Web `/m` remains for browsers. Push notification glyph is the AppIcon (same auto-agent artwork as the web favicon).
 
 **IWM** — iShares Russell 2000 ETF. Options quote strip; optional third equity-index put on riskoff when SPY is below 200dma and IWM is quoted.
 
@@ -130,7 +130,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **Market** — Market order type. Cancelled on gated roots in PRE-ARM and NO-STOP BAND.
 
-**marketSession** — Top-level GET `/api/status` field: NYSE cash calendar in ET (`cashOpen`, `inCashSession`, `closedReason`, `holidayName`, `asOfEt`, `nextOpenEt`, `nextCloseEt`, `nextOpenAt`, `nextCloseAt`). Not a GateMode. Web header and `/m` count down to `nextCloseAt` while `inCashSession` (`Cash close in 2h 14m 03s`) and to `nextOpenAt` otherwise (`Cash open in …`). Tick is client-side. Early close is 13:00 ET.
+**marketSession** — Top-level GET `/api/status` field: NYSE cash calendar in ET (`cashOpen`, `inCashSession`, `closedReason`, `holidayName`, `asOfEt`, `nextOpenEt`, `nextCloseEt`, `nextOpenAt`, `nextCloseAt`). Not a GateMode. Web header, `/m`, and the iOS essentials header count down to `nextCloseAt` while `inCashSession` (`Cash close in 2h 14m 03s`) and to `nextOpenAt` otherwise (`Cash open in …`). Tick is client-side (Swift `TimelineView` on iOS, about once a second, no extra status poll). Early close is 13:00 ET.
 
 **Massive** — Market-data vendor (api.massive.com). Same MASSIVE_API_KEY: Stocks Starter for equities last / S&P scan dailies / risk-gate and risk-off ETF bars (15-minute delayed); Futures for day MES 5m aggs and futures quote-strip lasts (front-month dated contracts such as MESU6 via `/futures/v1/contracts` + `/futures/v1/aggs` + `/futures/v1/snapshot`). No documented continuous F: ticker — do not invent one. Yahoo =F is the futures fallback.
 
