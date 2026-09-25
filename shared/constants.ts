@@ -181,6 +181,8 @@ export type RiskoffQuoteSymbol = (typeof RISKOFF_QUOTE_STRIP)[number];
  * sits immediately after USMV and before FTLS. Array order is the tie-break.
  * BIL is the cash/T-bill benchmark, last. GDX, PDBC, CLSE, USMV, QUAL, and
  * FTLS are not CTA. QUAL is not gold and has no 21d CTA confirmation.
+ * PDBC is broad commodity beta (RISKOFF_ETF_COMMODITY_BETA) and is mutually
+ * exclusive with the CTA family for the #2 diversifier only.
  */
 export const RISKOFF_ETF_SYMBOLS = [
   "GLD",
@@ -208,8 +210,9 @@ export const RISKOFF_ETF_CANDIDATES = RISKOFF_ETF_SYMBOLS.filter(
  * Managed-futures / CTA-style sleeve family on the 63d RS overlay.
  * DBMF and KMLM are the same diversifier sleeve. GDX, PDBC, CLSE, USMV, QUAL, and FTLS are not in this set.
  * When RS #1 is in this set, #2 is the highest-ranked qualifier outside
- * the family. If no non-CTA name clears beat-BIL and own-200, #2 is BIL
- * at 50/50 — never two CTA names together (no KMLM+DBMF). Members must
+ * the family and not RISKOFF_ETF_COMMODITY_BETA. If no such name clears
+ * beat-BIL and own-200, #2 is BIL at 50/50 — never two CTA names together
+ * (no KMLM+DBMF) and never PDBC+DBMF or PDBC+KMLM. Members must
  * also beat BIL on RISKOFF_ETF_CTA_CONFIRM_DAYS.
  * Add future CTA tickers here (and to RISKOFF_ETF_SYMBOLS) so both rules
  * pick them up.
@@ -230,6 +233,21 @@ export type RiskoffEtfCtaSymbol = (typeof RISKOFF_ETF_CTA_FAMILY)[number];
  */
 export const RISKOFF_ETF_GOLD_FAMILY = ["GLD", "GDX"] as const;
 export type RiskoffEtfGoldSymbol = (typeof RISKOFF_ETF_GOLD_FAMILY)[number];
+/**
+ * Broad commodity beta on the 63d RS overlay, mutually exclusive with
+ * RISKOFF_ETF_CTA_FAMILY for the #2 diversifier only — same spirit as
+ * never-dual-CTA / never-dual-gold. Not a second ticker family: PDBC
+ * alone. PDBC stays out of RISKOFF_ETF_CTA_FAMILY and does not get the
+ * 21-session beat-BIL confirmation. When RS #1 is PDBC, #2 is the
+ * highest-ranked qualifier that is not CTA; if none clears beat-BIL and
+ * own-200, #2 is BIL at 50/50. When RS #1 is CTA, #2 must not be PDBC
+ * (fall through to the next non-PDBC qualifier, else BIL). Never hold
+ * PDBC+DBMF or PDBC+KMLM. A non-CTA #1 other than PDBC may still take
+ * PDBC as #2. A lone PDBC (no other qualifier) still takes the full
+ * overlay fraction. The cash-close rebalance breaks a PDBC+CTA sleeve
+ * even inside RISKOFF_ETF_MIN_HOLD_SESSIONS. Paper / MockBroker only.
+ */
+export const RISKOFF_ETF_COMMODITY_BETA = "PDBC" as const;
 /**
  * Extra beat-BIL window for RISKOFF_ETF_CTA_FAMILY only. Same total-return
  * definition as RISKOFF_ETF_LOOKBACK_DAYS (`last / close N sessions earlier

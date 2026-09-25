@@ -29,6 +29,7 @@ import {
 import {
   DEFAULT_SLEEVE_EQUITY_USD,
   RISKOFF_ETF_CANDIDATES,
+  RISKOFF_ETF_COMMODITY_BETA,
   RISKOFF_ETF_CTA_CONFIRM_DAYS,
   RISKOFF_ETF_CTA_FAMILY,
   RISKOFF_ETF_GOLD_FAMILY,
@@ -52,6 +53,7 @@ import {
   emptyRiskoffEtfAbove200,
   emptyRiskoffEtfReturns,
   getRiskoffEtfMissingBarsMisses,
+  isRiskoffEtfCommodityBeta,
   isRiskoffEtfCta,
   isRiskoffEtfGold,
   overlayLotNeedsResize,
@@ -2435,9 +2437,10 @@ describe("risk-off ETF relative-strength expression", () => {
       "PDBC",
     ]);
     const dbmfThenPdbc = etfRs({ DBMF: 0.2, KMLM: 0.16, PDBC: 0.09 });
-    expect(pickRiskoffEtfSleeve(dbmfThenPdbc, null, etfAbove200(), etfRs21())).toEqual(["DBMF", "PDBC"]);
+    expect(pickRiskoffEtfSleeve(dbmfThenPdbc, null, etfAbove200(), etfRs21())).toEqual(["DBMF", "BIL"]);
     expect(pickRiskoffEtfSleeve(dbmfThenPdbc, null, etfAbove200(), etfRs21())).not.toContain("KMLM");
-    expect(pickRiskoffEtfSecond(["KMLM", "PDBC"], "DBMF", dbmfThenPdbc)).toBe("PDBC");
+    expect(pickRiskoffEtfSleeve(dbmfThenPdbc, null, etfAbove200(), etfRs21())).not.toContain("PDBC");
+    expect(pickRiskoffEtfSecond(["KMLM", "PDBC"], "DBMF", dbmfThenPdbc)).toBe("BIL");
     const decided = decideRiskoffEtf({
       riskOn: false,
       positions: [],
@@ -2642,6 +2645,210 @@ describe("risk-off ETF relative-strength expression", () => {
     });
     expect(onlyGold.winners).toEqual(["GLD", "BIL"]);
     expect(onlyGold.winners).not.toContain("GDX");
+  });
+
+  it("never pairs PDBC with a CTA: PDBC #1 takes a non-CTA #2, else BIL", () => {
+    expect(RISKOFF_ETF_COMMODITY_BETA).toBe("PDBC");
+    expect(RISKOFF_ETF_CTA_FAMILY).toEqual(["DBMF", "KMLM"]);
+    expect(RISKOFF_ETF_CTA_FAMILY).not.toContain("PDBC");
+    expect(isRiskoffEtfCommodityBeta("PDBC")).toBe(true);
+    expect(isRiskoffEtfCommodityBeta("KMLM")).toBe(false);
+    expect(isRiskoffEtfCta("PDBC")).toBe(false);
+    expect(riskoffEtfCtaConfirms21d("PDBC", etfRs21({ PDBC: -0.4 }))).toBe(true);
+    expect(riskoffEtfCtaConfirms21d("PDBC", etfRs21({ PDBC: null }))).toBe(true);
+    expect(riskoffEtfCtaConfirms21d("PDBC", null)).toBe(true);
+    expect(pickRiskoffEtfSleeve(pdbcWins, null, etfAbove200(), etfRs21({ PDBC: -0.4 }))).toEqual(["PDBC"]);
+
+    const pdbcThenCta = etfRs({ PDBC: 0.22, KMLM: 0.16, DBMF: 0.14, UUP: 0.08 });
+    expect(pickRiskoffEtfWinner(pdbcThenCta, null, etfAbove200(), etfRs21())).toBe("PDBC");
+    expect(pickRiskoffEtfSleeve(pdbcThenCta, null, etfAbove200(), etfRs21())).toEqual(["PDBC", "UUP"]);
+    expect(pickRiskoffEtfSleeve(pdbcThenCta, null, etfAbove200(), etfRs21())).not.toContain("KMLM");
+    expect(pickRiskoffEtfSleeve(pdbcThenCta, null, etfAbove200(), etfRs21())).not.toContain("DBMF");
+    expect(pickRiskoffEtfSecond(["KMLM", "DBMF", "UUP"], "PDBC", pdbcThenCta)).toBe("UUP");
+
+    const kmlmAheadOfGld = etfRs({ PDBC: 0.22, KMLM: 0.16, GLD: 0.07 });
+    expect(pickRiskoffEtfSleeve(kmlmAheadOfGld, null, etfAbove200(), etfRs21())).toEqual(["PDBC", "GLD"]);
+    expect(pickRiskoffEtfSecond(["KMLM", "GLD"], "PDBC", kmlmAheadOfGld)).toBe("GLD");
+
+    const onlyCta = etfRs({ PDBC: 0.22, KMLM: 0.16, DBMF: 0.12 });
+    expect(pickRiskoffEtfSleeve(onlyCta, null, etfAbove200(), etfRs21())).toEqual(["PDBC", "BIL"]);
+    expect(pickRiskoffEtfSleeve(onlyCta, null, etfAbove200(), etfRs21())).not.toContain("KMLM");
+    expect(pickRiskoffEtfSleeve(onlyCta, null, etfAbove200(), etfRs21())).not.toContain("DBMF");
+    expect(pickRiskoffEtfSecond(["KMLM", "DBMF"], "PDBC", onlyCta)).toBe("BIL");
+
+    const half = riskoffEtfSleeveFrac(2);
+    const decided = decideRiskoffEtf({
+      riskOn: false,
+      positions: [],
+      sleeve: defaultSleeves().riskoff,
+      returns: onlyCta,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: etfRs21({ PDBC: -0.4 }),
+    });
+    expect(decided.winners).toEqual(["PDBC", "BIL"]);
+    expect(decided.buys.map((b) => b.symbol)).toEqual(["PDBC", "BIL"]);
+    expect(decided.buys[0].qty).toBe(sizeRiskoffEtfShares(14, DEFAULT_SLEEVE_EQUITY_USD, half));
+    expect(decided.buys[1].qty).toBe(sizeRiskoffEtfShares(91, DEFAULT_SLEEVE_EQUITY_USD, half));
+  });
+
+  it("never pairs PDBC with a CTA: CTA #1 skips PDBC for #2", () => {
+    const dbmfThenPdbc = etfRs({ DBMF: 0.2, PDBC: 0.16, UUP: 0.09 });
+    expect(pickRiskoffEtfWinner(dbmfThenPdbc, null, etfAbove200(), etfRs21())).toBe("DBMF");
+    expect(pickRiskoffEtfSleeve(dbmfThenPdbc, null, etfAbove200(), etfRs21())).toEqual(["DBMF", "UUP"]);
+    expect(pickRiskoffEtfSleeve(dbmfThenPdbc, null, etfAbove200(), etfRs21())).not.toContain("PDBC");
+    expect(pickRiskoffEtfSecond(["PDBC", "UUP"], "DBMF", dbmfThenPdbc)).toBe("UUP");
+
+    const kmlmThenPdbc = etfRs({ KMLM: 0.21, PDBC: 0.15, GLD: 0.07 });
+    expect(pickRiskoffEtfSleeve(kmlmThenPdbc, null, etfAbove200(), etfRs21())).toEqual(["KMLM", "GLD"]);
+    expect(pickRiskoffEtfSleeve(kmlmThenPdbc, null, etfAbove200(), etfRs21())).not.toContain("PDBC");
+    expect(pickRiskoffEtfSecond(["PDBC", "GLD"], "KMLM", kmlmThenPdbc)).toBe("GLD");
+
+    const onlyPdbc = etfRs({ DBMF: 0.2, KMLM: 0.16, PDBC: 0.09 });
+    expect(pickRiskoffEtfSleeve(onlyPdbc, null, etfAbove200(), etfRs21())).toEqual(["DBMF", "BIL"]);
+    expect(pickRiskoffEtfSleeve(onlyPdbc, null, etfAbove200(), etfRs21())).not.toContain("PDBC");
+    expect(pickRiskoffEtfSleeve(onlyPdbc, null, etfAbove200(), etfRs21())).not.toContain("KMLM");
+    expect(pickRiskoffEtfSecond(["KMLM", "PDBC"], "DBMF", onlyPdbc)).toBe("BIL");
+    const kmlmOnlyPdbc = etfRs({ KMLM: 0.2, PDBC: 0.1 });
+    expect(pickRiskoffEtfSleeve(kmlmOnlyPdbc, null, etfAbove200(), etfRs21())).toEqual(["KMLM", "BIL"]);
+    expect(pickRiskoffEtfSleeve(kmlmOnlyPdbc, null, etfAbove200(), etfRs21())).not.toContain("PDBC");
+
+    const pdbcBeatsGdx = etfRs({ DBMF: 0.2, KMLM: 0.16, PDBC: 0.14, GDX: 0.11 });
+    expect(pickRiskoffEtfSleeve(pdbcBeatsGdx, null, etfAbove200(), etfRs21())).toEqual(["DBMF", "GDX"]);
+    expect(pickRiskoffEtfSleeve(pdbcBeatsGdx, null, etfAbove200(), etfRs21())).not.toContain("PDBC");
+
+    const half = riskoffEtfSleeveFrac(2);
+    const rotated = decideRiskoffEtf({
+      riskOn: false,
+      positions: [
+        etfPos("DBMF", sizeRiskoffEtfShares(28, DEFAULT_SLEEVE_EQUITY_USD, half), 28),
+        etfPos("PDBC", sizeRiskoffEtfShares(14, DEFAULT_SLEEVE_EQUITY_USD, half), 14),
+      ],
+      sleeve: defaultSleeves().riskoff,
+      returns: dbmfThenPdbc,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: etfRs21(),
+    });
+    expect(rotated.winners).toEqual(["DBMF", "UUP"]);
+    expect(rotated.winners).not.toContain("PDBC");
+    expect(rotated.sells.map((s) => s.symbol)).toEqual(["PDBC"]);
+    expect(rotated.buy?.symbol).toBe("UUP");
+  });
+
+  it("PDBC↔CTA exclusion still never dual-CTA and never dual-gold", () => {
+    const dualCta = etfRs({ DBMF: 0.18, KMLM: 0.16, GLD: 0.1, PDBC: 0.12 });
+    expect(pickRiskoffEtfSleeve(dualCta, null, etfAbove200(), etfRs21())).toEqual(["DBMF", "GLD"]);
+    expect(pickRiskoffEtfSleeve(dualCta, null, etfAbove200(), etfRs21())).not.toContain("KMLM");
+    expect(pickRiskoffEtfSleeve(dualCta, null, etfAbove200(), etfRs21())).not.toContain("PDBC");
+    const onlyCtas = etfRs({ DBMF: 0.18, KMLM: 0.14 });
+    expect(pickRiskoffEtfSleeve(onlyCtas, null, etfAbove200(), etfRs21())).toEqual(["DBMF", "BIL"]);
+    expect(pickRiskoffEtfSecond(["KMLM"], "DBMF", onlyCtas)).toBe("BIL");
+
+    const dualGold = etfRs({ GLD: 0.22, GDX: 0.18, PDBC: 0.09 });
+    expect(pickRiskoffEtfSleeve(dualGold, null, etfAbove200())).toEqual(["GLD", "PDBC"]);
+    expect(pickRiskoffEtfSleeve(dualGold, null, etfAbove200())).not.toContain("GDX");
+    const onlyGold = etfRs({ GLD: 0.22, GDX: 0.18 });
+    expect(pickRiskoffEtfSleeve(onlyGold, null, etfAbove200())).toEqual(["GLD", "BIL"]);
+    expect(pickRiskoffEtfSecond(["GDX"], "GLD", onlyGold)).toBe("BIL");
+    const gdxFirst = etfRs({ GDX: 0.24, GLD: 0.16, UUP: 0.07 });
+    expect(pickRiskoffEtfSleeve(gdxFirst, null, etfAbove200())).toEqual(["GDX", "UUP"]);
+    expect(pickRiskoffEtfSleeve(gdxFirst, null, etfAbove200())).not.toContain("GLD");
+
+    const gldThenCta = etfRs({ GLD: 0.2, GDX: 0.16, KMLM: 0.1 });
+    expect(pickRiskoffEtfSleeve(gldThenCta, null, etfAbove200(), etfRs21())).toEqual(["GLD", "KMLM"]);
+    const uupThenPdbc = etfRs({ UUP: 0.2, PDBC: 0.12, KMLM: 0.08 });
+    expect(pickRiskoffEtfSleeve(uupThenPdbc, null, etfAbove200(), etfRs21())).toEqual(["UUP", "PDBC"]);
+  });
+
+  it("PDBC↔CTA exclusion wins at the cash close inside the 5-session min-hold", () => {
+    const half = riskoffEtfSleeveFrac(2);
+    const close = new Date("2026-09-09T20:05:00.000Z");
+    const midday = new Date("2026-09-09T15:00:00.000Z");
+    const pdbcQty = sizeRiskoffEtfShares(14, DEFAULT_SLEEVE_EQUITY_USD, half);
+    const kmlmQty = sizeRiskoffEtfShares(27, DEFAULT_SLEEVE_EQUITY_USD, half);
+    const both = etfRs({ PDBC: 0.22, KMLM: 0.16, DBMF: 0.12, UUP: 0.08 });
+    const held = [etfPos("PDBC", pdbcQty, 14), etfPos("KMLM", kmlmQty, 27)];
+    const intraday = decideRiskoffEtf({
+      riskOn: false,
+      positions: held,
+      sleeve: defaultSleeves().riskoff,
+      returns: both,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: etfRs21(),
+      now: midday,
+      entrySessions: { PDBC: "2026-09-08", KMLM: "2026-09-08" },
+    });
+    expect(intraday.winners).toEqual(["PDBC", "KMLM"]);
+    expect(intraday.sells).toEqual([]);
+    expect(intraday.reason).toBe("hold overlay until NY cash close");
+
+    const broken = decideRiskoffEtf({
+      riskOn: false,
+      positions: held,
+      sleeve: defaultSleeves().riskoff,
+      returns: both,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: etfRs21(),
+      now: close,
+      entrySessions: { PDBC: "2026-09-08", KMLM: "2026-09-08" },
+    });
+    expect(riskoffEtfSessionsHeld("2026-09-08", "2026-09-09")).toBeLessThan(RISKOFF_ETF_MIN_HOLD_SESSIONS);
+    expect(broken.winners).toEqual(["PDBC", "BIL"]);
+    expect(broken.winners).not.toContain("KMLM");
+    expect(broken.winners).not.toContain("DBMF");
+    expect(broken.sells.map((s) => s.symbol)).toEqual(["KMLM"]);
+
+    resetRiskoffEtfMissingBarsMisses();
+    const onePdbc = decideRiskoffEtf({
+      riskOn: false,
+      positions: [etfPos("PDBC", pdbcQty, 14)],
+      sleeve: defaultSleeves().riskoff,
+      returns: both,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: etfRs21(),
+      now: close,
+      entrySessions: { PDBC: "2026-09-08" },
+    });
+    expect(onePdbc.winners).toEqual(["PDBC", "UUP"]);
+    expect(onePdbc.winners).not.toContain("KMLM");
+
+    resetRiskoffEtfMissingBarsMisses();
+    const onlyCtaBeside = decideRiskoffEtf({
+      riskOn: false,
+      positions: held,
+      sleeve: defaultSleeves().riskoff,
+      returns: etfRs({ PDBC: 0.22, KMLM: 0.16, DBMF: 0.12 }),
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: etfRs21(),
+      now: new Date("2026-09-10T20:05:00.000Z"),
+      entrySessions: { PDBC: "2026-09-08", KMLM: "2026-09-08" },
+    });
+    expect(onlyCtaBeside.winners).toEqual(["PDBC", "BIL"]);
+    expect(onlyCtaBeside.winners).not.toContain("KMLM");
+    expect(onlyCtaBeside.winners).not.toContain("DBMF");
+
+    resetRiskoffEtfMissingBarsMisses();
+    const dbmfQty = sizeRiskoffEtfShares(28, DEFAULT_SLEEVE_EQUITY_USD, half);
+    const ctaFirst = decideRiskoffEtf({
+      riskOn: false,
+      positions: [etfPos("DBMF", dbmfQty, 28), etfPos("PDBC", pdbcQty, 14)],
+      sleeve: defaultSleeves().riskoff,
+      returns: etfRs({ DBMF: 0.2, PDBC: 0.16, UUP: 0.08 }),
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: etfRs21(),
+      now: new Date("2026-09-11T20:05:00.000Z"),
+      entrySessions: { DBMF: "2026-09-08", PDBC: "2026-09-08" },
+    });
+    expect(riskoffEtfSessionsHeld("2026-09-08", "2026-09-11")).toBeLessThan(RISKOFF_ETF_MIN_HOLD_SESSIONS);
+    expect(ctaFirst.winners).toEqual(["DBMF", "BIL"]);
+    expect(ctaFirst.winners).not.toContain("PDBC");
+    expect(ctaFirst.sells.map((s) => s.symbol)).toEqual(["PDBC"]);
   });
 
   it("CTA diversifier prefers CLSE as non-CTA #2 when #1 is DBMF/KMLM", () => {
