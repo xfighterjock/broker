@@ -3,6 +3,7 @@ import {
   DEFAULT_SLEEVE_EQUITY_USD,
   RISKOFF_ETF_CANDIDATES,
   RISKOFF_ETF_CASH_SYMBOL,
+  RISKOFF_ETF_COMMODITY_BETA,
   RISKOFF_ETF_CTA_CONFIRM_DAYS,
   RISKOFF_ETF_CTA_FAMILY,
   RISKOFF_ETF_GOLD_FAMILY,
@@ -154,6 +155,19 @@ export function isRiskoffEtfCta(symbol: string): boolean {
 
 export function isRiskoffEtfGold(symbol: string): boolean {
   return (RISKOFF_ETF_GOLD_FAMILY as readonly string[]).includes(symbol.trim().toUpperCase());
+}
+
+/** PDBC only. Commodity beta, not a CTA and not 21d-gated. */
+export function isRiskoffEtfCommodityBeta(symbol: string): boolean {
+  return symbol.trim().toUpperCase() === RISKOFF_ETF_COMMODITY_BETA;
+}
+
+/** True when one name is PDBC and the other is in RISKOFF_ETF_CTA_FAMILY. */
+function riskoffEtfPdbcCtaConflict(a: string, b: string): boolean {
+  const leftPdbc = isRiskoffEtfCommodityBeta(a);
+  const rightPdbc = isRiskoffEtfCommodityBeta(b);
+  if (leftPdbc === rightPdbc) return false;
+  return (leftPdbc && isRiskoffEtfCta(b)) || (rightPdbc && isRiskoffEtfCta(a));
 }
 
 export function isRiskoffEtfSymbol(symbol: string): symbol is RiskoffEtfSymbol {
@@ -310,13 +324,18 @@ export function riskoffEtfReturnsReady(returns: RiskoffEtfReturns): boolean {
  * CTA or a lone gold name is 50/50 with BIL; none → BIL). Overlay
  * notional is 60% while spyAbove200 === true (puts gated) and 40% when SPY
  * is below 200. When #1 is in RISKOFF_ETF_CTA_FAMILY, #2 is the highest
- * non-CTA qualifier (a gold name may fill that slot). If none clears
- * beat-BIL and own-200, #2 is BIL at 50/50 — never two CTAs (no KMLM+DBMF).
- * A lone CTA is still 50/50 with BIL, not the full overlay. When #1 is in
+ * non-CTA qualifier other than PDBC (a gold name may fill that slot). If
+ * none clears beat-BIL and own-200, #2 is BIL at 50/50 — never two CTAs
+ * (no KMLM+DBMF) and never PDBC beside that CTA. A lone CTA is still
+ * 50/50 with BIL, not the full overlay. When #1 is in
  * RISKOFF_ETF_GOLD_FAMILY, #2 is the highest non-gold qualifier (a CTA may
- * fill that slot if it cleared the 21d gate). If none does, #2 is BIL at
- * 50/50 — never GLD+GDX. A lone gold name is 50/50 with BIL. CTA filter
- * runs first, then gold, if a name were ever in both sets. Pass returns21 to also require each CTA-family
+ * fill that slot if it cleared the 21d gate; PDBC may fill it). If none
+ * does, #2 is BIL at 50/50 — never GLD+GDX. A lone gold name is 50/50
+ * with BIL. When #1 is RISKOFF_ETF_COMMODITY_BETA (PDBC), #2 is the
+ * highest qualifier outside the CTA family. If none clears, #2 is BIL at
+ * 50/50 — never PDBC+DBMF or PDBC+KMLM. A lone PDBC (no other qualifier)
+ * stays full size. CTA filter runs first, then gold, then the PDBC↔CTA
+ * exclusion, if a name were ever in both CTA and gold. Pass returns21 to also require each CTA-family
  * name to beat BIL on RISKOFF_ETF_CTA_CONFIRM_DAYS (strict >; missing bars
  * fail closed for that CTA only). Omit returns21 to test 63d RS in
  * isolation. Non-CTA names ignore returns21. A failed CTA is dropped from
@@ -423,13 +442,17 @@ function pickFromPool(
 }
 
 /**
- * Second sleeve name. Family filters compose: CTA first, then gold.
- * When #1 is CTA, #2 comes from the non-CTA pool (gold names may remain,
- * so GDX can diversify a CTA #1). Empty non-CTA pool → BIL, never the
- * other CTA. When #1 is gold, #2 comes from the non-gold pool (CTAs may
- * remain if they already cleared the 21d gate). Empty non-gold pool → BIL,
- * never GLD+GDX. A non-family #1 uses the ordinary remaining pool.
- * Hysteresis still applies inside the filtered pool.
+ * Second sleeve name. Filters compose: CTA first, then gold, then the
+ * PDBC↔CTA exclusion. When #1 is CTA, #2 comes from the non-CTA pool
+ * (gold names may remain, so GDX can diversify a CTA #1) and PDBC is
+ * dropped. Empty pool after that → BIL, never the other CTA and never
+ * PDBC. When #1 is gold, #2 comes from the non-gold pool (CTAs may remain
+ * if they already cleared the 21d gate; PDBC may remain). Empty non-gold
+ * pool → BIL, never GLD+GDX. When #1 is PDBC, #2 comes from the non-CTA
+ * pool. Empty after dropping CTAs → BIL, never PDBC+DBMF or PDBC+KMLM.
+ * An empty remaining pool (no other qualifier at all) returns null so a
+ * lone PDBC stays full size. A non-family #1 that is not PDBC uses the
+ * ordinary remaining pool. Hysteresis still applies inside the filtered pool.
  */
 export function pickRiskoffEtfSecond(
   remaining: RiskoffEtfCandidate[],
@@ -445,6 +468,11 @@ export function pickRiskoffEtfSecond(
   if (isRiskoffEtfGold(first)) {
     pool = pool.filter((s) => !isRiskoffEtfGold(s));
     if (pool.length === 0) return RISKOFF_ETF_CASH_SYMBOL;
+  }
+  if (isRiskoffEtfCta(first) || isRiskoffEtfCommodityBeta(first)) {
+    const next = pool.filter((s) => !riskoffEtfPdbcCtaConflict(first, s));
+    if (next.length === 0 && pool.length > 0) return RISKOFF_ETF_CASH_SYMBOL;
+    pool = next;
   }
   if (pool.length === 0) return null;
   return pickFromPool(pool, returns, held);
@@ -650,6 +678,7 @@ function protectedOverlayNames(
 function sameFamilyPair(anchor: string, candidate: string): boolean {
   if (isRiskoffEtfCta(anchor) && isRiskoffEtfCta(candidate)) return true;
   if (isRiskoffEtfGold(anchor) && isRiskoffEtfGold(candidate)) return true;
+  if (riskoffEtfPdbcCtaConflict(anchor, candidate)) return true;
   return false;
 }
 
@@ -668,7 +697,36 @@ function collapseDualFamily(
   return [prefer];
 }
 
-/** Keep names still inside the minimum hold. Never leave two CTAs or two gold names. */
+/**
+ * PDBC #1 whose only other desired names are CTA (or BIL forced by that
+ * exclusion) stays 50/50 with BIL. A lone PDBC with no other qualifier
+ * does not.
+ */
+function pdbcAnchorNeedsBil(anchor: string, desired: RiskoffEtfSymbol[]): boolean {
+  if (!isRiskoffEtfCommodityBeta(anchor)) return false;
+  if (
+    desired.includes(RISKOFF_ETF_CASH_SYMBOL) &&
+    (desired[0] === anchor || riskoffEtfPdbcCtaConflict(desired[0] ?? "", anchor))
+  ) {
+    return true;
+  }
+  const others = desired.filter((d) => d !== anchor && d !== RISKOFF_ETF_CASH_SYMBOL);
+  return others.length > 0 && others.every((d) => riskoffEtfPdbcCtaConflict(anchor, d));
+}
+
+/** Drop one side of a held PDBC+CTA pair. Prefer the RS sleeve's choice. */
+function collapsePdbcCtaPair(
+  kept: RiskoffEtfSymbol[],
+  desired: RiskoffEtfSymbol[],
+): RiskoffEtfSymbol[] {
+  const pdbc = kept.find((s) => isRiskoffEtfCommodityBeta(s));
+  const cta = kept.find((s) => isRiskoffEtfCta(s));
+  if (!pdbc || !cta) return kept;
+  const prefer = desired.find((d) => d === pdbc || d === cta) ?? pdbc;
+  return [prefer];
+}
+
+/** Keep names still inside the minimum hold. Never leave two CTAs, two gold names, or PDBC with a CTA. */
 function applyOverlayMinHold(
   desired: RiskoffEtfSymbol[],
   protectedNames: RiskoffEtfSymbol[],
@@ -677,10 +735,12 @@ function applyOverlayMinHold(
   let kept = protectedNames.slice(0, RISKOFF_ETF_TOP_N);
   kept = collapseDualFamily(kept, desired, isRiskoffEtfCta);
   kept = collapseDualFamily(kept, desired, isRiskoffEtfGold);
+  kept = collapsePdbcCtaPair(kept, desired);
   if (kept.length >= RISKOFF_ETF_TOP_N) return kept.slice(0, RISKOFF_ETF_TOP_N);
   const anchor = kept[0];
   const filler = desired.find((d) => d !== anchor && !sameFamilyPair(anchor, d));
   if (!filler || (filler === RISKOFF_ETF_CASH_SYMBOL && !anchorPairsWithBil(anchor))) {
+    if (pdbcAnchorNeedsBil(anchor, desired)) return [anchor, RISKOFF_ETF_CASH_SYMBOL];
     return anchorPairsWithBil(anchor) ? [anchor, RISKOFF_ETF_CASH_SYMBOL] : [anchor];
   }
   return [anchor, filler];
@@ -701,8 +761,24 @@ function retainProtectedWinners(
     const replaceAt = out.findIndex((s) => !protectedNames.includes(s));
     if (replaceAt >= 0) out[replaceAt] = name;
   }
-  const broken = breakDualFamily(breakDualFamily(out, protectedNames, isRiskoffEtfCta), protectedNames, isRiskoffEtfGold);
+  const broken = breakPdbcCtaPair(
+    breakDualFamily(breakDualFamily(out, protectedNames, isRiskoffEtfCta), protectedNames, isRiskoffEtfGold),
+    protectedNames,
+  );
   return broken.slice(0, RISKOFF_ETF_TOP_N);
+}
+
+/** Replace the other side of a PDBC+CTA pair with a non-conflicting name, else BIL. */
+function breakPdbcCtaPair(
+  out: RiskoffEtfSymbol[],
+  protectedNames: RiskoffEtfSymbol[],
+): RiskoffEtfSymbol[] {
+  const pdbc = out.find((s) => isRiskoffEtfCommodityBeta(s));
+  const cta = out.find((s) => isRiskoffEtfCta(s));
+  if (!pdbc || !cta) return out.slice(0, RISKOFF_ETF_TOP_N);
+  const keep = protectedNames.find((s) => s === pdbc || s === cta) ?? pdbc;
+  const rest = out.filter((s) => s !== keep && !riskoffEtfPdbcCtaConflict(keep, s));
+  return [keep, rest[0] ?? RISKOFF_ETF_CASH_SYMBOL];
 }
 
 function breakDualFamily(
