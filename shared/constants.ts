@@ -188,15 +188,18 @@ export type RiskoffQuoteSymbol = (typeof RISKOFF_QUOTE_STRIP)[number];
  * Array order is the tie-break.
  * BIL is the cash/T-bill benchmark, last. GDX, PDBC, FLOT, CLSE, USMV, QUAL,
  * FTLS, and BTAL are not CTA. GLD and GDX take the same 21d beat-BIL window
- * only in HYG-only RISK OFF; PDBC does not. CLSE, USMV, QUAL, and FTLS
+ * only in HYG-only RISK OFF. CLSE, USMV, QUAL, and FTLS
  * (RISKOFF_ETF_HYG_ONLY_21D_CONFIRM) take that same window only in HYG-only
  * RISK OFF — a separate set, not CTA and not gold. FLOT and BTAL are not gold
- * and have no 21d confirmation. TLT, IEF, and XLU
- * (RISKOFF_ETF_HYG_ONLY_INELIGIBLE) are not RS qualifiers in HYG-only RISK OFF;
- * when SPY is below 200 they stay on the ordinary gates. FLOT and BTAL are not
+ * and have no 21d confirmation. TLT, IEF, XLU, and PDBC
+ * (RISKOFF_ETF_HYG_ONLY_INELIGIBLE) are not RS qualifiers in HYG-only RISK OFF
+ * even if 63d beats BIL and own-200 is true; when SPY is below 200 they stay
+ * on the ordinary gates. The PDBC drop blocks a lone-PDBC full overlay and a
+ * PDBC+FTLS sleeve in HYG-only. FLOT and BTAL are not
  * RISKOFF_ETF_COMMODITY_BETA and have no new family. Do not add FLRN.
- * PDBC is broad commodity beta (RISKOFF_ETF_COMMODITY_BETA) and is mutually
- * exclusive with the CTA family for the #2 diversifier only.
+ * PDBC is broad commodity beta (RISKOFF_ETF_COMMODITY_BETA). Where it remains
+ * eligible it is mutually exclusive with the CTA family for the #2 diversifier
+ * only.
  */
 export const RISKOFF_ETF_SYMBOLS = [
   "GLD",
@@ -259,18 +262,24 @@ export type RiskoffEtfGoldSymbol = (typeof RISKOFF_ETF_GOLD_FAMILY)[number];
  * RISKOFF_ETF_CTA_FAMILY and RISKOFF_ETF_GOLD_FAMILY — not a dual-family
  * and not a #2 pairing rule. When SPY is below 200 this 21d check is off.
  * Missing or non-finite 21d on the name or on BIL skips that name (fail
- * closed). BTAL, XLP, FLOT, and PDBC are not members. Paper / MockBroker only.
+ * closed). BTAL, XLP, FLOT, and PDBC are not members. PDBC is dropped from
+ * HYG-only RS instead (RISKOFF_ETF_HYG_ONLY_INELIGIBLE). Paper / MockBroker only.
  */
 export const RISKOFF_ETF_HYG_ONLY_21D_CONFIRM = ["CLSE", "USMV", "QUAL", "FTLS"] as const;
 export type RiskoffEtfHygOnly21dSymbol = (typeof RISKOFF_ETF_HYG_ONLY_21D_CONFIRM)[number];
 /**
- * RS overlay names that are not qualifiers in HYG-only RISK OFF. They fail
- * the cash hurdle in that regime even when 63d beats BIL and they are above
- * their own 200dma. When SPY is below 200 they stay eligible under the
- * ordinary beat-BIL / own-200 rules. Does not change RISKOFF_DURATION_SYMBOLS
- * or the gated duration book. XLP stays eligible. Paper / MockBroker only.
+ * RS overlay names that are not qualifiers in HYG-only RISK OFF (risk off,
+ * SPY above 200, HYG below 200). They fail the cash hurdle in that regime
+ * even when 63d beats BIL and they are above their own 200dma. TLT, IEF, and
+ * XLU are the duration and defensive names; PDBC is broad commodity beta.
+ * The PDBC drop blocks the qualifier-conditional trap: a lone PDBC taking
+ * the full overlay, and a PDBC+FTLS HYG-only sleeve. When SPY is below 200
+ * (or HYG-only is not active) they stay eligible under the ordinary beat-BIL
+ * / own-200 rules, and PDBC keeps RISKOFF_ETF_COMMODITY_BETA (never pair
+ * with CTA). Does not change RISKOFF_DURATION_SYMBOLS or the gated duration
+ * book. XLP stays eligible. Paper / MockBroker only.
  */
-export const RISKOFF_ETF_HYG_ONLY_INELIGIBLE = ["TLT", "IEF", "XLU"] as const;
+export const RISKOFF_ETF_HYG_ONLY_INELIGIBLE = ["TLT", "IEF", "XLU", "PDBC"] as const;
 export type RiskoffEtfHygOnlyIneligibleSymbol = (typeof RISKOFF_ETF_HYG_ONLY_INELIGIBLE)[number];
 /**
  * Broad commodity beta on the 63d RS overlay, mutually exclusive with
@@ -278,14 +287,17 @@ export type RiskoffEtfHygOnlyIneligibleSymbol = (typeof RISKOFF_ETF_HYG_ONLY_INE
  * never-dual-CTA / never-dual-gold. Not a second ticker family: PDBC
  * alone. FLOT and BTAL are not this symbol and get no new family. PDBC stays out of
  * RISKOFF_ETF_CTA_FAMILY and does not get the 21-session beat-BIL
- * confirmation, including in HYG-only RISK OFF. When RS #1 is PDBC, #2 is the
+ * confirmation. In HYG-only RISK OFF PDBC is not an RS qualifier
+ * (RISKOFF_ETF_HYG_ONLY_INELIGIBLE), so a lone-PDBC full overlay and a
+ * PDBC+FTLS sleeve do not open. Where PDBC remains eligible (SPY below 200,
+ * or HYG-only not active), when RS #1 is PDBC, #2 is the
  * highest-ranked qualifier that is not CTA; if none clears beat-BIL and
  * own-200, #2 is BIL at 50/50. When RS #1 is CTA, #2 must not be PDBC
  * (fall through to the next non-PDBC qualifier, else BIL). Never hold
  * PDBC+DBMF or PDBC+KMLM. A non-CTA #1 other than PDBC may still take
- * PDBC as #2. A lone PDBC (no other qualifier) still takes the full
- * overlay fraction. The cash-close rebalance breaks a PDBC+CTA sleeve
- * even inside RISKOFF_ETF_MIN_HOLD_SESSIONS. Paper / MockBroker only.
+ * PDBC as #2. When PDBC is eligible, a lone PDBC (no other qualifier) still
+ * takes the full overlay fraction. The cash-close rebalance breaks a PDBC+CTA
+ * sleeve even inside RISKOFF_ETF_MIN_HOLD_SESSIONS. Paper / MockBroker only.
  */
 export const RISKOFF_ETF_COMMODITY_BETA = "PDBC" as const;
 /**
@@ -295,10 +307,11 @@ export const RISKOFF_ETF_COMMODITY_BETA = "PDBC" as const;
  * QUAL, FTLS); off for those names when SPY is below 200. Same total-return
  * definition as RISKOFF_ETF_LOOKBACK_DAYS (`last / close N sessions earlier
  * − 1`), strict greater-than BIL. Missing or non-finite 21d on the name or
- * on BIL skips that name (fail closed). Does not gate PDBC, FLOT, XLP, or
- * BTAL, and does not count as a 63d missing-bars miss. TLT, IEF, and XLU are
- * not 21d-gated; they are dropped from HYG-only RS eligibility
- * (RISKOFF_ETF_HYG_ONLY_INELIGIBLE). Paper / MockBroker only.
+ * on BIL skips that name (fail closed). Does not gate FLOT, XLP, or
+ * BTAL, and does not count as a 63d missing-bars miss. TLT, IEF, XLU, and
+ * PDBC are not 21d-gated; they are dropped from HYG-only RS eligibility
+ * (RISKOFF_ETF_HYG_ONLY_INELIGIBLE). The PDBC drop blocks a lone-PDBC full
+ * overlay and a PDBC+FTLS HYG-only sleeve. Paper / MockBroker only.
  */
 export const RISKOFF_ETF_CTA_CONFIRM_DAYS = 21;
 /** While RISK OFF, split overlay notional 50/50 across this many qualifiers. */

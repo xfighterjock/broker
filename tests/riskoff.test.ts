@@ -3328,8 +3328,11 @@ describe("risk-off ETF relative-strength expression", () => {
     const gdxThenUup = etfRs({ GDX: 0.21, UUP: 0.08 });
     expect(pickRiskoffEtfWinner(gdxThenUup, null, etfAbove200(), loses21, true)).toBe("UUP");
     expect(pickRiskoffEtfSleeve(gdxThenUup, null, etfAbove200(), loses21, true)).toEqual(["UUP"]);
-    expect(riskoffEtfQualifiers(pdbcWins, etfAbove200(), etfRs21({ PDBC: -0.4 }), true)).toContain("PDBC");
-    expect(pickRiskoffEtfWinner(pdbcWins, null, etfAbove200(), etfRs21({ PDBC: -0.4 }), true)).toBe("PDBC");
+    expect(riskoffEtfGoldConfirms21d("PDBC", etfRs21({ PDBC: -0.4 }), true)).toBe(true);
+    expect(riskoffEtfHygOnlyRsEligible("PDBC", true)).toBe(false);
+    expect(riskoffEtfQualifiers(pdbcWins, etfAbove200(), etfRs21({ PDBC: -0.4 }), true)).not.toContain("PDBC");
+    expect(pickRiskoffEtfWinner(pdbcWins, null, etfAbove200(), etfRs21({ PDBC: -0.4 }), true)).toBe("BIL");
+    expect(pickRiskoffEtfWinner(pdbcWins, null, etfAbove200(), etfRs21({ PDBC: -0.4 }), false)).toBe("PDBC");
 
     const full60 = RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED;
     const bilQty = sizeRiskoffEtfShares(91, DEFAULT_SLEEVE_EQUITY_USD, full60);
@@ -3544,7 +3547,7 @@ describe("risk-off ETF relative-strength expression", () => {
   });
 
   it("HYG-only drops TLT, IEF, and XLU from RS eligibility even if 63d beats BIL; SPY below 200 keeps TLT and XLU", () => {
-    expect(RISKOFF_ETF_HYG_ONLY_INELIGIBLE).toEqual(["TLT", "IEF", "XLU"]);
+    expect(RISKOFF_ETF_HYG_ONLY_INELIGIBLE).toEqual(["TLT", "IEF", "XLU", "PDBC"]);
     expect(RISKOFF_DURATION_SYMBOLS).toEqual(["TLT", "IEF"]);
     expect([...RISKOFF_ETF_HYG_ONLY_INELIGIBLE]).not.toContain("XLP");
     for (const symbol of RISKOFF_ETF_HYG_ONLY_INELIGIBLE) {
@@ -3637,6 +3640,109 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(spyBelowXlu.winners).toEqual(["XLU"]);
     expect(spyBelowXlu.buys.map((b) => b.symbol)).toContain("XLU");
     expect(spyBelowXlu.winners).not.toContain("BIL");
+  });
+
+  it("HYG-only drops PDBC from 63d RS even when it beats BIL and is above its own 200; SPY below 200 still selects it", () => {
+    expect(RISKOFF_ETF_HYG_ONLY_INELIGIBLE).toContain("PDBC");
+    expect(RISKOFF_ETF_COMMODITY_BETA).toBe("PDBC");
+    expect(isRiskoffEtfHygOnlyIneligible("PDBC")).toBe(true);
+    expect(isRiskoffEtfCommodityBeta("PDBC")).toBe(true);
+    expect(isRiskoffEtfHygOnly21dConfirm("PDBC")).toBe(false);
+    expect(riskoffEtfHygOnlyRsEligible("PDBC", true)).toBe(false);
+    expect(riskoffEtfHygOnlyRsEligible("PDBC", false)).toBe(true);
+    expect(riskoffEtfGoldConfirms21d("PDBC", etfRs21({ PDBC: -0.4 }), true)).toBe(true);
+
+    const beats21 = etfRs21({ PDBC: 0.2, FTLS: 0.08, UUP: 0.04, FLOT: 0.03 });
+    expect(riskoffEtfQualifiers(pdbcWins, etfAbove200(), beats21, true)).not.toContain("PDBC");
+    expect(pickRiskoffEtfWinner(pdbcWins, null, etfAbove200(), beats21, true)).toBe("BIL");
+    expect(pickRiskoffEtfSleeve(pdbcWins, null, etfAbove200(), beats21, true)).toEqual(["BIL"]);
+
+    const withFtls = etfRs({ PDBC: 0.22, FTLS: 0.12 });
+    expect(riskoffEtfQualifiers(withFtls, etfAbove200(), beats21, true)).toEqual(["FTLS"]);
+    expect(pickRiskoffEtfSleeve(withFtls, null, etfAbove200(), beats21, true)).toEqual(["FTLS"]);
+    const withUup = etfRs({ PDBC: 0.22, UUP: 0.1 });
+    expect(pickRiskoffEtfSleeve(withUup, null, etfAbove200(), beats21, true)).toEqual(["UUP"]);
+    const withFlot = etfRs({ PDBC: 0.22, FLOT: 0.09 });
+    expect(pickRiskoffEtfSleeve(withFlot, null, etfAbove200(), beats21, true)).toEqual(["FLOT"]);
+    const ftlsLoses21 = etfRs21({ FTLS: -0.2, PDBC: 0.2 });
+    expect(pickRiskoffEtfSleeve(withFtls, null, etfAbove200(), ftlsLoses21, true)).toEqual(["BIL"]);
+
+    const parked = decideRiskoffEtf({
+      riskOn: false,
+      spyAbove200: true,
+      hygAbove200: false,
+      positions: [],
+      sleeve: defaultSleeves().riskoff,
+      returns: pdbcWins,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: beats21,
+    });
+    expect(parked.winners).toEqual(["BIL"]);
+    expect(parked.winners).not.toContain("PDBC");
+    expect(parked.buys.map((b) => b.symbol)).toEqual(["BIL"]);
+
+    const ftlsInstead = decideRiskoffEtf({
+      riskOn: false,
+      spyAbove200: true,
+      hygAbove200: false,
+      positions: [etfPos("PDBC", 100, 14), etfPos("FTLS", 50, 62)],
+      sleeve: defaultSleeves().riskoff,
+      returns: withFtls,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: beats21,
+    });
+    expect(ftlsInstead.winners).toEqual(["FTLS"]);
+    expect(ftlsInstead.winners).not.toContain("PDBC");
+    expect(ftlsInstead.sells.map((s) => s.symbol)).toContain("PDBC");
+    expect(ftlsInstead.buys.map((b) => b.symbol)).not.toContain("PDBC");
+
+    const notHygOnly = decideRiskoffEtf({
+      riskOn: false,
+      spyAbove200: true,
+      hygAbove200: true,
+      positions: [],
+      sleeve: defaultSleeves().riskoff,
+      returns: pdbcWins,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: etfRs21({ PDBC: -0.4 }),
+    });
+    expect(notHygOnly.winners).toEqual(["PDBC"]);
+    expect(notHygOnly.buys.map((b) => b.symbol)).toContain("PDBC");
+
+    expect(pickRiskoffEtfWinner(pdbcWins, null, etfAbove200(), etfRs21({ PDBC: -0.4 }), false)).toBe("PDBC");
+    expect(pickRiskoffEtfSleeve(pdbcWins, null, etfAbove200(), etfRs21({ PDBC: -0.4 }), false)).toEqual(["PDBC"]);
+    const spyBelow = decideRiskoffEtf({
+      riskOn: false,
+      spyAbove200: false,
+      hygAbove200: false,
+      positions: [],
+      sleeve: defaultSleeves().riskoff,
+      returns: pdbcWins,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: etfRs21({ PDBC: -0.4 }),
+    });
+    expect(spyBelow.winners).toEqual(["PDBC"]);
+    expect(spyBelow.buys.map((b) => b.symbol)).toContain("PDBC");
+    expect(spyBelow.buys[0].qty).toBe(sizeRiskoffEtfShares(14));
+
+    const pdbcThenCta = etfRs({ PDBC: 0.22, KMLM: 0.16, DBMF: 0.14 });
+    expect(pickRiskoffEtfSleeve(pdbcThenCta, null, etfAbove200(), etfRs21(), false)).toEqual(["PDBC", "BIL"]);
+    const ctaThenPdbc = etfRs({ DBMF: 0.2, PDBC: 0.16, UUP: 0.09 });
+    expect(pickRiskoffEtfSleeve(ctaThenPdbc, null, etfAbove200(), etfRs21(), false)).toEqual(["DBMF", "UUP"]);
+    expect(pickRiskoffEtfSleeve(ctaThenPdbc, null, etfAbove200(), etfRs21(), false)).not.toContain("PDBC");
+    const dualGold = etfRs({ GLD: 0.22, GDX: 0.18, PDBC: 0.09 });
+    expect(pickRiskoffEtfSleeve(dualGold, null, etfAbove200(), undefined, false)).toEqual(["GLD", "PDBC"]);
+    const goldThenPdbc = etfRs({ GLD: 0.22, PDBC: 0.12, UUP: 0.08 });
+    const gold21 = etfRs21({ GLD: 0.05, PDBC: 0.04 });
+    expect(pickRiskoffEtfSleeve(goldThenPdbc, null, etfAbove200(), gold21, true)).toEqual(["GLD", "UUP"]);
+    expect(pickRiskoffEtfSleeve(etfRs({ GLD: 0.22, PDBC: 0.12 }), null, etfAbove200(), gold21, true)).toEqual([
+      "GLD",
+      "BIL",
+    ]);
   });
 
   it("put-gated overlay: SPY above 200 → ~60%; SPY below 200 → ~40%", () => {

@@ -357,7 +357,7 @@ describe("gated TLT/IEF duration", () => {
 
   it("HYG-only RS drop of TLT/IEF does not change the gated duration book", () => {
     expect(RISKOFF_DURATION_SYMBOLS).toEqual(["TLT", "IEF"]);
-    expect(RISKOFF_ETF_HYG_ONLY_INELIGIBLE).toEqual(["TLT", "IEF", "XLU"]);
+    expect(RISKOFF_ETF_HYG_ONLY_INELIGIBLE).toEqual(["TLT", "IEF", "XLU", "PDBC"]);
 
     const spyBelow = decideRiskoffDuration({
       riskOn: false,
