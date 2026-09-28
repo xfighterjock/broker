@@ -6,7 +6,7 @@ import {
   type RiskoffDurationSymbol,
 } from "../../shared/constants";
 import type { Position, SleeveCard } from "../../shared/types";
-import { openRiskoffEtfPositions, sizeRiskoffEtfShares } from "./riskoffEtf";
+import { openRiskoffEtfPositions, riskoffSleeveLossCapHit, sizeRiskoffEtfShares } from "./riskoffEtf";
 
 export type RiskoffDurationBuy = {
   sleeveId: "riskoff";
@@ -117,13 +117,18 @@ export function decideRiskoffDuration(input: {
   overlayWinner?: string | null;
   /** Top-2 overlay names; skip duration if any is TLT or IEF. */
   overlayWinners?: string[] | null;
+  /**
+   * Same blotter book as the overlay cap (sleeveBooks.riskoff daily / total).
+   * Omit and only realized P/L is checked.
+   */
+  sleeveBook?: { dailyPnlUsd?: number | null; totalPnlUsd?: number | null } | null;
 }): RiskoffDurationDecision {
   const open = openRiskoffDurationPositions(input.positions);
 
   if (input.riskOn) {
     return flattenOpen(open, "risk on: flatten gated duration");
   }
-  if (input.sleeve.paper.realizedPnlUsd <= -input.sleeve.lossCapUsd) {
+  if (riskoffSleeveLossCapHit(input.sleeve, input.sleeveBook)) {
     return flattenOpen(open, "sleeve loss cap");
   }
   if (typeof input.spyAbove200 !== "boolean") {

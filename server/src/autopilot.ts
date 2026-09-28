@@ -27,10 +27,11 @@ import type {
   SleeveCard,
   SleeveId,
 } from "../../shared/types";
-import { pointValueFor } from "./paper";
+import { pointValueFor, sleeveBook } from "./paper";
 import {
   decideRiskoffEtf,
   openRiskoffEtfPositions,
+  riskoffSleeveLossCapHit,
   type RiskoffEtfAbove200,
   type RiskoffEtfReturns,
 } from "./riskoffEtf";
@@ -355,7 +356,8 @@ export function riskoffPutsAllowed(
  * JNK) when SPY is below 200dma and that name is below its own 200dma;
  * SPY/QQQ/IWM only when SPY is below 200dma. Missing spyAbove200 or own-200
  * fail closed (no new credit-leg put). Never calls. One per name. Cap
- * MAX_AUTO_RISKOFF_VERTICALS.
+ * MAX_AUTO_RISKOFF_VERTICALS. No new put when the sleeve loss cap is hit
+ * (realized, or blotter daily/total at or below −lossCapUsd).
  */
 export function decidePutVerticalIntents(
   quotes: Array<{ symbol: string; last: number }>,
@@ -363,9 +365,11 @@ export function decidePutVerticalIntents(
   sleeve: SleeveCard,
   riskOn = true,
   checks?: RiskoffPutChecks | null,
+  /** Blotter daily/total. Same three-way cap as the overlay flatten. */
+  sleeveBook?: { dailyPnlUsd?: number | null; totalPnlUsd?: number | null } | null,
 ): AutoVerticalIntent[] {
   if (sleeve.id !== "riskoff") return [];
-  if (sleeve.paper.realizedPnlUsd <= -sleeve.lossCapUsd) return [];
+  if (riskoffSleeveLossCapHit(sleeve, sleeveBook)) return [];
   const spyAbove200 = knownBool(checks?.spyAbove200);
   const wantEquity = riskoffEquityPutsAllowed(riskOn, spyAbove200);
   const creditOrder = RISKOFF_CREDIT_LEG_SYMBOLS.filter((symbol) =>
@@ -912,8 +916,25 @@ export type AutopilotCtx = {
   dayBars?: MinuteBar[];
   /** ISO knowledge_time after the print. Day MES stoch entries stay flat without it. */
   knowledgeTime?: string | null;
+  /**
+   * Risk-off sleeve book from the same session-mark path as GET /api/status
+   * sleeveBooks.riskoff (dailyPnlUsd / totalPnlUsd). When set, the paper loss
+   * cap uses these plus realized. When omitted, autopilot derives the book
+   * from open marks with no session mark.
+   */
+  riskoffSleeveBook?: { dailyPnlUsd: number; totalPnlUsd: number } | null;
   log: (line: string) => void;
 };
+
+/** Blotter daily/total for the risk-off cap. Prefer the status sleeve book. */
+function riskoffCapBook(ctx: AutopilotCtx): { dailyPnlUsd: number; totalPnlUsd: number } {
+  const passed = ctx.riskoffSleeveBook;
+  if (passed && Number.isFinite(passed.dailyPnlUsd) && Number.isFinite(passed.totalPnlUsd)) {
+    return { dailyPnlUsd: passed.dailyPnlUsd, totalPnlUsd: passed.totalPnlUsd };
+  }
+  const computed = sleeveBook(ctx.getSleeves().riskoff, ctx.getPositions());
+  return { dailyPnlUsd: computed.dailyPnlUsd, totalPnlUsd: computed.totalPnlUsd };
+}
 
 function sleeveAutoOn(ctx: AutopilotCtx, id: SleeveId): boolean {
   if (!ctx.enabled) return false;
@@ -988,6 +1009,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
     }
   }
 
+  const riskoffBook = sleeveAutoOn(ctx, "riskoff") ? riskoffCapBook(ctx) : null;
   const etf = sleeveAutoOn(ctx, "riskoff")
     ? decideRiskoffEtf({
         riskOn,
@@ -999,6 +1021,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
         returns21: ctx.riskoffEtfReturns21 ?? null,
         spyAbove200,
         now: ctx.now,
+        sleeveBook: riskoffBook,
       })
     : { sells: [] as AutoSell[], buy: null as AutoBuy | null, buys: [] as AutoBuy[], winner: null, winners: [] as string[] };
   let overlayRotated: { from: string; to: string } | null = null;
@@ -1029,6 +1052,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
         quotes: ctx.riskoffEtfQuotes ?? [],
         overlayWinner: etf.winner ?? null,
         overlayWinners: etf.winners ?? (etf.winner ? [etf.winner] : []),
+        sleeveBook: riskoffBook,
       })
     : { sells: [] as AutoSell[], buy: null as AutoBuy | null };
   for (const s of duration.sells) {
@@ -1193,6 +1217,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
       ctx.getSleeves().riskoff,
       riskOn,
       putChecks,
+      riskoffBook,
     );
     let windowLogged = false;
     for (const intent of intents) {

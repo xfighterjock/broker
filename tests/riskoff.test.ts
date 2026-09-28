@@ -246,6 +246,24 @@ describe("decidePutVerticalIntents", () => {
     expect(intents.every((i) => i.sleeveId === "riskoff")).toBe(true);
   });
 
+  it("blocks new puts when sleeve daily P/L is at the loss cap even if realized is positive", () => {
+    const sleeve = defaultSleeves().riskoff;
+    const positive = {
+      ...sleeve,
+      paper: { ...sleeve.paper, realizedPnlUsd: 274 },
+    };
+    const blocked = decidePutVerticalIntents(quotes, [], positive, false, { spyAbove200: false }, {
+      dailyPnlUsd: -1566,
+      totalPnlUsd: -800,
+    });
+    expect(blocked).toEqual([]);
+    const open = decidePutVerticalIntents(quotes, [], positive, false, { spyAbove200: false }, {
+      dailyPnlUsd: -999,
+      totalPnlUsd: -400,
+    });
+    expect(open.map((i) => i.symbol)).toEqual(["SPY", "QQQ"]);
+  });
+
   it("HYG-only / credit-only OFF (SPY still above 200dma) does not open a credit-leg put", () => {
     const intents = decidePutVerticalIntents(quotes, [], defaultSleeves().riskoff, false, {
       spyAbove200: true,
@@ -3835,5 +3853,154 @@ describe("flatten risk-off puts while SPY is above 200dma", () => {
     expect(result.sold).toEqual([]);
     expect(result.bought).toEqual([]);
     expect(book.getPositions().map((p) => p.symbol)).toEqual(["GLD"]);
+  });
+
+  it("flattens the overlay on sleeve daily or total P/L at the loss cap when realized is positive", () => {
+    const midday = new Date("2026-09-28T15:00:00.000Z");
+    const sleeve = defaultSleeves().riskoff;
+    const positiveRealized = {
+      ...sleeve,
+      paper: { ...sleeve.paper, realizedPnlUsd: 274 },
+    };
+    const open = [etfPos("GDX", 500, 40), etfPos("PDBC", 1000, 14)];
+    const base = {
+      riskOn: false,
+      positions: open,
+      sleeve: positiveRealized,
+      returns: etfRs({ GDX: 0.21, PDBC: 0.2 }),
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: etfRs21(),
+      now: midday,
+      entrySessions: { GDX: "2026-09-22", PDBC: "2026-09-22" },
+    };
+
+    const dumped = decideRiskoffEtf({
+      ...base,
+      sleeveBook: { dailyPnlUsd: -1566, totalPnlUsd: -800 },
+    });
+    expect(dumped.reason).toBe("sleeve loss cap");
+    expect(dumped.buys).toEqual([]);
+    expect(dumped.winners).toEqual([]);
+    expect(dumped.sells.map((s) => s.symbol)).toEqual(["GDX", "PDBC"]);
+    expect(dumped.sells.every((s) => s.reason === "sleeve loss cap")).toBe(true);
+
+    const totalOnly = decideRiskoffEtf({
+      ...base,
+      sleeveBook: { dailyPnlUsd: -200, totalPnlUsd: -1000 },
+    });
+    expect(totalOnly.reason).toBe("sleeve loss cap");
+    expect(totalOnly.sells.map((s) => s.symbol)).toEqual(["GDX", "PDBC"]);
+
+    const atDailyCap = decideRiskoffEtf({
+      ...base,
+      sleeveBook: { dailyPnlUsd: -positiveRealized.lossCapUsd, totalPnlUsd: 50 },
+    });
+    expect(atDailyCap.reason).toBe("sleeve loss cap");
+
+    const under = decideRiskoffEtf({
+      ...base,
+      sleeveBook: { dailyPnlUsd: -999, totalPnlUsd: -999 },
+    });
+    expect(under.reason).not.toBe("sleeve loss cap");
+    expect(under.sells.filter((s) => s.reason === "sleeve loss cap")).toEqual([]);
+    expect(under.sells).toEqual([]);
+
+    const realizedStill = decideRiskoffEtf({
+      ...base,
+      sleeve: {
+        ...sleeve,
+        paper: { ...sleeve.paper, realizedPnlUsd: -sleeve.lossCapUsd },
+      },
+      sleeveBook: { dailyPnlUsd: 0, totalPnlUsd: 0 },
+    });
+    expect(realizedStill.reason).toBe("sleeve loss cap");
+    expect(realizedStill.sells.map((s) => s.symbol)).toEqual(["GDX", "PDBC"]);
+  });
+
+  it("autopilot flattens GDX+PDBC from the passed sleeve book even when lot unrealized is flat", async () => {
+    const sleeves = defaultSleeves();
+    sleeves.riskoff = {
+      ...sleeves.riskoff,
+      paper: { ...sleeves.riskoff.paper, realizedPnlUsd: 274 },
+    };
+    const book = paperBook([etfPos("GDX", 200, 40), etfPos("PDBC", 400, 14)]);
+    const midday = new Date("2026-09-28T15:00:00.000Z");
+    const dumped = await runAutopilot({
+      enabled: true,
+      getPositions: book.getPositions,
+      getSleeves: () => sleeves,
+      momentumRows: [],
+      featureRows: [],
+      scanReady: true,
+      riskOn: false,
+      riskoffEtfReturns: etfRs({ GDX: 0.21, PDBC: 0.2 }),
+      riskoffEtfAbove200: etfAbove200(),
+      riskoffEtfQuotes: allEtfQuotes,
+      riskoffSleeveBook: { dailyPnlUsd: -1566, totalPnlUsd: -800 },
+      place: book.place,
+      close: book.close,
+      log: () => {},
+      now: midday,
+    });
+    expect(dumped.sold.map((s) => s.symbol).sort()).toEqual(["GDX", "PDBC"]);
+    expect(dumped.sold.every((s) => s.reason === "sleeve loss cap")).toBe(true);
+    expect(dumped.bought.filter((b) => b.sleeveId === "riskoff")).toEqual([]);
+    expect(book.getPositions()).toEqual([]);
+
+    const held = paperBook([etfPos("GDX", 200, 40), etfPos("PDBC", 400, 14)]);
+    const under = await runAutopilot({
+      enabled: true,
+      getPositions: held.getPositions,
+      getSleeves: () => sleeves,
+      momentumRows: [],
+      featureRows: [],
+      scanReady: true,
+      riskOn: false,
+      riskoffEtfReturns: etfRs({ GDX: 0.21, PDBC: 0.2 }),
+      riskoffEtfAbove200: etfAbove200(),
+      riskoffEtfQuotes: allEtfQuotes,
+      riskoffSleeveBook: { dailyPnlUsd: -999, totalPnlUsd: -999 },
+      place: held.place,
+      close: held.close,
+      log: () => {},
+      now: midday,
+    });
+    expect(under.sold.filter((s) => s.reason === "sleeve loss cap")).toEqual([]);
+    expect(held.getPositions().map((p) => p.symbol).sort()).toEqual(["GDX", "PDBC"]);
+  });
+
+  it("autopilot derives the sleeve book from open unrealized when no blotter book is passed", async () => {
+    const sleeves = defaultSleeves();
+    sleeves.riskoff = {
+      ...sleeves.riskoff,
+      paper: { ...sleeves.riskoff.paper, realizedPnlUsd: 274 },
+    };
+    const open = [
+      { ...etfPos("GDX", 200, 40), unrealizedPnl: -1200 },
+      { ...etfPos("PDBC", 400, 14), unrealizedPnl: -640 },
+    ];
+    const marked = sleeveBook(sleeves.riskoff, open);
+    expect(marked.totalPnlUsd).toBeLessThanOrEqual(-sleeves.riskoff.lossCapUsd);
+    const book = paperBook(open);
+    const result = await runAutopilot({
+      enabled: true,
+      getPositions: book.getPositions,
+      getSleeves: () => sleeves,
+      momentumRows: [],
+      featureRows: [],
+      scanReady: true,
+      riskOn: false,
+      riskoffEtfReturns: etfRs({ GDX: 0.21, PDBC: 0.2 }),
+      riskoffEtfAbove200: etfAbove200(),
+      riskoffEtfQuotes: allEtfQuotes,
+      place: book.place,
+      close: book.close,
+      log: () => {},
+      now: new Date("2026-09-28T15:00:00.000Z"),
+    });
+    expect(result.sold.map((s) => s.symbol).sort()).toEqual(["GDX", "PDBC"]);
+    expect(result.sold.every((s) => s.reason === "sleeve loss cap")).toBe(true);
+    expect(result.bought.filter((b) => b.sleeveId === "riskoff")).toEqual([]);
   });
 });

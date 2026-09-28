@@ -317,4 +317,38 @@ describe("gated TLT/IEF duration", () => {
     expect(book.getPositions().filter((p) => p.symbol === "TLT")).toHaveLength(1);
     expect(book.getPositions().filter((p) => p.gatedDuration)).toHaveLength(0);
   });
+
+  it("flattens gated duration on sleeve daily P/L at the loss cap when realized is positive", () => {
+    const sleeve = defaultSleeves().riskoff;
+    const positive = {
+      ...sleeve,
+      paper: { ...sleeve.paper, realizedPnlUsd: 274 },
+    };
+    const held = [etfPos("TLT", 200, 90, true)];
+    const dumped = decideRiskoffDuration({
+      riskOn: false,
+      spyAbove200: false,
+      dollarVeto: false,
+      positions: held,
+      sleeve: positive,
+      quotes: allEtfQuotes,
+      sleeveBook: { dailyPnlUsd: -1566, totalPnlUsd: -800 },
+    });
+    expect(dumped.reason).toBe("sleeve loss cap");
+    expect(dumped.buy).toBeNull();
+    expect(dumped.sells).toEqual([{ sleeveId: "riskoff", symbol: "TLT", reason: "sleeve loss cap" }]);
+
+    const under = decideRiskoffDuration({
+      riskOn: false,
+      spyAbove200: false,
+      dollarVeto: false,
+      positions: held,
+      sleeve: positive,
+      quotes: allEtfQuotes,
+      sleeveBook: { dailyPnlUsd: -999, totalPnlUsd: -400 },
+    });
+    expect(under.reason).toBe("hold TLT");
+    expect(under.sells).toEqual([]);
+    expect(under.buy).toBeNull();
+  });
 });

@@ -1337,6 +1337,7 @@ export function buildApp(deps: AppDeps): express.Express {
       const riskoffEtfQuotes = etfQuoteRows
         .filter((q) => q.last !== null && Number.isFinite(q.last) && q.last > 0)
         .map((q) => ({ symbol: q.symbol, last: q.last as number }));
+      const sleeveBooks = await sleeveBooksWithSession();
       await runAutopilot({
         enabled: anyAutoPaperOn(memory.autoPaperBySleeve),
         sleeveAuto: memory.autoPaperBySleeve,
@@ -1361,6 +1362,7 @@ export function buildApp(deps: AppDeps): express.Express {
         gateMode: computeClock(new Date(), deps.getEvents()).mode,
         knowledgeTime: memory.knowledgeTime,
         dayBars: await fetchDayMesFiveMinuteBars().catch(() => []),
+        riskoffSleeveBook: sleeveBooks.riskoff,
         placeVertical: async (v: AutoVertical) => {
           if (v.sleeveId === "riskoff" && v.right !== "P") {
             return { ok: false, error: "riskoff sleeve: put debit verticals only" };
