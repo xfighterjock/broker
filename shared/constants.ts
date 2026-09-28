@@ -157,6 +157,7 @@ export const RISKOFF_QUOTE_STRIP = [
   "BIL",
   "TLT",
   "IEF",
+  "FLOT",
   "XLU",
   "XLP",
   "DBMF",
@@ -174,18 +175,21 @@ export type RiskoffQuoteSymbol = (typeof RISKOFF_QUOTE_STRIP)[number];
 /**
  * Second risk-off expression: ETF RS overlay vs BIL. Paper only.
  * Preference order for an exact RS tie: GLD > GDX > PDBC > UUP
- * > duration (TLT, IEF) > defensives (XLU, XLP) > trend (DBMF, KMLM)
- * > long/short equity (CLSE) > min-vol equity (USMV) > quality-factor equity (QUAL)
- * > long/short equity (FTLS) > market-neutral anti-beta (BTAL).
+ * > duration (TLT, IEF) > IG floater (FLOT) > defensives (XLU, XLP)
+ * > trend (DBMF, KMLM) > long/short equity (CLSE) > min-vol (USMV)
+ * > quality (QUAL) > FTLS > BTAL.
  * GDX (equity-levered gold beta) sits with gold, immediately after GLD and
- * before PDBC. Bullion still wins an exact tie. QUAL (quality-factor equity)
- * sits immediately after USMV and before FTLS. BTAL (AGF U.S. Market Neutral
- * Anti-Beta Fund) sits after that equity-diversifier run, immediately after
- * FTLS and before BIL, so CLSE/USMV/QUAL/FTLS still win an exact tie.
+ * before PDBC. Bullion still wins an exact tie. FLOT (iShares Floating Rate
+ * Bond ETF) is investment-grade floating-rate credit, immediately after
+ * duration (TLT, IEF) and before defensives (XLU, XLP). QUAL (quality-factor
+ * equity) sits immediately after USMV and before FTLS. BTAL (AGF U.S. Market
+ * Neutral Anti-Beta Fund) sits after that equity-diversifier run, immediately
+ * after FTLS and before BIL, so CLSE/USMV/QUAL/FTLS still win an exact tie.
  * Array order is the tie-break.
- * BIL is the cash/T-bill benchmark, last. GDX, PDBC, CLSE, USMV, QUAL, FTLS,
- * and BTAL are not CTA. QUAL and BTAL are not gold and have no 21d CTA
- * confirmation. BTAL is not RISKOFF_ETF_COMMODITY_BETA and has no new family.
+ * BIL is the cash/T-bill benchmark, last. GDX, PDBC, FLOT, CLSE, USMV, QUAL,
+ * FTLS, and BTAL are not CTA. FLOT, QUAL, and BTAL are not gold and have no
+ * 21d CTA confirmation. FLOT and BTAL are not RISKOFF_ETF_COMMODITY_BETA and
+ * have no new family. Do not add FLRN.
  * PDBC is broad commodity beta (RISKOFF_ETF_COMMODITY_BETA) and is mutually
  * exclusive with the CTA family for the #2 diversifier only.
  */
@@ -196,6 +200,7 @@ export const RISKOFF_ETF_SYMBOLS = [
   "UUP",
   "TLT",
   "IEF",
+  "FLOT",
   "XLU",
   "XLP",
   "DBMF",
@@ -214,7 +219,7 @@ export const RISKOFF_ETF_CANDIDATES = RISKOFF_ETF_SYMBOLS.filter(
 );
 /**
  * Managed-futures / CTA-style sleeve family on the 63d RS overlay.
- * DBMF and KMLM are the same diversifier sleeve. GDX, PDBC, CLSE, USMV, QUAL, FTLS, and BTAL are not in this set.
+ * DBMF and KMLM are the same diversifier sleeve. GDX, PDBC, FLOT, CLSE, USMV, QUAL, FTLS, and BTAL are not in this set.
  * When RS #1 is in this set, #2 is the highest-ranked qualifier outside
  * the family and not RISKOFF_ETF_COMMODITY_BETA. If no such name clears
  * beat-BIL and own-200, #2 is BIL at 50/50 — never two CTA names together
@@ -233,7 +238,7 @@ export type RiskoffEtfCtaSymbol = (typeof RISKOFF_ETF_CTA_FAMILY)[number];
  * qualifier outside the family. If no non-gold name clears beat-BIL and
  * own-200, #2 is BIL at 50/50 — never GLD+GDX. A non-gold #1 may still
  * take one gold name as #2. A CTA #1 may still take GDX as non-CTA #2.
- * QUAL is quality-factor equity and BTAL is market-neutral anti-beta; neither is in this set.
+ * FLOT is IG floating-rate credit, QUAL is quality-factor equity, and BTAL is market-neutral anti-beta; none is in this set.
  * Add future gold-family tickers here (and to RISKOFF_ETF_SYMBOLS).
  * Paper / MockBroker only.
  */
@@ -243,7 +248,7 @@ export type RiskoffEtfGoldSymbol = (typeof RISKOFF_ETF_GOLD_FAMILY)[number];
  * Broad commodity beta on the 63d RS overlay, mutually exclusive with
  * RISKOFF_ETF_CTA_FAMILY for the #2 diversifier only — same spirit as
  * never-dual-CTA / never-dual-gold. Not a second ticker family: PDBC
- * alone. BTAL is not this symbol and gets no new family. PDBC stays out of
+ * alone. FLOT and BTAL are not this symbol and get no new family. PDBC stays out of
  * RISKOFF_ETF_CTA_FAMILY and does not get the 21-session beat-BIL
  * confirmation. When RS #1 is PDBC, #2 is the
  * highest-ranked qualifier that is not CTA; if none clears beat-BIL and

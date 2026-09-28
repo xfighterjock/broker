@@ -314,7 +314,7 @@ export function riskoffEtfReturnsReady(returns: RiskoffEtfReturns): boolean {
  * Among names that beat BIL, pick the highest 63d return. If a held name is still eligible, keep it
  * unless a challenger leads by RISKOFF_ETF_RS_HYSTERESIS or more. Exact RS
  * tie keeps a held name when it is still eligible, else preference order
- * GLD > GDX > PDBC > UUP > TLT > IEF > XLU > XLP > DBMF > KMLM > CLSE > USMV > QUAL > FTLS > BTAL. Hysteresis does not apply
+ * GLD > GDX > PDBC > UUP > TLT > IEF > FLOT > XLU > XLP > DBMF > KMLM > CLSE > USMV > QUAL > FTLS > BTAL. Hysteresis does not apply
  * when held is missing, not an overlay candidate, or ineligible (return ≤ BIL).
  * Pass above200 to treat own-200 as a qualifier filter (beat BIL and above
  * 200); omit it to test RS/hysteresis in isolation. Names that fail 200 are
@@ -444,12 +444,13 @@ function pickFromPool(
 /**
  * Second sleeve name. Filters compose: CTA first, then gold, then the
  * PDBC↔CTA exclusion. When #1 is CTA, #2 comes from the non-CTA pool
- * (gold names may remain, so GDX can diversify a CTA #1) and PDBC is
- * dropped. Empty pool after that → BIL, never the other CTA and never
- * PDBC. When #1 is gold, #2 comes from the non-gold pool (CTAs may remain
- * if they already cleared the 21d gate; PDBC may remain). Empty non-gold
- * pool → BIL, never GLD+GDX. When #1 is PDBC, #2 comes from the non-CTA
- * pool. Empty after dropping CTAs → BIL, never PDBC+DBMF or PDBC+KMLM.
+ * (gold names may remain, so GDX can diversify a CTA #1; FLOT may fill
+ * that slot) and PDBC is dropped. Empty pool after that → BIL, never the
+ * other CTA and never PDBC. When #1 is gold, #2 comes from the non-gold
+ * pool (CTAs may remain if they already cleared the 21d gate; PDBC and
+ * FLOT may remain). Empty non-gold pool → BIL, never GLD+GDX. When #1 is
+ * PDBC, #2 comes from the non-CTA pool (FLOT may fill it). Empty after
+ * dropping CTAs → BIL, never PDBC+DBMF or PDBC+KMLM.
  * An empty remaining pool (no other qualifier at all) returns null so a
  * lone PDBC stays full size. A non-family #1 that is not PDBC uses the
  * ordinary remaining pool. Hysteresis still applies inside the filtered pool.
