@@ -880,6 +880,26 @@ function overlayThesis(
   return `auto risk-off ETF RS ${RISKOFF_ETF_LOOKBACK_DAYS}d winner ${names[0]}`;
 }
 
+/**
+ * Paper risk-off sleeve loss cap. Trips when realized P/L, or the blotter
+ * sleeve book's daily P/L, or its total P/L, is at or below −lossCapUsd.
+ * Daily and total are sleeveBooks.riskoff.dailyPnlUsd / totalPnlUsd (the
+ * sleeve-tab d / tot on GET /api/status). Omit the book and only realized
+ * is checked.
+ */
+export function riskoffSleeveLossCapHit(
+  sleeve: SleeveCard,
+  book?: { dailyPnlUsd?: number | null; totalPnlUsd?: number | null } | null,
+): boolean {
+  const floor = -sleeve.lossCapUsd;
+  if (sleeve.paper.realizedPnlUsd <= floor) return true;
+  const daily = book?.dailyPnlUsd;
+  const total = book?.totalPnlUsd;
+  if (typeof daily === "number" && daily <= floor) return true;
+  if (typeof total === "number" && total <= floor) return true;
+  return false;
+}
+
 export function decideRiskoffEtf(input: {
   riskOn: boolean;
   positions: Position[];
@@ -921,6 +941,12 @@ export function decideRiskoffEtf(input: {
    * A held name with no stamp is treated as entered on this rebalance.
    */
   entrySessions?: Partial<Record<string, string>> | null;
+  /**
+   * Blotter sleeve book (sleeveBooks.riskoff). dailyPnlUsd or totalPnlUsd
+   * at or below −lossCapUsd flattens the overlay the same way realized does.
+   * Omit and only realized P/L is checked.
+   */
+  sleeveBook?: { dailyPnlUsd?: number | null; totalPnlUsd?: number | null } | null;
 }): RiskoffEtfDecision {
   const open = openRiskoffEtfPositions(input.positions);
   const priorMisses = input.missingBarsMisses ?? missingBarsMisses;
@@ -930,7 +956,7 @@ export function decideRiskoffEtf(input: {
     clearOverlayBookMemory();
     return flattenOpen(open, "risk on: flatten risk-off ETF", null);
   }
-  if (input.sleeve.paper.realizedPnlUsd <= -input.sleeve.lossCapUsd) {
+  if (riskoffSleeveLossCapHit(input.sleeve, input.sleeveBook)) {
     missingBarsMisses = 0;
     clearOverlayBookMemory();
     return flattenOpen(open, "sleeve loss cap", null);
