@@ -7,6 +7,8 @@ import {
   RISKOFF_ETF_CTA_CONFIRM_DAYS,
   RISKOFF_ETF_CTA_FAMILY,
   RISKOFF_ETF_GOLD_FAMILY,
+  RISKOFF_ETF_HYG_ONLY_21D_CONFIRM,
+  RISKOFF_ETF_HYG_ONLY_INELIGIBLE,
   RISKOFF_ETF_LOOKBACK_DAYS,
   RISKOFF_ETF_MIN_HOLD_SESSIONS,
   RISKOFF_ETF_MISSING_BARS_MAX_MISSES,
@@ -33,7 +35,8 @@ export type RiskoffEtfOverlaySnapshot = {
   returns: RiskoffEtfReturns;
   /**
    * RISKOFF_ETF_CTA_CONFIRM_DAYS total returns from the same dailies.
-   * CTA confirmation always; gold-family confirmation only in HYG-only RISK OFF.
+   * CTA confirmation always. In HYG-only RISK OFF the same map confirms
+   * gold-family names and RISKOFF_ETF_HYG_ONLY_21D_CONFIRM.
    * A missing name does not debounce the overlay.
    */
   returns21: RiskoffEtfReturns;
@@ -156,6 +159,16 @@ export function isRiskoffEtfCta(symbol: string): boolean {
 
 export function isRiskoffEtfGold(symbol: string): boolean {
   return (RISKOFF_ETF_GOLD_FAMILY as readonly string[]).includes(symbol.trim().toUpperCase());
+}
+
+/** CLSE, USMV, QUAL, FTLS. Not CTA and not gold. */
+export function isRiskoffEtfHygOnly21dConfirm(symbol: string): boolean {
+  return (RISKOFF_ETF_HYG_ONLY_21D_CONFIRM as readonly string[]).includes(symbol.trim().toUpperCase());
+}
+
+/** TLT, IEF, XLU. RS-ineligible in HYG-only only. Not a duration-book change. */
+export function isRiskoffEtfHygOnlyIneligible(symbol: string): boolean {
+  return (RISKOFF_ETF_HYG_ONLY_INELIGIBLE as readonly string[]).includes(symbol.trim().toUpperCase());
 }
 
 /** PDBC only. Commodity beta, not a CTA and not 21d-gated. */
@@ -339,14 +352,18 @@ export function riskoffEtfReturnsReady(returns: RiskoffEtfReturns): boolean {
  * exclusion, if a name were ever in both CTA and gold. Pass returns21 to also require each CTA-family
  * name to beat BIL on RISKOFF_ETF_CTA_CONFIRM_DAYS (strict >; missing bars
  * fail closed for that CTA only). Omit returns21 to test 63d RS in
- * isolation. Non-gold non-CTA names ignore returns21. Pass hygOnly
+ * isolation. PDBC, FLOT, XLP, and BTAL ignore returns21. Pass hygOnly
  * (HYG-only RISK OFF: risk off, SPY known above 200, HYG known below 200)
- * to also require each RISKOFF_ETF_GOLD_FAMILY name to beat BIL on that
- * same 21d window; missing bars fail that gold name closed. Omit hygOnly
- * and gold ignores returns21, including when SPY is below 200. PDBC is
- * never 21d-gated. A failed CTA, or a gold name that fails the HYG-only
- * 21d check, is dropped from the ranked basket; the next remaining
- * qualifier fills the slot. None left → BIL.
+ * to also require each RISKOFF_ETF_GOLD_FAMILY name and each
+ * RISKOFF_ETF_HYG_ONLY_21D_CONFIRM name (CLSE, USMV, QUAL, FTLS) to beat
+ * BIL on that same 21d window; missing bars fail that name closed. The
+ * same flag drops RISKOFF_ETF_HYG_ONLY_INELIGIBLE (TLT, IEF, XLU) from the
+ * RS basket even when 63d beats BIL. Omit hygOnly and gold, the equity
+ * confirm set, and that drop stay off, including when SPY is below 200.
+ * PDBC is never 21d-gated. A failed CTA, a gold or equity name that fails
+ * the HYG-only 21d check, or a HYG-only-ineligible name is dropped from
+ * the ranked basket; the next remaining qualifier fills the slot. None
+ * left → BIL. The drop does not change the gated duration book.
  * RS re-rank and resize run once per NY session at cash close when `now`
  * is passed. A name held fewer than RISKOFF_ETF_MIN_HOLD_SESSIONS cash
  * sessions is not rotated off for RS. Omit `now` to score the rebalance
@@ -389,9 +406,10 @@ function sortQualifiersByRs(
 }
 
 /**
- * Strict RISKOFF_ETF_CTA_CONFIRM_DAYS beat-BIL. Shared by the CTA gate and
- * the HYG-only gold gate. A null map, or a missing/non-finite own or BIL
- * return, fails closed. Beat means strict greater-than, same as 63d RS.
+ * Strict RISKOFF_ETF_CTA_CONFIRM_DAYS beat-BIL. Shared by the CTA gate, the
+ * HYG-only gold gate, and the HYG-only equity-factor gate. A null map, or a
+ * missing/non-finite own or BIL return, fails closed. Beat means strict
+ * greater-than, same as 63d RS.
  */
 export function riskoffEtfBeatsBil21d(
   symbol: string,
@@ -447,11 +465,40 @@ export function riskoffEtfGoldConfirms21d(
 }
 
 /**
+ * HYG-only equity-factor 21d confirmation. Off unless the book is HYG-only
+ * RISK OFF. When on, CLSE, USMV, QUAL, and FTLS must beat BIL on
+ * RISKOFF_ETF_CTA_CONFIRM_DAYS with the same fail-closed missing-bar
+ * behavior as CTA. Names outside RISKOFF_ETF_HYG_ONLY_21D_CONFIRM always
+ * pass, including BTAL, XLP, and PDBC. SPY below 200 does not require this
+ * check. Not a CTA or gold membership.
+ */
+export function riskoffEtfHygOnlyEquityConfirms21d(
+  symbol: string,
+  returns21: RiskoffEtfReturns | null | undefined,
+  hygOnly: boolean,
+): boolean {
+  if (!hygOnly || !isRiskoffEtfHygOnly21dConfirm(symbol)) return true;
+  return riskoffEtfBeatsBil21d(symbol, returns21);
+}
+
+/**
+ * HYG-only RS eligibility. TLT, IEF, and XLU are not overlay qualifiers in
+ * that regime. Off otherwise, including when SPY is below 200. Does not
+ * affect the gated duration book.
+ */
+export function riskoffEtfHygOnlyRsEligible(symbol: string, hygOnly: boolean): boolean {
+  if (!hygOnly) return true;
+  return !isRiskoffEtfHygOnlyIneligible(symbol);
+}
+
+/**
  * Beat-BIL names; when above200 is passed, also require known-above-own-200.
  * When returns21 is passed (including null), CTA-family names must also beat
  * BIL on that 21d map. Omit returns21 to leave the CTA 21d gate off.
- * When hygOnly is true, gold-family names must beat BIL on that same map
- * (a missing map fails them closed). Default false leaves gold ungated.
+ * When hygOnly is true, gold-family names and RISKOFF_ETF_HYG_ONLY_21D_CONFIRM
+ * names must beat BIL on that same map (a missing map fails them closed),
+ * and RISKOFF_ETF_HYG_ONLY_INELIGIBLE names are dropped. Default false leaves
+ * gold, the equity confirm set, and that drop off.
  */
 export function riskoffEtfQualifiers(
   returns: RiskoffEtfReturns,
@@ -468,8 +515,10 @@ export function riskoffEtfQualifiers(
   if (returns21 === undefined && !hygOnly) return trend;
   return trend.filter(
     (s) =>
+      riskoffEtfHygOnlyRsEligible(s, hygOnly) &&
       (returns21 === undefined || riskoffEtfCtaConfirms21d(s, returns21)) &&
-      riskoffEtfGoldConfirms21d(s, returns21, hygOnly),
+      riskoffEtfGoldConfirms21d(s, returns21, hygOnly) &&
+      riskoffEtfHygOnlyEquityConfirms21d(s, returns21, hygOnly),
   );
 }
 
@@ -711,7 +760,8 @@ function commitEntrySessions(
  * hold. A missing stamp is recorded as `asOf` (this rebalance), so a
  * restart does not immediately RS-rotate a name that is already on the book.
  * Caller drops names that no longer clear beat-BIL / own-200 / CTA 21d,
- * or the HYG-only gold 21d check.
+ * the HYG-only gold 21d check, the HYG-only equity 21d check, or the
+ * HYG-only TLT/IEF/XLU drop.
  */
 function protectedOverlayNames(
   held: string[],
@@ -967,19 +1017,22 @@ export function decideRiskoffEtf(input: {
   /**
    * RISKOFF_ETF_CTA_CONFIRM_DAYS total returns from the same dailies.
    * Omit or null → every CTA fails closed. In HYG-only RISK OFF the same
-   * map fails gold-family names closed. Other non-CTA names are unchanged.
-   * A missing 21d return skips that name only; it is not a 63d missing-bars miss.
+   * map fails gold-family names and RISKOFF_ETF_HYG_ONLY_21D_CONFIRM closed.
+   * PDBC, FLOT, XLP, and BTAL are unchanged. A missing 21d return skips that
+   * name only; it is not a 63d missing-bars miss.
    */
   returns21?: RiskoffEtfReturns | null;
   /**
    * Same spyAbove200 as the put gate (riskoffEquityPutsAllowed). True → 60%
    * overlay (puts gated). False/missing → 40%. Does not change RISK ON flatten.
-   * With hygAbove200 === false and risk off, also turns on the gold 21d gate.
+   * With hygAbove200 === false and risk off, also turns on the gold 21d gate,
+   * the equity-factor 21d gate, and the TLT/IEF/XLU RS drop.
    */
   spyAbove200?: boolean | null;
   /**
    * HYG 200dma from the risk badge. HYG-only RISK OFF is risk off, this
-   * false, and spyAbove200 true. Missing is not HYG-only (gold 21d stays off).
+   * false, and spyAbove200 true. Missing is not HYG-only (gold 21d, equity
+   * 21d, and the TLT/IEF/XLU RS drop stay off).
    */
   hygAbove200?: boolean | null;
   /**

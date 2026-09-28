@@ -188,9 +188,13 @@ export type RiskoffQuoteSymbol = (typeof RISKOFF_QUOTE_STRIP)[number];
  * Array order is the tie-break.
  * BIL is the cash/T-bill benchmark, last. GDX, PDBC, FLOT, CLSE, USMV, QUAL,
  * FTLS, and BTAL are not CTA. GLD and GDX take the same 21d beat-BIL window
- * only in HYG-only RISK OFF; PDBC does not. FLOT, QUAL, and BTAL are not gold
- * and have no 21d confirmation. FLOT and BTAL are not RISKOFF_ETF_COMMODITY_BETA and
- * have no new family. Do not add FLRN.
+ * only in HYG-only RISK OFF; PDBC does not. CLSE, USMV, QUAL, and FTLS
+ * (RISKOFF_ETF_HYG_ONLY_21D_CONFIRM) take that same window only in HYG-only
+ * RISK OFF — a separate set, not CTA and not gold. FLOT and BTAL are not gold
+ * and have no 21d confirmation. TLT, IEF, and XLU
+ * (RISKOFF_ETF_HYG_ONLY_INELIGIBLE) are not RS qualifiers in HYG-only RISK OFF;
+ * when SPY is below 200 they stay on the ordinary gates. FLOT and BTAL are not
+ * RISKOFF_ETF_COMMODITY_BETA and have no new family. Do not add FLRN.
  * PDBC is broad commodity beta (RISKOFF_ETF_COMMODITY_BETA) and is mutually
  * exclusive with the CTA family for the #2 diversifier only.
  */
@@ -242,11 +246,32 @@ export type RiskoffEtfCtaSymbol = (typeof RISKOFF_ETF_CTA_FAMILY)[number];
  * own-200, #2 is BIL at 50/50 — never GLD+GDX. A non-gold #1 may still
  * take one gold name as #2. A CTA #1 may still take GDX as non-CTA #2.
  * FLOT is IG floating-rate credit, QUAL is quality-factor equity, and BTAL is market-neutral anti-beta; none is in this set.
+ * QUAL's HYG-only 21d check lives on RISKOFF_ETF_HYG_ONLY_21D_CONFIRM, not here.
  * Add future gold-family tickers here (and to RISKOFF_ETF_SYMBOLS).
  * Paper / MockBroker only.
  */
 export const RISKOFF_ETF_GOLD_FAMILY = ["GLD", "GDX"] as const;
 export type RiskoffEtfGoldSymbol = (typeof RISKOFF_ETF_GOLD_FAMILY)[number];
+/**
+ * Equity-factor and long/short names that must beat BIL on
+ * RISKOFF_ETF_CTA_CONFIRM_DAYS only in HYG-only RISK OFF (risk off, SPY
+ * known above 200, HYG known below 200). Separate from
+ * RISKOFF_ETF_CTA_FAMILY and RISKOFF_ETF_GOLD_FAMILY — not a dual-family
+ * and not a #2 pairing rule. When SPY is below 200 this 21d check is off.
+ * Missing or non-finite 21d on the name or on BIL skips that name (fail
+ * closed). BTAL, XLP, FLOT, and PDBC are not members. Paper / MockBroker only.
+ */
+export const RISKOFF_ETF_HYG_ONLY_21D_CONFIRM = ["CLSE", "USMV", "QUAL", "FTLS"] as const;
+export type RiskoffEtfHygOnly21dSymbol = (typeof RISKOFF_ETF_HYG_ONLY_21D_CONFIRM)[number];
+/**
+ * RS overlay names that are not qualifiers in HYG-only RISK OFF. They fail
+ * the cash hurdle in that regime even when 63d beats BIL and they are above
+ * their own 200dma. When SPY is below 200 they stay eligible under the
+ * ordinary beat-BIL / own-200 rules. Does not change RISKOFF_DURATION_SYMBOLS
+ * or the gated duration book. XLP stays eligible. Paper / MockBroker only.
+ */
+export const RISKOFF_ETF_HYG_ONLY_INELIGIBLE = ["TLT", "IEF", "XLU"] as const;
+export type RiskoffEtfHygOnlyIneligibleSymbol = (typeof RISKOFF_ETF_HYG_ONLY_INELIGIBLE)[number];
 /**
  * Broad commodity beta on the 63d RS overlay, mutually exclusive with
  * RISKOFF_ETF_CTA_FAMILY for the #2 diversifier only — same spirit as
@@ -264,14 +289,16 @@ export type RiskoffEtfGoldSymbol = (typeof RISKOFF_ETF_GOLD_FAMILY)[number];
  */
 export const RISKOFF_ETF_COMMODITY_BETA = "PDBC" as const;
 /**
- * Extra beat-BIL window. Always on for RISKOFF_ETF_CTA_FAMILY. Also on for
- * RISKOFF_ETF_GOLD_FAMILY in HYG-only RISK OFF only (SPY above 200 and HYG
- * below 200); off for gold when SPY is below 200. Same total-return
+ * Extra beat-BIL window. Always on for RISKOFF_ETF_CTA_FAMILY. Also on in
+ * HYG-only RISK OFF only (SPY above 200 and HYG below 200) for
+ * RISKOFF_ETF_GOLD_FAMILY and RISKOFF_ETF_HYG_ONLY_21D_CONFIRM (CLSE, USMV,
+ * QUAL, FTLS); off for those names when SPY is below 200. Same total-return
  * definition as RISKOFF_ETF_LOOKBACK_DAYS (`last / close N sessions earlier
  * − 1`), strict greater-than BIL. Missing or non-finite 21d on the name or
- * on BIL skips that name (fail closed). Does not gate PDBC or other
- * non-CTA non-gold names, and does not count as a 63d missing-bars miss.
- * Paper / MockBroker only.
+ * on BIL skips that name (fail closed). Does not gate PDBC, FLOT, XLP, or
+ * BTAL, and does not count as a 63d missing-bars miss. TLT, IEF, and XLU are
+ * not 21d-gated; they are dropped from HYG-only RS eligibility
+ * (RISKOFF_ETF_HYG_ONLY_INELIGIBLE). Paper / MockBroker only.
  */
 export const RISKOFF_ETF_CTA_CONFIRM_DAYS = 21;
 /** While RISK OFF, split overlay notional 50/50 across this many qualifiers. */
@@ -352,7 +379,8 @@ export const RISKOFF_ETF_REQUIRE_ABOVE_200 = true;
  * that applies when SPY is below 200 (puts/duration can be on). Combined
  * overlay + duration = 60%; puts keep the rest. Duration is already flat
  * while SPY is above 200, so it never stacks with the 60% put-gated overlay.
- * Paper only.
+ * HYG-only RS ineligibility of TLT/IEF (RISKOFF_ETF_HYG_ONLY_INELIGIBLE) does
+ * not change this program. Paper only.
  */
 export const RISKOFF_DURATION_SYMBOLS = ["TLT", "IEF"] as const;
 export type RiskoffDurationSymbol = (typeof RISKOFF_DURATION_SYMBOLS)[number];
