@@ -712,7 +712,7 @@ describe("HTTP riskoff put vertical (mocked E*TRADE chain)", () => {
 
   it("POST /api/paper/order accepts GLD on riskoff and refuses other stock names", async () => {
     const { app, broker } = makeTestApp();
-    stubMarketFetch({ lastBySymbol: { GLD: 180, SPY: 500, TLT: 90, DBMF: 28, KMLM: 27, CLSE: 25, USMV: 85, QUAL: 160, FTLS: 62, BTAL: 19, PDBC: 14 } });
+    stubMarketFetch({ lastBySymbol: { GLD: 180, SPY: 500, TLT: 90, DBMF: 28, KMLM: 27, CLSE: 25, USMV: 85, QUAL: 160, FTLS: 62, BTAL: 19, PDBC: 14, FLOT: 51 } });
     const srv = await listen(app);
     try {
       const gld = await fetch(`${srv.url}/api/paper/order`, {
@@ -749,7 +749,7 @@ describe("HTTP riskoff put vertical (mocked E*TRADE chain)", () => {
       });
       expect(spy.status).toBe(400);
       const body = (await spy.json()) as { error: string };
-      expect(body.error).toMatch(/GLD\/GDX\/PDBC\/UUP\/TLT\/IEF\/XLU\/XLP\/DBMF\/KMLM\/CLSE\/USMV\/QUAL\/FTLS\/BTAL\/BIL|put debit/i);
+      expect(body.error).toMatch(/GLD\/GDX\/PDBC\/UUP\/TLT\/IEF\/FLOT\/XLU\/XLP\/DBMF\/KMLM\/CLSE\/USMV\/QUAL\/FTLS\/BTAL\/BIL|put debit/i);
 
       const tlt = await fetch(`${srv.url}/api/paper/order`, {
         method: "POST",
@@ -862,6 +862,20 @@ describe("HTTP riskoff put vertical (mocked E*TRADE chain)", () => {
         }),
       });
       expect(btal.status).toBe(200);
+
+      const flot = await fetch(`${srv.url}/api/paper/order`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sleeveId: "riskoff",
+          symbol: "FLOT",
+          side: "Buy",
+          qty: 5,
+          stopPrice: 47,
+          thesis: "manual FLOT",
+        }),
+      });
+      expect(flot.status).toBe(200);
 
       const pdbc = await fetch(`${srv.url}/api/paper/order`, {
         method: "POST",
@@ -997,6 +1011,7 @@ const usmvWins = etfRs({ USMV: 0.18 });
 const qualWins = etfRs({ QUAL: 0.185 });
 const ftlsWins = etfRs({ FTLS: 0.19 });
 const btalWins = etfRs({ BTAL: 0.195 });
+const flotWins = etfRs({ FLOT: 0.205 });
 const pdbcWins = etfRs({ PDBC: 0.2 });
 const gdxWins = etfRs({ GDX: 0.21 });
 const allEtfQuotes = etfQuotes({
@@ -1014,6 +1029,7 @@ const allEtfQuotes = etfQuotes({
   QUAL: 160,
   FTLS: 62,
   BTAL: 19,
+  FLOT: 51,
   PDBC: 14,
   BIL: 91,
 });
@@ -1095,7 +1111,7 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(pickRiskoffEtfWinner(etfRs({ GLD: null, UUP: 0.2 }))).toBeNull();
   });
 
-  it("ranks TLT/IEF/XLU/XLP/DBMF/KMLM/CLSE/USMV/QUAL/FTLS/BTAL/PDBC/GDX when they beat BIL and the rest of the sleeve", () => {
+  it("ranks TLT/IEF/FLOT/XLU/XLP/DBMF/KMLM/CLSE/USMV/QUAL/FTLS/BTAL/PDBC/GDX when they beat BIL and the rest of the sleeve", () => {
     expect(pickRiskoffEtfWinner(tltWins)).toBe("TLT");
     expect(pickRiskoffEtfWinner(iefWins)).toBe("IEF");
     expect(pickRiskoffEtfWinner(xluWins)).toBe("XLU");
@@ -1107,10 +1123,11 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(pickRiskoffEtfWinner(qualWins)).toBe("QUAL");
     expect(pickRiskoffEtfWinner(ftlsWins)).toBe("FTLS");
     expect(pickRiskoffEtfWinner(btalWins)).toBe("BTAL");
+    expect(pickRiskoffEtfWinner(flotWins)).toBe("FLOT");
     expect(pickRiskoffEtfWinner(pdbcWins)).toBe("PDBC");
     expect(pickRiskoffEtfWinner(gdxWins)).toBe("GDX");
-    expect(RISKOFF_ETF_CANDIDATES).toEqual(["GLD", "GDX", "PDBC", "UUP", "TLT", "IEF", "XLU", "XLP", "DBMF", "KMLM", "CLSE", "USMV", "QUAL", "FTLS", "BTAL"]);
-    expect(RISKOFF_ETF_SYMBOLS).toEqual(["GLD", "GDX", "PDBC", "UUP", "TLT", "IEF", "XLU", "XLP", "DBMF", "KMLM", "CLSE", "USMV", "QUAL", "FTLS", "BTAL", "BIL"]);
+    expect(RISKOFF_ETF_CANDIDATES).toEqual(["GLD", "GDX", "PDBC", "UUP", "TLT", "IEF", "FLOT", "XLU", "XLP", "DBMF", "KMLM", "CLSE", "USMV", "QUAL", "FTLS", "BTAL"]);
+    expect(RISKOFF_ETF_SYMBOLS).toEqual(["GLD", "GDX", "PDBC", "UUP", "TLT", "IEF", "FLOT", "XLU", "XLP", "DBMF", "KMLM", "CLSE", "USMV", "QUAL", "FTLS", "BTAL", "BIL"]);
     expect(RISKOFF_ETF_CTA_FAMILY).toEqual(["DBMF", "KMLM"]);
     expect(RISKOFF_ETF_GOLD_FAMILY).toEqual(["GLD", "GDX"]);
     expect(RISKOFF_ETF_CTA_FAMILY).not.toContain("GDX");
@@ -1125,17 +1142,20 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(RISKOFF_ETF_SYMBOLS).toContain("QUAL");
     expect(RISKOFF_ETF_SYMBOLS).toContain("FTLS");
     expect(RISKOFF_ETF_SYMBOLS).toContain("BTAL");
+    expect(RISKOFF_ETF_SYMBOLS).toContain("FLOT");
     expect(RISKOFF_ETF_SYMBOLS).toContain("PDBC");
     expect(RISKOFF_ETF_CANDIDATES).toContain("USMV");
     expect(RISKOFF_ETF_CANDIDATES).toContain("QUAL");
     expect(RISKOFF_ETF_CANDIDATES).toContain("FTLS");
     expect(RISKOFF_ETF_CANDIDATES).toContain("BTAL");
+    expect(RISKOFF_ETF_CANDIDATES).toContain("FLOT");
     expect(RISKOFF_ETF_CANDIDATES).toContain("PDBC");
     expect(RISKOFF_ETF_CTA_FAMILY).not.toContain("CLSE");
     expect(RISKOFF_ETF_CTA_FAMILY).not.toContain("USMV");
     expect(RISKOFF_ETF_CTA_FAMILY).not.toContain("QUAL");
     expect(RISKOFF_ETF_CTA_FAMILY).not.toContain("FTLS");
     expect(RISKOFF_ETF_CTA_FAMILY).not.toContain("BTAL");
+    expect(RISKOFF_ETF_CTA_FAMILY).not.toContain("FLOT");
     expect(RISKOFF_ETF_CTA_FAMILY).not.toContain("PDBC");
     expect(isRiskoffEtfCta("CLSE")).toBe(false);
     expect(isRiskoffEtfCta("USMV")).toBe(false);
@@ -1151,12 +1171,22 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(RISKOFF_ETF_COMMODITY_BETA).not.toBe("BTAL");
     expect(RISKOFF_ETF_CANDIDATES.indexOf("BTAL")).toBe(RISKOFF_ETF_CANDIDATES.indexOf("FTLS") + 1);
     expect([...RISKOFF_QUOTE_STRIP].indexOf("BTAL")).toBe([...RISKOFF_QUOTE_STRIP].indexOf("FTLS") + 1);
+    expect(isRiskoffEtfCta("FLOT")).toBe(false);
+    expect(isRiskoffEtfGold("FLOT")).toBe(false);
+    expect(isRiskoffEtfCommodityBeta("FLOT")).toBe(false);
+    expect(RISKOFF_ETF_GOLD_FAMILY).not.toContain("FLOT");
+    expect(RISKOFF_ETF_COMMODITY_BETA).not.toBe("FLOT");
+    expect(RISKOFF_ETF_CANDIDATES.indexOf("FLOT")).toBe(RISKOFF_ETF_CANDIDATES.indexOf("IEF") + 1);
+    expect(RISKOFF_ETF_CANDIDATES.indexOf("XLU")).toBe(RISKOFF_ETF_CANDIDATES.indexOf("FLOT") + 1);
+    expect([...RISKOFF_QUOTE_STRIP].indexOf("FLOT")).toBe([...RISKOFF_QUOTE_STRIP].indexOf("IEF") + 1);
+    expect([...RISKOFF_QUOTE_STRIP].indexOf("XLU")).toBe([...RISKOFF_QUOTE_STRIP].indexOf("FLOT") + 1);
     expect(isRiskoffEtfCta("PDBC")).toBe(false);
     expect(RISKOFF_QUOTE_STRIP).toContain("CLSE");
     expect(RISKOFF_QUOTE_STRIP).toContain("USMV");
     expect(RISKOFF_QUOTE_STRIP).toContain("QUAL");
     expect(RISKOFF_QUOTE_STRIP).toContain("FTLS");
     expect(RISKOFF_QUOTE_STRIP).toContain("BTAL");
+    expect(RISKOFF_QUOTE_STRIP).toContain("FLOT");
     expect(RISKOFF_QUOTE_STRIP).toContain("PDBC");
   });
 
@@ -1691,6 +1721,7 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(pickRiskoffEtfWinner(etfRs({ QUAL: null, GLD: 0.2 }))).toBeNull();
     expect(pickRiskoffEtfWinner(etfRs({ FTLS: null, GLD: 0.2 }))).toBeNull();
     expect(pickRiskoffEtfWinner(etfRs({ BTAL: null, GLD: 0.2 }))).toBeNull();
+    expect(pickRiskoffEtfWinner(etfRs({ FLOT: null, GLD: 0.2 }))).toBeNull();
     expect(pickRiskoffEtfWinner(etfRs({ PDBC: null, GLD: 0.2 }))).toBeNull();
     expect(pickRiskoffEtfWinner(etfRs({ GDX: null, GLD: 0.2 }))).toBeNull();
 
@@ -2048,6 +2079,30 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(result.bought[0].qty * 19).toBeLessThanOrEqual(DEFAULT_SLEEVE_EQUITY_USD * RISKOFF_ETF_NOTIONAL_FRAC);
     expect(result.bought[0].stopPrice).toBeCloseTo(19 * RISKOFF_ETF_STOP_MUL);
     expect(book.getPositions().map((p) => p.symbol)).toEqual(["BTAL"]);
+  });
+
+  it("2d. FLOT beats the rest of the sleeve → paper long FLOT at the same notional", async () => {
+    const book = paperBook();
+    const result = await runAutopilot({
+      enabled: true,
+      getPositions: book.getPositions,
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [],
+      featureRows: [],
+      scanReady: true,
+      riskOn: false,
+      riskoffEtfReturns: flotWins,
+      riskoffEtfAbove200: etfAbove200(),
+      riskoffEtfQuotes: allEtfQuotes,
+      place: book.place,
+      close: book.close,
+      log: () => {},
+    });
+    expect(result.bought.map((b) => b.symbol)).toEqual(["FLOT"]);
+    expect(result.bought[0].qty).toBe(sizeRiskoffEtfShares(51));
+    expect(result.bought[0].qty * 51).toBeLessThanOrEqual(DEFAULT_SLEEVE_EQUITY_USD * RISKOFF_ETF_NOTIONAL_FRAC);
+    expect(result.bought[0].stopPrice).toBeCloseTo(51 * RISKOFF_ETF_STOP_MUL);
+    expect(book.getPositions().map((p) => p.symbol)).toEqual(["FLOT"]);
   });
 
   it("2d. PDBC beats the rest of the sleeve → paper long PDBC at the same notional", async () => {
@@ -2530,6 +2585,83 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(getRiskoffEtfMissingBarsMisses()).toBe(0);
   });
 
+  it("FLOT ranks when it beats BIL and is above 200, is excluded below 200, and skips CTA, gold, and commodity families", () => {
+    expect(isRiskoffEtfCta("FLOT")).toBe(false);
+    expect(isRiskoffEtfGold("FLOT")).toBe(false);
+    expect(isRiskoffEtfCommodityBeta("FLOT")).toBe(false);
+    expect(RISKOFF_ETF_CTA_FAMILY).toEqual(["DBMF", "KMLM"]);
+    expect(RISKOFF_ETF_CTA_FAMILY).not.toContain("FLOT");
+    expect(RISKOFF_ETF_GOLD_FAMILY).toEqual(["GLD", "GDX"]);
+    expect(RISKOFF_ETF_GOLD_FAMILY).not.toContain("FLOT");
+    expect(RISKOFF_ETF_COMMODITY_BETA).toBe("PDBC");
+    expect(RISKOFF_ETF_COMMODITY_BETA).not.toBe("FLOT");
+    expect(RISKOFF_ETF_CANDIDATES.indexOf("FLOT")).toBe(RISKOFF_ETF_CANDIDATES.indexOf("IEF") + 1);
+    expect(RISKOFF_ETF_CANDIDATES.indexOf("XLU")).toBe(RISKOFF_ETF_CANDIDATES.indexOf("FLOT") + 1);
+    expect(pickRiskoffEtfWinner(flotWins, null, etfAbove200())).toBe("FLOT");
+    expect(pickRiskoffEtfSleeve(flotWins, null, etfAbove200())).toEqual(["FLOT"]);
+    expect(riskoffEtfQualifiers(flotWins, etfAbove200())).toContain("FLOT");
+    expect(pickRiskoffEtfWinner(etfRs({ FLOT: 0.005 }), null, etfAbove200())).toBe("BIL");
+    expect(pickRiskoffEtfWinner(flotWins, null, etfAbove200({ FLOT: false }))).toBe("BIL");
+    expect(pickRiskoffEtfWinner(flotWins, null, etfAbove200({ FLOT: null }))).toBe("BIL");
+    expect(riskoffEtfQualifiers(flotWins, etfAbove200({ FLOT: false }))).not.toContain("FLOT");
+    const flotThenGld = etfRs({ FLOT: 0.205, GLD: 0.08 });
+    expect(pickRiskoffEtfWinner(flotThenGld, null, etfAbove200({ FLOT: false }))).toBe("GLD");
+    expect(pickRiskoffEtfSleeve(flotThenGld, null, etfAbove200())).toEqual(["FLOT", "GLD"]);
+    const iefFlotTie = etfRs({ IEF: 0.1, FLOT: 0.1 });
+    expect(pickRiskoffEtfWinner(iefFlotTie, null, etfAbove200())).toBe("IEF");
+    expect(pickRiskoffEtfWinner(iefFlotTie, "FLOT", etfAbove200())).toBe("FLOT");
+    const flotXluTie = etfRs({ FLOT: 0.1, XLU: 0.1 });
+    expect(pickRiskoffEtfWinner(flotXluTie, null, etfAbove200())).toBe("FLOT");
+    expect(pickRiskoffEtfWinner(flotXluTie, "XLU", etfAbove200())).toBe("XLU");
+    const tinyLead = etfRs({ FLOT: 0.1, GLD: 0.104 });
+    expect(pickRiskoffEtfWinner(tinyLead, "FLOT", etfAbove200())).toBe("FLOT");
+    expect(pickRiskoffEtfWinner(etfRs({ FLOT: 0.1, GLD: 0.106 }), "FLOT", etfAbove200())).toBe("GLD");
+    const loses21 = etfRs21({ FLOT: -0.4 });
+    expect(riskoffEtfCtaConfirms21d("FLOT", loses21)).toBe(true);
+    expect(riskoffEtfCtaConfirms21d("FLOT", etfRs21({ FLOT: null }))).toBe(true);
+    expect(riskoffEtfCtaConfirms21d("FLOT", null)).toBe(true);
+    expect(pickRiskoffEtfWinner(flotWins, null, etfAbove200(), loses21)).toBe("FLOT");
+    expect(pickRiskoffEtfSleeve(flotWins, null, etfAbove200(), etfRs21({ FLOT: null, BIL: null }))).toEqual([
+      "FLOT",
+    ]);
+    const dbmfThenFlot = etfRs({ DBMF: 0.2, KMLM: 0.16, PDBC: 0.12, FLOT: 0.09 });
+    expect(pickRiskoffEtfSleeve(dbmfThenFlot, null, etfAbove200(), etfRs21())).toEqual(["DBMF", "FLOT"]);
+    expect(pickRiskoffEtfSleeve(dbmfThenFlot, null, etfAbove200(), etfRs21())).not.toContain("PDBC");
+    expect(pickRiskoffEtfSleeve(dbmfThenFlot, null, etfAbove200(), etfRs21())).not.toContain("KMLM");
+    const pdbcThenFlot = etfRs({ PDBC: 0.22, KMLM: 0.16, FLOT: 0.08 });
+    expect(pickRiskoffEtfSleeve(pdbcThenFlot, null, etfAbove200(), etfRs21())).toEqual(["PDBC", "FLOT"]);
+    expect(pickRiskoffEtfSleeve(pdbcThenFlot, null, etfAbove200(), etfRs21())).not.toContain("KMLM");
+    const gldThenFlot = etfRs({ GLD: 0.2, GDX: 0.16, FLOT: 0.09 });
+    expect(pickRiskoffEtfSleeve(gldThenFlot, null, etfAbove200(), etfRs21())).toEqual(["GLD", "FLOT"]);
+    expect(pickRiskoffEtfSleeve(gldThenFlot, null, etfAbove200(), etfRs21())).not.toContain("GDX");
+    const decided = decideRiskoffEtf({
+      riskOn: false,
+      positions: [],
+      sleeve: defaultSleeves().riskoff,
+      returns: flotWins,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: loses21,
+    });
+    expect(decided.winners).toEqual(["FLOT"]);
+    expect(decided.buy?.symbol).toBe("FLOT");
+    expect(decided.buy?.qty).toBe(sizeRiskoffEtfShares(51));
+    expect(decided.buy?.stopPrice).toBeCloseTo(51 * RISKOFF_ETF_STOP_MUL);
+    const below200 = decideRiskoffEtf({
+      riskOn: false,
+      positions: [etfPos("FLOT", 100, 51)],
+      sleeve: defaultSleeves().riskoff,
+      returns: flotWins,
+      quotes: allEtfQuotes,
+      above200: etfAbove200({ FLOT: false }),
+      returns21: loses21,
+    });
+    expect(below200.winner).toBe("BIL");
+    expect(below200.sells.map((s) => s.symbol)).toEqual(["FLOT"]);
+    expect(below200.buy?.symbol).toBe("BIL");
+    expect(getRiskoffEtfMissingBarsMisses()).toBe(0);
+  });
+
   it("PDBC ranks when it beats BIL and is above 200, is excluded below 200, and skips the CTA 21d gate", () => {
     expect(isRiskoffEtfCta("PDBC")).toBe(false);
     expect(RISKOFF_ETF_CTA_FAMILY).toEqual(["DBMF", "KMLM"]);
@@ -2778,8 +2910,11 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(isRiskoffEtfCommodityBeta("PDBC")).toBe(true);
     expect(isRiskoffEtfCommodityBeta("KMLM")).toBe(false);
     expect(isRiskoffEtfCommodityBeta("BTAL")).toBe(false);
+    expect(isRiskoffEtfCommodityBeta("FLOT")).toBe(false);
     expect(isRiskoffEtfGold("BTAL")).toBe(false);
+    expect(isRiskoffEtfGold("FLOT")).toBe(false);
     expect(isRiskoffEtfCta("BTAL")).toBe(false);
+    expect(isRiskoffEtfCta("FLOT")).toBe(false);
     expect(isRiskoffEtfCta("PDBC")).toBe(false);
     expect(riskoffEtfCtaConfirms21d("PDBC", etfRs21({ PDBC: -0.4 }))).toBe(true);
     expect(riskoffEtfCtaConfirms21d("PDBC", etfRs21({ PDBC: null }))).toBe(true);
@@ -3024,6 +3159,7 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(isRiskoffEtfCta("QUAL")).toBe(false);
     expect(isRiskoffEtfCta("FTLS")).toBe(false);
     expect(isRiskoffEtfCta("BTAL")).toBe(false);
+    expect(isRiskoffEtfCta("FLOT")).toBe(false);
     expect(isRiskoffEtfCta("PDBC")).toBe(false);
     const closes = Array.from({ length: 40 }, () => 100);
     closes[closes.length - 1] = 110;
@@ -3059,6 +3195,7 @@ describe("risk-off ETF relative-strength expression", () => {
     expect(pickRiskoffEtfWinner(clseWins, null, etfAbove200(), gldLoses21)).toBe("CLSE");
     expect(pickRiskoffEtfWinner(usmvWins, null, etfAbove200(), gldLoses21)).toBe("USMV");
     expect(pickRiskoffEtfWinner(ftlsWins, null, etfAbove200(), gldLoses21)).toBe("FTLS");
+    expect(pickRiskoffEtfWinner(flotWins, null, etfAbove200(), gldLoses21)).toBe("FLOT");
     expect(pickRiskoffEtfWinner(pdbcWins, null, etfAbove200(), gldLoses21)).toBe("PDBC");
     expect(pickRiskoffEtfSleeve(etfRs({ UUP: 0.11, GLD: 0.04 }), null, etfAbove200(), gldLoses21)).toEqual([
       "UUP",

@@ -60,6 +60,7 @@ describe("defaultSleeves", () => {
     expect(sleeves.riskoff.instruments).toMatch(/QUAL/);
     expect(sleeves.riskoff.instruments).toMatch(/FTLS/);
     expect(sleeves.riskoff.instruments).toMatch(/BTAL/);
+    expect(sleeves.riskoff.instruments).toMatch(/FLOT/);
     expect(sleeves.riskoff.instruments).toMatch(/PDBC/);
     expect(sleeves.riskoff.instruments).toMatch(/GDX/);
     expect(sleeves.riskoff.instruments).toMatch(/LQD/);

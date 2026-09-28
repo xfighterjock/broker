@@ -31,6 +31,7 @@ export const SYMBOL_DESCRIPTIONS: Readonly<Record<string, string>> = {
   BIL: "SPDR Bloomberg 1-3 Month T-Bill ETF",
   TLT: "iShares 20+ Year Treasury Bond ETF",
   IEF: "iShares 7-10 Year Treasury Bond ETF",
+  FLOT: "iShares Floating Rate Bond ETF",
   XLU: "Utilities Select Sector SPDR Fund",
   XLP: "Consumer Staples Select Sector SPDR Fund",
   DBMF: "iMGP DBi Managed Futures Strategy ETF",
