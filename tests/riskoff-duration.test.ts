@@ -24,6 +24,8 @@ import {
   DEFAULT_SLEEVE_EQUITY_USD,
   RISKOFF_DURATION_NOTIONAL_FRAC,
   RISKOFF_DURATION_STOP_MUL,
+  RISKOFF_DURATION_SYMBOLS,
+  RISKOFF_ETF_HYG_ONLY_INELIGIBLE,
   RISKOFF_ETF_NOTIONAL_FRAC,
   RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED,
   RISKOFF_ETF_STOP_MUL,
@@ -351,5 +353,38 @@ describe("gated TLT/IEF duration", () => {
     expect(under.reason).toBe("hold TLT");
     expect(under.sells).toEqual([]);
     expect(under.buy).toBeNull();
+  });
+
+  it("HYG-only RS drop of TLT/IEF does not change the gated duration book", () => {
+    expect(RISKOFF_DURATION_SYMBOLS).toEqual(["TLT", "IEF"]);
+    expect(RISKOFF_ETF_HYG_ONLY_INELIGIBLE).toEqual(["TLT", "IEF", "XLU"]);
+
+    const spyBelow = decideRiskoffDuration({
+      riskOn: false,
+      spyAbove200: false,
+      dollarVeto: false,
+      positions: [],
+      sleeve: defaultSleeves().riskoff,
+      quotes: allEtfQuotes,
+      overlayWinners: ["GLD", "BIL"],
+    });
+    expect(spyBelow.buy?.symbol).toBe("TLT");
+    expect(spyBelow.buy?.gatedDuration).toBe(true);
+    expect(spyBelow.buy?.thesis).toMatch(/gated duration TLT \(SPY below 200, dollar clear\)/);
+    expect(spyBelow.buy?.qty).toBe(
+      sizeRiskoffEtfShares(90, DEFAULT_SLEEVE_EQUITY_USD, RISKOFF_DURATION_NOTIONAL_FRAC),
+    );
+
+    const hygOnly = decideRiskoffDuration({
+      riskOn: false,
+      spyAbove200: true,
+      dollarVeto: false,
+      positions: [],
+      sleeve: defaultSleeves().riskoff,
+      quotes: allEtfQuotes,
+      overlayWinners: ["BIL"],
+    });
+    expect(hygOnly.buy).toBeNull();
+    expect(hygOnly.reason).toMatch(/SPY above 200dma/);
   });
 });
