@@ -187,8 +187,9 @@ export type RiskoffQuoteSymbol = (typeof RISKOFF_QUOTE_STRIP)[number];
  * after FTLS and before BIL, so CLSE/USMV/QUAL/FTLS still win an exact tie.
  * Array order is the tie-break.
  * BIL is the cash/T-bill benchmark, last. GDX, PDBC, FLOT, CLSE, USMV, QUAL,
- * FTLS, and BTAL are not CTA. FLOT, QUAL, and BTAL are not gold and have no
- * 21d CTA confirmation. FLOT and BTAL are not RISKOFF_ETF_COMMODITY_BETA and
+ * FTLS, and BTAL are not CTA. GLD and GDX take the same 21d beat-BIL window
+ * only in HYG-only RISK OFF; PDBC does not. FLOT, QUAL, and BTAL are not gold
+ * and have no 21d confirmation. FLOT and BTAL are not RISKOFF_ETF_COMMODITY_BETA and
  * have no new family. Do not add FLRN.
  * PDBC is broad commodity beta (RISKOFF_ETF_COMMODITY_BETA) and is mutually
  * exclusive with the CTA family for the #2 diversifier only.
@@ -233,8 +234,10 @@ export type RiskoffEtfCtaSymbol = (typeof RISKOFF_ETF_CTA_FAMILY)[number];
 /**
  * Gold-beta sleeve family on the 63d RS overlay. GLD (bullion) and GDX
  * (VanEck Gold Miners, equity-levered gold beta) are the same diversifier
- * sleeve. GDX is not CTA and does not need the 21-session beat-BIL
- * confirmation. When RS #1 is in this set, #2 is the highest-ranked
+ * sleeve. GDX is not CTA. In HYG-only RISK OFF (SPY above 200 and HYG
+ * below 200) each member must also beat BIL on
+ * RISKOFF_ETF_CTA_CONFIRM_DAYS; when SPY is below 200 that 21d check is
+ * off. When RS #1 is in this set, #2 is the highest-ranked
  * qualifier outside the family. If no non-gold name clears beat-BIL and
  * own-200, #2 is BIL at 50/50 — never GLD+GDX. A non-gold #1 may still
  * take one gold name as #2. A CTA #1 may still take GDX as non-CTA #2.
@@ -250,7 +253,7 @@ export type RiskoffEtfGoldSymbol = (typeof RISKOFF_ETF_GOLD_FAMILY)[number];
  * never-dual-CTA / never-dual-gold. Not a second ticker family: PDBC
  * alone. FLOT and BTAL are not this symbol and get no new family. PDBC stays out of
  * RISKOFF_ETF_CTA_FAMILY and does not get the 21-session beat-BIL
- * confirmation. When RS #1 is PDBC, #2 is the
+ * confirmation, including in HYG-only RISK OFF. When RS #1 is PDBC, #2 is the
  * highest-ranked qualifier that is not CTA; if none clears beat-BIL and
  * own-200, #2 is BIL at 50/50. When RS #1 is CTA, #2 must not be PDBC
  * (fall through to the next non-PDBC qualifier, else BIL). Never hold
@@ -261,11 +264,14 @@ export type RiskoffEtfGoldSymbol = (typeof RISKOFF_ETF_GOLD_FAMILY)[number];
  */
 export const RISKOFF_ETF_COMMODITY_BETA = "PDBC" as const;
 /**
- * Extra beat-BIL window for RISKOFF_ETF_CTA_FAMILY only. Same total-return
+ * Extra beat-BIL window. Always on for RISKOFF_ETF_CTA_FAMILY. Also on for
+ * RISKOFF_ETF_GOLD_FAMILY in HYG-only RISK OFF only (SPY above 200 and HYG
+ * below 200); off for gold when SPY is below 200. Same total-return
  * definition as RISKOFF_ETF_LOOKBACK_DAYS (`last / close N sessions earlier
- * − 1`), strict greater-than BIL. Missing or non-finite 21d on the CTA or
- * on BIL skips that CTA (fail closed). Does not gate non-CTA names and does
- * not count as a 63d missing-bars miss. Paper / MockBroker only.
+ * − 1`), strict greater-than BIL. Missing or non-finite 21d on the name or
+ * on BIL skips that name (fail closed). Does not gate PDBC or other
+ * non-CTA non-gold names, and does not count as a 63d missing-bars miss.
+ * Paper / MockBroker only.
  */
 export const RISKOFF_ETF_CTA_CONFIRM_DAYS = 21;
 /** While RISK OFF, split overlay notional 50/50 across this many qualifiers. */

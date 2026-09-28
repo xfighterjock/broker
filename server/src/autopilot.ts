@@ -897,9 +897,10 @@ export type AutopilotCtx = {
   /** 63d total returns for the risk-off ETF overlay vs BIL. Missing/incomplete → missing-bars debounce, then flatten. */
   riskoffEtfReturns?: RiskoffEtfReturns | null;
   /**
-   * 21d total returns for the CTA beat-BIL confirmation. Same Massive dailies
-   * as riskoffEtfReturns. Omit/null fails CTA names closed; non-CTA unchanged.
-   * Does not drive the 63d missing-bars debounce.
+   * 21d total returns for the shared beat-BIL confirmation. Same Massive
+   * dailies as riskoffEtfReturns. Omit/null fails CTA names closed. In
+   * HYG-only RISK OFF it also fails gold-family names closed. Other non-CTA
+   * names are unchanged. Does not drive the 63d missing-bars debounce.
    */
   riskoffEtfReturns21?: RiskoffEtfReturns | null;
   /**
@@ -1020,6 +1021,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
         above200: ctx.riskoffEtfAbove200 ?? null,
         returns21: ctx.riskoffEtfReturns21 ?? null,
         spyAbove200,
+        hygAbove200,
         now: ctx.now,
         sleeveBook: riskoffBook,
       })
