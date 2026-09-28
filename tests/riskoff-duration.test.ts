@@ -199,6 +199,7 @@ describe("gated TLT/IEF duration", () => {
       riskOn: false,
       riskChecks: { spyAbove200: true, hygAbove200: false, dollarVeto: false },
       riskoffEtfReturns: gldWins,
+      riskoffEtfReturns21: etfRs({ GLD: 0.05 }),
       riskoffEtfAbove200: etfAbove200(),
       riskoffEtfQuotes: allEtfQuotes,
       place: book.place,

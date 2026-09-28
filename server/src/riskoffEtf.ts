@@ -33,7 +33,8 @@ export type RiskoffEtfOverlaySnapshot = {
   returns: RiskoffEtfReturns;
   /**
    * RISKOFF_ETF_CTA_CONFIRM_DAYS total returns from the same dailies.
-   * CTA-family confirmation only. A missing name does not debounce the overlay.
+   * CTA confirmation always; gold-family confirmation only in HYG-only RISK OFF.
+   * A missing name does not debounce the overlay.
    */
   returns21: RiskoffEtfReturns;
   above200: RiskoffEtfAbove200;
@@ -338,9 +339,14 @@ export function riskoffEtfReturnsReady(returns: RiskoffEtfReturns): boolean {
  * exclusion, if a name were ever in both CTA and gold. Pass returns21 to also require each CTA-family
  * name to beat BIL on RISKOFF_ETF_CTA_CONFIRM_DAYS (strict >; missing bars
  * fail closed for that CTA only). Omit returns21 to test 63d RS in
- * isolation. Non-CTA names ignore returns21. A failed CTA is dropped from
- * the ranked basket; the next remaining qualifier fills the slot (a CTA
- * only if that name passes 21d, else the next non-CTA). None left → BIL.
+ * isolation. Non-gold non-CTA names ignore returns21. Pass hygOnly
+ * (HYG-only RISK OFF: risk off, SPY known above 200, HYG known below 200)
+ * to also require each RISKOFF_ETF_GOLD_FAMILY name to beat BIL on that
+ * same 21d window; missing bars fail that gold name closed. Omit hygOnly
+ * and gold ignores returns21, including when SPY is below 200. PDBC is
+ * never 21d-gated. A failed CTA, or a gold name that fails the HYG-only
+ * 21d check, is dropped from the ranked basket; the next remaining
+ * qualifier fills the slot. None left → BIL.
  * RS re-rank and resize run once per NY session at cash close when `now`
  * is passed. A name held fewer than RISKOFF_ETF_MIN_HOLD_SESSIONS cash
  * sessions is not rotated off for RS. Omit `now` to score the rebalance
@@ -383,15 +389,14 @@ function sortQualifiersByRs(
 }
 
 /**
- * CTA-family 21d confirmation. Non-CTA names always pass. A null map, a
- * missing/non-finite BIL 21d return, or a missing/non-finite CTA 21d return
- * fails that CTA closed. Beat means strict greater-than, same as 63d RS.
+ * Strict RISKOFF_ETF_CTA_CONFIRM_DAYS beat-BIL. Shared by the CTA gate and
+ * the HYG-only gold gate. A null map, or a missing/non-finite own or BIL
+ * return, fails closed. Beat means strict greater-than, same as 63d RS.
  */
-export function riskoffEtfCtaConfirms21d(
+export function riskoffEtfBeatsBil21d(
   symbol: string,
   returns21: RiskoffEtfReturns | null | undefined,
 ): boolean {
-  if (!isRiskoffEtfCta(symbol)) return true;
   if (!returns21) return false;
   const bil = returns21[RISKOFF_ETF_CASH_SYMBOL];
   const own = returns21[symbol.trim().toUpperCase() as RiskoffEtfSymbol];
@@ -401,14 +406,58 @@ export function riskoffEtfCtaConfirms21d(
 }
 
 /**
+ * CTA-family 21d confirmation. Non-CTA names always pass. A null map, a
+ * missing/non-finite BIL 21d return, or a missing/non-finite CTA 21d return
+ * fails that CTA closed.
+ */
+export function riskoffEtfCtaConfirms21d(
+  symbol: string,
+  returns21: RiskoffEtfReturns | null | undefined,
+): boolean {
+  if (!isRiskoffEtfCta(symbol)) return true;
+  return riskoffEtfBeatsBil21d(symbol, returns21);
+}
+
+/**
+ * HYG-only RISK OFF: the book is RISK OFF, SPY is known above its 200dma,
+ * and HYG is known below its 200dma. Missing spyAbove200 or hygAbove200 is
+ * not this regime. SPY below 200 (puts can be on) is not this regime.
+ */
+export function riskoffHygOnlyRiskOff(
+  riskOn: boolean,
+  spyAbove200?: boolean | null,
+  hygAbove200?: boolean | null,
+): boolean {
+  return riskOn === false && spyAbove200 === true && hygAbove200 === false;
+}
+
+/**
+ * Gold-family 21d confirmation. Off unless the book is HYG-only RISK OFF.
+ * When on, GLD and GDX must beat BIL on RISKOFF_ETF_CTA_CONFIRM_DAYS with
+ * the same fail-closed missing-bar behavior as CTA. Non-gold names,
+ * including PDBC, always pass. SPY below 200 does not require this check.
+ */
+export function riskoffEtfGoldConfirms21d(
+  symbol: string,
+  returns21: RiskoffEtfReturns | null | undefined,
+  hygOnly: boolean,
+): boolean {
+  if (!hygOnly || !isRiskoffEtfGold(symbol)) return true;
+  return riskoffEtfBeatsBil21d(symbol, returns21);
+}
+
+/**
  * Beat-BIL names; when above200 is passed, also require known-above-own-200.
  * When returns21 is passed (including null), CTA-family names must also beat
- * BIL on that 21d map. Omit returns21 to leave the 21d gate off.
+ * BIL on that 21d map. Omit returns21 to leave the CTA 21d gate off.
+ * When hygOnly is true, gold-family names must beat BIL on that same map
+ * (a missing map fails them closed). Default false leaves gold ungated.
  */
 export function riskoffEtfQualifiers(
   returns: RiskoffEtfReturns,
   above200?: Partial<Record<RiskoffEtfSymbol, boolean | null>> | null,
   returns21?: RiskoffEtfReturns | null,
+  hygOnly = false,
 ): RiskoffEtfCandidate[] {
   const bil = returns[RISKOFF_ETF_CASH_SYMBOL] as number;
   const beatBil = RISKOFF_ETF_CANDIDATES.filter((s) => (returns[s] as number) > bil);
@@ -416,8 +465,12 @@ export function riskoffEtfQualifiers(
     above200 === undefined || !RISKOFF_ETF_REQUIRE_ABOVE_200
       ? beatBil
       : beatBil.filter((s) => above200?.[s] === true);
-  if (returns21 === undefined) return trend;
-  return trend.filter((s) => riskoffEtfCtaConfirms21d(s, returns21));
+  if (returns21 === undefined && !hygOnly) return trend;
+  return trend.filter(
+    (s) =>
+      (returns21 === undefined || riskoffEtfCtaConfirms21d(s, returns21)) &&
+      riskoffEtfGoldConfirms21d(s, returns21, hygOnly),
+  );
 }
 
 function pickFromPool(
@@ -484,10 +537,11 @@ export function pickRiskoffEtfSleeve(
   held?: string | string[] | null,
   above200?: Partial<Record<RiskoffEtfSymbol, boolean | null>> | null,
   returns21?: RiskoffEtfReturns | null,
+  hygOnly = false,
 ): RiskoffEtfSymbol[] | null {
   if (!riskoffEtfReturnsReady(returns)) return null;
   const heldNames = heldCandidateNames(held);
-  const qualifiers = riskoffEtfQualifiers(returns, above200, returns21);
+  const qualifiers = riskoffEtfQualifiers(returns, above200, returns21, hygOnly);
   if (qualifiers.length === 0) return [RISKOFF_ETF_CASH_SYMBOL];
   const first = pickFromPool(qualifiers, returns, heldNames);
   if (!first) return [RISKOFF_ETF_CASH_SYMBOL];
@@ -507,8 +561,9 @@ export function pickRiskoffEtfWinner(
   held?: string | null,
   above200?: Partial<Record<RiskoffEtfSymbol, boolean | null>> | null,
   returns21?: RiskoffEtfReturns | null,
+  hygOnly = false,
 ): RiskoffEtfSymbol | null {
-  const sleeve = pickRiskoffEtfSleeve(returns, held, above200, returns21);
+  const sleeve = pickRiskoffEtfSleeve(returns, held, above200, returns21, hygOnly);
   return sleeve?.[0] ?? null;
 }
 
@@ -655,7 +710,8 @@ function commitEntrySessions(
  * Held candidates whose cash-session count is still inside the minimum
  * hold. A missing stamp is recorded as `asOf` (this rebalance), so a
  * restart does not immediately RS-rotate a name that is already on the book.
- * Caller drops names that no longer clear beat-BIL / own-200 / CTA 21d.
+ * Caller drops names that no longer clear beat-BIL / own-200 / CTA 21d,
+ * or the HYG-only gold 21d check.
  */
 function protectedOverlayNames(
   held: string[],
@@ -910,16 +966,22 @@ export function decideRiskoffEtf(input: {
   above200?: Partial<Record<RiskoffEtfSymbol, boolean | null>> | null;
   /**
    * RISKOFF_ETF_CTA_CONFIRM_DAYS total returns from the same dailies.
-   * Omit or null → every CTA fails closed (non-CTA path unchanged). A
-   * missing CTA or BIL 21d return skips that CTA only; it is not a 63d
-   * missing-bars miss.
+   * Omit or null → every CTA fails closed. In HYG-only RISK OFF the same
+   * map fails gold-family names closed. Other non-CTA names are unchanged.
+   * A missing 21d return skips that name only; it is not a 63d missing-bars miss.
    */
   returns21?: RiskoffEtfReturns | null;
   /**
    * Same spyAbove200 as the put gate (riskoffEquityPutsAllowed). True → 60%
    * overlay (puts gated). False/missing → 40%. Does not change RISK ON flatten.
+   * With hygAbove200 === false and risk off, also turns on the gold 21d gate.
    */
   spyAbove200?: boolean | null;
+  /**
+   * HYG 200dma from the risk badge. HYG-only RISK OFF is risk off, this
+   * false, and spyAbove200 true. Missing is not HYG-only (gold 21d stays off).
+   */
+  hygAbove200?: boolean | null;
   /**
    * Consecutive missing-bars misses already counted before this decision.
    * Omit to use the process-local streak (autopilot ticks). Tests pass this
@@ -968,8 +1030,9 @@ export function decideRiskoffEtf(input: {
   const heldNames = open.map((p) => p.symbol);
   const above200 = input.above200 ?? emptyRiskoffEtfAbove200();
   const returns21 = input.returns21 ?? emptyRiskoffEtfReturns();
-  const rsSleeve = pickRiskoffEtfSleeve(input.returns, heldNames, undefined, returns21);
-  let sleeve = pickRiskoffEtfSleeve(input.returns, heldNames, above200, returns21);
+  const hygOnly = riskoffHygOnlyRiskOff(input.riskOn, input.spyAbove200, input.hygAbove200);
+  const rsSleeve = pickRiskoffEtfSleeve(input.returns, heldNames, undefined, returns21, hygOnly);
+  let sleeve = pickRiskoffEtfSleeve(input.returns, heldNames, above200, returns21, hygOnly);
   if (sleeve === null || rsSleeve === null) {
     return decideMissingBars(open, priorMisses);
   }
@@ -990,7 +1053,7 @@ export function decideRiskoffEtf(input: {
   let protectedNames: RiskoffEtfSymbol[] = [];
   if (input.now && asOf) {
     entries = entryMapFromInput(input.entrySessions);
-    const stillQualified = new Set(riskoffEtfQualifiers(input.returns, above200, returns21));
+    const stillQualified = new Set(riskoffEtfQualifiers(input.returns, above200, returns21, hygOnly));
     protectedNames = protectedOverlayNames(heldNames, asOf, entries).filter((name) =>
       stillQualified.has(name),
     );
@@ -1126,7 +1189,7 @@ async function fetchRiskoffEtfBars(): Promise<Partial<
   return bars;
 }
 
-/** Same Massive dailies for 63d returns, CTA 21d confirmation, and each name's 200dma. One fetch. */
+/** Same Massive dailies for 63d returns, the shared 21d beat-BIL window, and each name's 200dma. One fetch. */
 export async function fetchRiskoffEtfOverlay(): Promise<RiskoffEtfOverlaySnapshot | null> {
   const bars = await fetchRiskoffEtfBars();
   if (!bars) return null;
