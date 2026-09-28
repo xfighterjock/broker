@@ -166,12 +166,12 @@ export function isRiskoffEtfHygOnly21dConfirm(symbol: string): boolean {
   return (RISKOFF_ETF_HYG_ONLY_21D_CONFIRM as readonly string[]).includes(symbol.trim().toUpperCase());
 }
 
-/** TLT, IEF, XLU. RS-ineligible in HYG-only only. Not a duration-book change. */
+/** TLT, IEF, XLU, PDBC. RS-ineligible in HYG-only only. Not a duration-book change. */
 export function isRiskoffEtfHygOnlyIneligible(symbol: string): boolean {
   return (RISKOFF_ETF_HYG_ONLY_INELIGIBLE as readonly string[]).includes(symbol.trim().toUpperCase());
 }
 
-/** PDBC only. Commodity beta, not a CTA and not 21d-gated. */
+/** PDBC only. Commodity beta, not a CTA and not 21d-gated. HYG-only RS-ineligible. */
 export function isRiskoffEtfCommodityBeta(symbol: string): boolean {
   return symbol.trim().toUpperCase() === RISKOFF_ETF_COMMODITY_BETA;
 }
@@ -347,20 +347,23 @@ export function riskoffEtfReturnsReady(returns: RiskoffEtfReturns): boolean {
  * does, #2 is BIL at 50/50 — never GLD+GDX. A lone gold name is 50/50
  * with BIL. When #1 is RISKOFF_ETF_COMMODITY_BETA (PDBC), #2 is the
  * highest qualifier outside the CTA family. If none clears, #2 is BIL at
- * 50/50 — never PDBC+DBMF or PDBC+KMLM. A lone PDBC (no other qualifier)
- * stays full size. CTA filter runs first, then gold, then the PDBC↔CTA
+ * 50/50 — never PDBC+DBMF or PDBC+KMLM. When PDBC is eligible, a lone PDBC
+ * (no other qualifier) stays full size. HYG-only does not open that sleeve.
+ * CTA filter runs first, then gold, then the PDBC↔CTA
  * exclusion, if a name were ever in both CTA and gold. Pass returns21 to also require each CTA-family
  * name to beat BIL on RISKOFF_ETF_CTA_CONFIRM_DAYS (strict >; missing bars
  * fail closed for that CTA only). Omit returns21 to test 63d RS in
- * isolation. PDBC, FLOT, XLP, and BTAL ignore returns21. Pass hygOnly
+ * isolation. FLOT, XLP, and BTAL ignore returns21. PDBC ignores returns21
+ * too, but HYG-only drops it via RISKOFF_ETF_HYG_ONLY_INELIGIBLE. Pass hygOnly
  * (HYG-only RISK OFF: risk off, SPY known above 200, HYG known below 200)
  * to also require each RISKOFF_ETF_GOLD_FAMILY name and each
  * RISKOFF_ETF_HYG_ONLY_21D_CONFIRM name (CLSE, USMV, QUAL, FTLS) to beat
  * BIL on that same 21d window; missing bars fail that name closed. The
- * same flag drops RISKOFF_ETF_HYG_ONLY_INELIGIBLE (TLT, IEF, XLU) from the
- * RS basket even when 63d beats BIL. Omit hygOnly and gold, the equity
+ * same flag drops RISKOFF_ETF_HYG_ONLY_INELIGIBLE (TLT, IEF, XLU, PDBC) from the
+ * RS basket even when 63d beats BIL. That PDBC drop blocks a lone-PDBC full
+ * overlay and a PDBC+FTLS sleeve. Omit hygOnly and gold, the equity
  * confirm set, and that drop stay off, including when SPY is below 200.
- * PDBC is never 21d-gated. A failed CTA, a gold or equity name that fails
+ * PDBC is never 21d-gated; in HYG-only it is not a qualifier at all. A failed CTA, a gold or equity name that fails
  * the HYG-only 21d check, or a HYG-only-ineligible name is dropped from
  * the ranked basket; the next remaining qualifier fills the slot. None
  * left → BIL. The drop does not change the gated duration book.
@@ -482,9 +485,11 @@ export function riskoffEtfHygOnlyEquityConfirms21d(
 }
 
 /**
- * HYG-only RS eligibility. TLT, IEF, and XLU are not overlay qualifiers in
- * that regime. Off otherwise, including when SPY is below 200. Does not
- * affect the gated duration book.
+ * HYG-only RS eligibility. TLT, IEF, XLU, and PDBC are not overlay qualifiers
+ * in that regime, even if 63d beats BIL and own-200 is true. Off otherwise,
+ * including when SPY is below 200. The PDBC drop blocks a lone-PDBC full
+ * overlay and a PDBC+FTLS sleeve. Does not affect the gated duration book
+ * or RISKOFF_ETF_COMMODITY_BETA where PDBC remains eligible.
  */
 export function riskoffEtfHygOnlyRsEligible(symbol: string, hygOnly: boolean): boolean {
   if (!hygOnly) return true;
@@ -761,7 +766,7 @@ function commitEntrySessions(
  * restart does not immediately RS-rotate a name that is already on the book.
  * Caller drops names that no longer clear beat-BIL / own-200 / CTA 21d,
  * the HYG-only gold 21d check, the HYG-only equity 21d check, or the
- * HYG-only TLT/IEF/XLU drop.
+ * HYG-only TLT/IEF/XLU/PDBC drop.
  */
 function protectedOverlayNames(
   held: string[],
@@ -1026,13 +1031,13 @@ export function decideRiskoffEtf(input: {
    * Same spyAbove200 as the put gate (riskoffEquityPutsAllowed). True → 60%
    * overlay (puts gated). False/missing → 40%. Does not change RISK ON flatten.
    * With hygAbove200 === false and risk off, also turns on the gold 21d gate,
-   * the equity-factor 21d gate, and the TLT/IEF/XLU RS drop.
+   * the equity-factor 21d gate, and the TLT/IEF/XLU/PDBC RS drop.
    */
   spyAbove200?: boolean | null;
   /**
    * HYG 200dma from the risk badge. HYG-only RISK OFF is risk off, this
    * false, and spyAbove200 true. Missing is not HYG-only (gold 21d, equity
-   * 21d, and the TLT/IEF/XLU RS drop stay off).
+   * 21d, and the TLT/IEF/XLU/PDBC RS drop stay off).
    */
   hygAbove200?: boolean | null;
   /**
