@@ -191,11 +191,15 @@ export type RiskoffQuoteSymbol = (typeof RISKOFF_QUOTE_STRIP)[number];
  * only in HYG-only RISK OFF. CLSE, USMV, QUAL, and FTLS
  * (RISKOFF_ETF_HYG_ONLY_21D_CONFIRM) take that same window only in HYG-only
  * RISK OFF — a separate set, not CTA and not gold. FLOT and BTAL are not gold
- * and have no 21d confirmation. TLT, IEF, XLU, and PDBC
+ * and have no 21d confirmation. TLT, IEF, XLU, PDBC, and KMLM
  * (RISKOFF_ETF_HYG_ONLY_INELIGIBLE) are not RS qualifiers in HYG-only RISK OFF
  * even if 63d beats BIL and own-200 is true; when SPY is below 200 they stay
  * on the ordinary gates. The PDBC drop blocks a lone-PDBC full overlay and a
- * PDBC+FTLS sleeve in HYG-only. FLOT and BTAL are not
+ * PDBC+FTLS sleeve in HYG-only. The KMLM drop is the same HYG-only RS gate:
+ * 63d beat-BIL, own-200, and the always-on CTA 21d beat-BIL confirm do not
+ * qualify KMLM in that regime. KMLM stays in RISKOFF_ETF_CTA_FAMILY for
+ * never-dual-CTA and that 21d confirm when it is eligible. DBMF is unchanged
+ * and stays eligible in HYG-only under those ordinary CTA gates. FLOT and BTAL are not
  * RISKOFF_ETF_COMMODITY_BETA and have no new family. Do not add FLRN.
  * PDBC is broad commodity beta (RISKOFF_ETF_COMMODITY_BETA). Where it remains
  * eligible it is mutually exclusive with the CTA family for the #2 diversifier
@@ -228,6 +232,10 @@ export const RISKOFF_ETF_CANDIDATES = RISKOFF_ETF_SYMBOLS.filter(
 /**
  * Managed-futures / CTA-style sleeve family on the 63d RS overlay.
  * DBMF and KMLM are the same diversifier sleeve. GDX, PDBC, FLOT, CLSE, USMV, QUAL, FTLS, and BTAL are not in this set.
+ * KMLM remains here for never-dual-CTA and the 21d confirm when it is eligible.
+ * In HYG-only RISK OFF KMLM is not an RS qualifier
+ * (RISKOFF_ETF_HYG_ONLY_INELIGIBLE) even if 63d beats BIL, own-200 is true,
+ * and the 21d confirm passes. DBMF is not in that drop.
  * When RS #1 is in this set, #2 is the highest-ranked qualifier outside
  * the family and not RISKOFF_ETF_COMMODITY_BETA. If no such name clears
  * beat-BIL and own-200, #2 is BIL at 50/50 — never two CTA names together
@@ -263,7 +271,9 @@ export type RiskoffEtfGoldSymbol = (typeof RISKOFF_ETF_GOLD_FAMILY)[number];
  * and not a #2 pairing rule. When SPY is below 200 this 21d check is off.
  * Missing or non-finite 21d on the name or on BIL skips that name (fail
  * closed). BTAL, XLP, FLOT, and PDBC are not members. PDBC is dropped from
- * HYG-only RS instead (RISKOFF_ETF_HYG_ONLY_INELIGIBLE). Paper / MockBroker only.
+ * HYG-only RS instead (RISKOFF_ETF_HYG_ONLY_INELIGIBLE). KMLM is dropped from
+ * HYG-only RS the same way and stays in RISKOFF_ETF_CTA_FAMILY. DBMF is
+ * unchanged. Paper / MockBroker only.
  */
 export const RISKOFF_ETF_HYG_ONLY_21D_CONFIRM = ["CLSE", "USMV", "QUAL", "FTLS"] as const;
 export type RiskoffEtfHygOnly21dSymbol = (typeof RISKOFF_ETF_HYG_ONLY_21D_CONFIRM)[number];
@@ -271,15 +281,21 @@ export type RiskoffEtfHygOnly21dSymbol = (typeof RISKOFF_ETF_HYG_ONLY_21D_CONFIR
  * RS overlay names that are not qualifiers in HYG-only RISK OFF (risk off,
  * SPY above 200, HYG below 200). They fail the cash hurdle in that regime
  * even when 63d beats BIL and they are above their own 200dma. TLT, IEF, and
- * XLU are the duration and defensive names; PDBC is broad commodity beta.
- * The PDBC drop blocks the qualifier-conditional trap: a lone PDBC taking
- * the full overlay, and a PDBC+FTLS HYG-only sleeve. When SPY is below 200
- * (or HYG-only is not active) they stay eligible under the ordinary beat-BIL
- * / own-200 rules, and PDBC keeps RISKOFF_ETF_COMMODITY_BETA (never pair
- * with CTA). Does not change RISKOFF_DURATION_SYMBOLS or the gated duration
- * book. XLP stays eligible. Paper / MockBroker only.
+ * XLU are the duration and defensive names; PDBC is broad commodity beta;
+ * KMLM is the Mount Lucas CTA. The PDBC drop blocks the qualifier-conditional
+ * trap: a lone PDBC taking the full overlay, and a PDBC+FTLS HYG-only sleeve.
+ * The KMLM drop is the same kind of trap: 63d beat-BIL, own-200, and the
+ * always-on CTA 21d beat-BIL confirm still do not qualify KMLM in HYG-only.
+ * KMLM remains in RISKOFF_ETF_CTA_FAMILY for never-dual-CTA and that 21d
+ * confirm when it is eligible (SPY below 200, or HYG-only not active).
+ * DBMF is unchanged and is not a member. When SPY is below 200 (or HYG-only
+ * is not active) they stay eligible under the ordinary beat-BIL / own-200
+ * rules. PDBC keeps RISKOFF_ETF_COMMODITY_BETA (never pair with CTA). KMLM
+ * keeps the ordinary CTA gates (63d beat-BIL, own-200, 21d confirm,
+ * never-dual-CTA, never-pair-PDBC). Does not change RISKOFF_DURATION_SYMBOLS
+ * or the gated duration book. XLP stays eligible. Paper / MockBroker only.
  */
-export const RISKOFF_ETF_HYG_ONLY_INELIGIBLE = ["TLT", "IEF", "XLU", "PDBC"] as const;
+export const RISKOFF_ETF_HYG_ONLY_INELIGIBLE = ["TLT", "IEF", "XLU", "PDBC", "KMLM"] as const;
 export type RiskoffEtfHygOnlyIneligibleSymbol = (typeof RISKOFF_ETF_HYG_ONLY_INELIGIBLE)[number];
 /**
  * Broad commodity beta on the 63d RS overlay, mutually exclusive with
@@ -289,7 +305,8 @@ export type RiskoffEtfHygOnlyIneligibleSymbol = (typeof RISKOFF_ETF_HYG_ONLY_INE
  * RISKOFF_ETF_CTA_FAMILY and does not get the 21-session beat-BIL
  * confirmation. In HYG-only RISK OFF PDBC is not an RS qualifier
  * (RISKOFF_ETF_HYG_ONLY_INELIGIBLE), so a lone-PDBC full overlay and a
- * PDBC+FTLS sleeve do not open. Where PDBC remains eligible (SPY below 200,
+ * PDBC+FTLS sleeve do not open. KMLM is also in that ineligible set and
+ * stays in RISKOFF_ETF_CTA_FAMILY; DBMF is unchanged. Where PDBC remains eligible (SPY below 200,
  * or HYG-only not active), when RS #1 is PDBC, #2 is the
  * highest-ranked qualifier that is not CTA; if none clears beat-BIL and
  * own-200, #2 is BIL at 50/50. When RS #1 is CTA, #2 must not be PDBC
@@ -311,7 +328,11 @@ export const RISKOFF_ETF_COMMODITY_BETA = "PDBC" as const;
  * BTAL, and does not count as a 63d missing-bars miss. TLT, IEF, XLU, and
  * PDBC are not 21d-gated; they are dropped from HYG-only RS eligibility
  * (RISKOFF_ETF_HYG_ONLY_INELIGIBLE). The PDBC drop blocks a lone-PDBC full
- * overlay and a PDBC+FTLS HYG-only sleeve. Paper / MockBroker only.
+ * overlay and a PDBC+FTLS HYG-only sleeve. KMLM stays on this always-on CTA
+ * 21d confirm when it is eligible, and is also in that ineligible set: the
+ * 21d confirm does not keep KMLM as a HYG-only RS qualifier. DBMF is
+ * unchanged (still 21d-gated and still eligible in HYG-only). Paper /
+ * MockBroker only.
  */
 export const RISKOFF_ETF_CTA_CONFIRM_DAYS = 21;
 /** While RISK OFF, split overlay notional 50/50 across this many qualifiers. */
