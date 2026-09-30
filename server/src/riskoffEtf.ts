@@ -166,7 +166,7 @@ export function isRiskoffEtfHygOnly21dConfirm(symbol: string): boolean {
   return (RISKOFF_ETF_HYG_ONLY_21D_CONFIRM as readonly string[]).includes(symbol.trim().toUpperCase());
 }
 
-/** TLT, IEF, XLU, PDBC, KMLM. RS-ineligible in HYG-only only. KMLM stays CTA. DBMF is not in this set. Not a duration-book change. */
+/** TLT, IEF, XLU, PDBC, KMLM, GDX. RS-ineligible in HYG-only only. KMLM stays CTA. GDX stays gold-family. GLD is not in this set. DBMF is not in this set. Not a duration-book change. */
 export function isRiskoffEtfHygOnlyIneligible(symbol: string): boolean {
   return (RISKOFF_ETF_HYG_ONLY_INELIGIBLE as readonly string[]).includes(symbol.trim().toUpperCase());
 }
@@ -356,23 +356,31 @@ export function riskoffEtfReturnsReady(returns: RiskoffEtfReturns): boolean {
  * isolation. FLOT, XLP, and BTAL ignore returns21. PDBC ignores returns21
  * too, but HYG-only drops it via RISKOFF_ETF_HYG_ONLY_INELIGIBLE. KMLM does
  * not ignore returns21 (always-on CTA confirm) and HYG-only still drops it
- * through that same set. DBMF keeps the 21d confirm and stays eligible in
- * HYG-only. Pass hygOnly
+ * through that same set. GDX does not ignore the HYG-only gold 21d window
+ * when that gate is on, and HYG-only still drops it through that same set.
+ * Gold-family membership is unchanged. GLD is not in the drop and stays
+ * eligible when the HYG-only gold 21d beat-BIL passes. DBMF keeps the 21d
+ * confirm and stays eligible in HYG-only. Pass hygOnly
  * (HYG-only RISK OFF: risk off, SPY known above 200, HYG known below 200)
  * to also require each RISKOFF_ETF_GOLD_FAMILY name and each
  * RISKOFF_ETF_HYG_ONLY_21D_CONFIRM name (CLSE, USMV, QUAL, FTLS) to beat
  * BIL on that same 21d window; missing bars fail that name closed. The
- * same flag drops RISKOFF_ETF_HYG_ONLY_INELIGIBLE (TLT, IEF, XLU, PDBC, KMLM)
+ * same flag drops RISKOFF_ETF_HYG_ONLY_INELIGIBLE (TLT, IEF, XLU, PDBC, KMLM, GDX)
  * from the RS basket even when 63d beats BIL. That PDBC drop blocks a
  * lone-PDBC full overlay and a PDBC+FTLS sleeve. The KMLM drop blocks the
  * same qualifier-conditional path: 63d beat-BIL, own-200, and the CTA 21d
  * confirm do not qualify KMLM in HYG-only. KMLM stays in
  * RISKOFF_ETF_CTA_FAMILY for never-dual-CTA and that 21d confirm when it is
- * eligible. DBMF is unchanged. Omit hygOnly and gold, the equity
+ * eligible. The GDX drop is the same path: 63d beat-BIL, own-200, and the
+ * HYG-only gold 21d beat-BIL do not qualify GDX. GDX stays in
+ * RISKOFF_ETF_GOLD_FAMILY for never-dual-gold and for SPY-under-200
+ * eligibility. GLD stays eligible with that 21d beat-BIL. DBMF is unchanged.
+ * Omit hygOnly and gold, the equity
  * confirm set, and that drop stay off, including when SPY is below 200.
  * PDBC is never 21d-gated; in HYG-only it is not a qualifier at all. KMLM
  * is 21d-gated whenever it is eligible, and in HYG-only it is not a
- * qualifier at all. A failed CTA, a gold or equity name that fails
+ * qualifier at all. GDX is 21d-gated only in HYG-only, and in that regime
+ * it is not a qualifier at all. A failed CTA, a gold or equity name that fails
  * the HYG-only 21d check, or a HYG-only-ineligible name is dropped from
  * the ranked basket; the next remaining qualifier fills the slot. None
  * left → BIL. The drop does not change the gated duration book.
@@ -464,7 +472,9 @@ export function riskoffHygOnlyRiskOff(
 /**
  * Gold-family 21d confirmation. Off unless the book is HYG-only RISK OFF.
  * When on, GLD and GDX must beat BIL on RISKOFF_ETF_CTA_CONFIRM_DAYS with
- * the same fail-closed missing-bar behavior as CTA. Non-gold names,
+ * the same fail-closed missing-bar behavior as CTA. A 21d beat does not keep
+ * GDX in the HYG-only RS basket (RISKOFF_ETF_HYG_ONLY_INELIGIBLE). GDX stays
+ * in RISKOFF_ETF_GOLD_FAMILY. GLD is not in that drop. Non-gold names,
  * including PDBC, always pass. SPY below 200 does not require this check.
  */
 export function riskoffEtfGoldConfirms21d(
@@ -494,14 +504,19 @@ export function riskoffEtfHygOnlyEquityConfirms21d(
 }
 
 /**
- * HYG-only RS eligibility. TLT, IEF, XLU, PDBC, and KMLM are not overlay
+ * HYG-only RS eligibility. TLT, IEF, XLU, PDBC, KMLM, and GDX are not overlay
  * qualifiers in that regime, even if 63d beats BIL and own-200 is true.
  * KMLM stays ineligible there even when the always-on CTA 21d beat-BIL
- * confirm also passes. Off otherwise, including when SPY is below 200.
+ * confirm also passes. GDX (equity-levered gold / miners) stays ineligible
+ * there even when the HYG-only gold 21d beat-BIL also passes. Off otherwise,
+ * including when SPY is below 200.
  * The PDBC drop blocks a lone-PDBC full overlay and a PDBC+FTLS sleeve.
  * KMLM remains in RISKOFF_ETF_CTA_FAMILY for never-dual-CTA and that 21d
- * confirm when it is eligible. DBMF is unchanged. Does not affect the gated
- * duration book or RISKOFF_ETF_COMMODITY_BETA where PDBC remains eligible.
+ * confirm when it is eligible. GDX remains in RISKOFF_ETF_GOLD_FAMILY for
+ * never-dual-gold and for SPY-under-200 eligibility. GLD is not in this drop
+ * and stays eligible with the HYG-only gold 21d beat-BIL. DBMF is unchanged.
+ * Does not affect the gated duration book or RISKOFF_ETF_COMMODITY_BETA where
+ * PDBC remains eligible.
  */
 export function riskoffEtfHygOnlyRsEligible(symbol: string, hygOnly: boolean): boolean {
   if (!hygOnly) return true;
@@ -563,8 +578,10 @@ function pickFromPool(
 /**
  * Second sleeve name. Filters compose: CTA first, then gold, then the
  * PDBC↔CTA exclusion. When #1 is CTA, #2 comes from the non-CTA pool
- * (gold names may remain, so GDX can diversify a CTA #1; FLOT may fill
- * that slot) and PDBC is dropped. Empty pool after that → BIL, never the
+ * (gold names may remain, so GDX can diversify a CTA #1 when GDX is still a
+ * qualifier. HYG-only drops GDX via RISKOFF_ETF_HYG_ONLY_INELIGIBLE; gold-family
+ * membership is unchanged. FLOT may fill that slot) and PDBC is dropped.
+ * Empty pool after that → BIL, never the
  * other CTA and never PDBC. When #1 is gold, #2 comes from the non-gold
  * pool (CTAs may remain if they already cleared the 21d gate; PDBC and
  * FLOT may remain). Empty non-gold pool → BIL, never GLD+GDX. When #1 is
@@ -778,7 +795,8 @@ function commitEntrySessions(
  * restart does not immediately RS-rotate a name that is already on the book.
  * Caller drops names that no longer clear beat-BIL / own-200 / CTA 21d,
  * the HYG-only gold 21d check, the HYG-only equity 21d check, or the
- * HYG-only TLT/IEF/XLU/PDBC/KMLM drop. DBMF is not in that drop.
+ * HYG-only TLT/IEF/XLU/PDBC/KMLM/GDX drop. GDX stays in the gold family.
+ * GLD is not in that drop. DBMF is not in that drop.
  */
 function protectedOverlayNames(
   held: string[],
@@ -1043,14 +1061,16 @@ export function decideRiskoffEtf(input: {
    * Same spyAbove200 as the put gate (riskoffEquityPutsAllowed). True → 60%
    * overlay (puts gated). False/missing → 40%. Does not change RISK ON flatten.
    * With hygAbove200 === false and risk off, also turns on the gold 21d gate,
-   * the equity-factor 21d gate, and the TLT/IEF/XLU/PDBC/KMLM RS drop.
-   * KMLM stays in the CTA family. DBMF is not in that drop.
+   * the equity-factor 21d gate, and the TLT/IEF/XLU/PDBC/KMLM/GDX RS drop.
+   * KMLM stays in the CTA family. GDX stays in the gold family. GLD is not
+   * in that drop. DBMF is not in that drop.
    */
   spyAbove200?: boolean | null;
   /**
    * HYG 200dma from the risk badge. HYG-only RISK OFF is risk off, this
    * false, and spyAbove200 true. Missing is not HYG-only (gold 21d, equity
-   * 21d, and the TLT/IEF/XLU/PDBC/KMLM RS drop stay off). DBMF stays eligible.
+   * 21d, and the TLT/IEF/XLU/PDBC/KMLM/GDX RS drop stay off). GDX stays in
+   * the gold family. DBMF stays eligible.
    */
   hygAbove200?: boolean | null;
   /**
