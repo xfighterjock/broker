@@ -192,7 +192,9 @@ export type RiskoffQuoteSymbol = (typeof RISKOFF_QUOTE_STRIP)[number];
  * RISKOFF_ETF_GOLD_FAMILY, but in HYG-only it is RS-ineligible even if that
  * 21d window beats BIL. CLSE, USMV, QUAL, and FTLS
  * (RISKOFF_ETF_HYG_ONLY_21D_CONFIRM) take that same window only in HYG-only
- * RISK OFF — a separate set, not CTA and not gold. FLOT and BTAL are not gold
+ * RISK OFF — not CTA and not gold. That set is also the never-dual
+ * equity-factor family: when RS #1 is in it, #2 is outside the set or BIL.
+ * FLOT and BTAL are not gold
  * and have no 21d confirmation. TLT, IEF, XLU, PDBC, KMLM, GDX, DBMF, and XLP
  * (RISKOFF_ETF_HYG_ONLY_INELIGIBLE) are not RS qualifiers in HYG-only RISK OFF
  * even if 63d beats BIL and own-200 is true; when SPY is below 200 they stay
@@ -287,15 +289,25 @@ export type RiskoffEtfCtaSymbol = (typeof RISKOFF_ETF_CTA_FAMILY)[number];
 export const RISKOFF_ETF_GOLD_FAMILY = ["GLD", "GDX"] as const;
 export type RiskoffEtfGoldSymbol = (typeof RISKOFF_ETF_GOLD_FAMILY)[number];
 /**
- * Equity-factor and long/short names that must beat BIL on
- * RISKOFF_ETF_CTA_CONFIRM_DAYS only in HYG-only RISK OFF (risk off, SPY
- * known above 200, HYG known below 200). Separate from
- * RISKOFF_ETF_CTA_FAMILY and RISKOFF_ETF_GOLD_FAMILY — not a dual-family
- * and not a #2 pairing rule. When SPY is below 200 this 21d check is off.
- * Missing or non-finite 21d on the name or on BIL skips that name (fail
- * closed). BTAL, XLP, FLOT, and PDBC are not members. PDBC and XLP are
- * dropped from HYG-only RS instead (RISKOFF_ETF_HYG_ONLY_INELIGIBLE); XLP
- * is not added to this confirm set. KMLM is dropped from
+ * Equity-factor and long/short sleeve on the 63d RS overlay (CLSE, USMV,
+ * QUAL, FTLS). Not CTA and not gold. Same spirit as never-dual-CTA
+ * (RISKOFF_ETF_CTA_FAMILY) and never-dual-gold (RISKOFF_ETF_GOLD_FAMILY):
+ * when RS #1 is in this set, #2 is the highest-ranked qualifier outside
+ * the set (BTAL, FLOT, UUP, GLD when eligible, and the rest of the basket
+ * that still clears beat-BIL and own-200). If no such name clears, #2 is
+ * BIL at 50/50. Never hold two of CLSE/USMV/QUAL/FTLS together. A name
+ * outside this set may still take one member as #2. A lone member is
+ * 50/50 with BIL, not the full overlay. The cash-close rebalance breaks an
+ * existing dual pair even inside RISKOFF_ETF_MIN_HOLD_SESSIONS, same as a
+ * PDBC+CTA break. The pairing rule applies whenever both names qualify,
+ * including when SPY is below 200.
+ * In HYG-only RISK OFF (risk off, SPY known above 200, HYG known below 200)
+ * each member must also beat BIL on RISKOFF_ETF_CTA_CONFIRM_DAYS. When SPY
+ * is below 200 that 21d check is off. Missing or non-finite 21d on the
+ * name or on BIL skips that name (fail closed). BTAL, XLP, FLOT, and PDBC
+ * are not members. PDBC and XLP are dropped from HYG-only RS instead
+ * (RISKOFF_ETF_HYG_ONLY_INELIGIBLE); XLP is not added to this confirm set
+ * and QUAL is not added to that ineligible set. KMLM is dropped from
  * HYG-only RS the same way and stays in RISKOFF_ETF_CTA_FAMILY. GDX is
  * dropped from HYG-only RS the same way and stays in
  * RISKOFF_ETF_GOLD_FAMILY. GLD is not in that drop. DBMF is
