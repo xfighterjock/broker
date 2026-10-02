@@ -161,7 +161,7 @@ export function isRiskoffEtfGold(symbol: string): boolean {
   return (RISKOFF_ETF_GOLD_FAMILY as readonly string[]).includes(symbol.trim().toUpperCase());
 }
 
-/** CLSE, USMV, QUAL, FTLS. Not CTA and not gold. */
+/** CLSE, USMV, QUAL, FTLS. Not CTA and not gold. Never hold two together. */
 export function isRiskoffEtfHygOnly21dConfirm(symbol: string): boolean {
   return (RISKOFF_ETF_HYG_ONLY_21D_CONFIRM as readonly string[]).includes(symbol.trim().toUpperCase());
 }
@@ -334,8 +334,9 @@ export function riskoffEtfReturnsReady(returns: RiskoffEtfReturns): boolean {
  * 200); omit it to test RS/hysteresis in isolation. Names that fail 200 are
  * skipped; if none qualify → BIL. BIL itself is never 200-filtered.
  * While RISK OFF, pickRiskoffEtfSleeve then takes the top-2 qualifiers at
- * 50/50 overlay notional (one non-gold non-CTA name at full size; a lone
- * CTA or a lone gold name is 50/50 with BIL; none → BIL). Overlay
+ * 50/50 overlay notional (one name outside CTA, gold, and
+ * RISKOFF_ETF_HYG_ONLY_21D_CONFIRM at full size; a lone CTA, a lone gold
+ * name, or a lone equity-factor confirm name is 50/50 with BIL; none → BIL). Overlay
  * notional is 60% while spyAbove200 === true (puts gated) and 40% when SPY
  * is below 200. When #1 is in RISKOFF_ETF_CTA_FAMILY, #2 is the highest
  * non-CTA qualifier other than PDBC (a gold name may fill that slot). If
@@ -345,12 +346,17 @@ export function riskoffEtfReturnsReady(returns: RiskoffEtfReturns): boolean {
  * RISKOFF_ETF_GOLD_FAMILY, #2 is the highest non-gold qualifier (a CTA may
  * fill that slot if it cleared the 21d gate; PDBC may fill it). If none
  * does, #2 is BIL at 50/50 — never GLD+GDX. A lone gold name is 50/50
- * with BIL. When #1 is RISKOFF_ETF_COMMODITY_BETA (PDBC), #2 is the
+ * with BIL. When #1 is in RISKOFF_ETF_HYG_ONLY_21D_CONFIRM (CLSE, USMV,
+ * QUAL, FTLS), #2 is the highest qualifier outside that set. If none
+ * clears, #2 is BIL at 50/50 — never two of those names. A lone member is
+ * 50/50 with BIL. A name outside the set may still take one member as #2.
+ * That pairing rule stays on when SPY is below 200; only the 21d check is
+ * HYG-only. When #1 is RISKOFF_ETF_COMMODITY_BETA (PDBC), #2 is the
  * highest qualifier outside the CTA family. If none clears, #2 is BIL at
  * 50/50 — never PDBC+DBMF or PDBC+KMLM. When PDBC is eligible, a lone PDBC
  * (no other qualifier) stays full size. HYG-only does not open that sleeve.
- * CTA filter runs first, then gold, then the PDBC↔CTA
- * exclusion, if a name were ever in both CTA and gold. Pass returns21 to also require each CTA-family
+ * CTA filter runs first, then gold, then the equity-factor confirm set,
+ * then the PDBC↔CTA exclusion. Pass returns21 to also require each CTA-family
  * name to beat BIL on RISKOFF_ETF_CTA_CONFIRM_DAYS (strict >; missing bars
  * fail closed for that CTA only). Omit returns21 to test 63d RS in
  * isolation. FLOT and BTAL ignore returns21. XLP ignores returns21 too,
@@ -383,8 +389,9 @@ export function riskoffEtfReturnsReady(returns: RiskoffEtfReturns): boolean {
  * the ordinary-gate path: 63d beat-BIL and own-200 do not qualify XLP.
  * XLP is not on RISKOFF_ETF_HYG_ONLY_21D_CONFIRM, not CTA, and not gold.
  * When SPY is below 200 XLP stays eligible under those ordinary gates.
- * Omit hygOnly and gold, the equity
- * confirm set, and that drop stay off, including when SPY is below 200.
+ * Omit hygOnly and the 21d checks for gold and the equity confirm set,
+ * plus that HYG-only drop, stay off, including when SPY is below 200.
+ * The never-dual equity-factor rule stays on in that case.
  * PDBC is never 21d-gated; in HYG-only it is not a qualifier at all. KMLM
  * is 21d-gated whenever it is eligible, and in HYG-only it is not a
  * qualifier at all. DBMF is the same: 21d-gated whenever it is eligible,
@@ -594,14 +601,20 @@ function pickFromPool(
 
 /**
  * Second sleeve name. Filters compose: CTA first, then gold, then the
- * PDBC↔CTA exclusion. When #1 is CTA, #2 comes from the non-CTA pool
- * (gold names may remain, so GDX can diversify a CTA #1 when GDX is still a
- * qualifier. HYG-only drops GDX via RISKOFF_ETF_HYG_ONLY_INELIGIBLE; gold-family
- * membership is unchanged. FLOT may fill that slot) and PDBC is dropped.
+ * equity-factor confirm set, then the PDBC↔CTA exclusion. When #1 is CTA,
+ * #2 comes from the non-CTA pool (gold names may remain, so GDX can
+ * diversify a CTA #1 when GDX is still a qualifier. HYG-only drops GDX via
+ * RISKOFF_ETF_HYG_ONLY_INELIGIBLE; gold-family membership is unchanged.
+ * FLOT and a confirm-set name may fill that slot) and PDBC is dropped.
  * Empty pool after that → BIL, never the
  * other CTA and never PDBC. When #1 is gold, #2 comes from the non-gold
- * pool (CTAs may remain if they already cleared the 21d gate; PDBC and
- * FLOT may remain). Empty non-gold pool → BIL, never GLD+GDX. When #1 is
+ * pool (CTAs may remain if they already cleared the 21d gate; PDBC, FLOT,
+ * and a confirm-set name may remain). Empty non-gold pool → BIL, never
+ * GLD+GDX. When #1 is in RISKOFF_ETF_HYG_ONLY_21D_CONFIRM, #2 comes from
+ * outside that set (BTAL, FLOT, UUP, GLD when eligible, and the rest).
+ * Empty pool after that → BIL, never CLSE+USMV, USMV+QUAL, QUAL+FTLS, or
+ * any other pair from the set. A non-member #1 still uses the ordinary
+ * pool, so one confirm name may be #2. When #1 is
  * PDBC, #2 comes from the non-CTA pool (FLOT may fill it). Empty after
  * dropping CTAs → BIL, never PDBC+DBMF or PDBC+KMLM.
  * An empty remaining pool (no other qualifier at all) returns null so a
@@ -621,6 +634,10 @@ export function pickRiskoffEtfSecond(
   }
   if (isRiskoffEtfGold(first)) {
     pool = pool.filter((s) => !isRiskoffEtfGold(s));
+    if (pool.length === 0) return RISKOFF_ETF_CASH_SYMBOL;
+  }
+  if (isRiskoffEtfHygOnly21dConfirm(first)) {
+    pool = pool.filter((s) => !isRiskoffEtfHygOnly21dConfirm(s));
     if (pool.length === 0) return RISKOFF_ETF_CASH_SYMBOL;
   }
   if (isRiskoffEtfCta(first) || isRiskoffEtfCommodityBeta(first)) {
@@ -838,12 +855,13 @@ function protectedOverlayNames(
 function sameFamilyPair(anchor: string, candidate: string): boolean {
   if (isRiskoffEtfCta(anchor) && isRiskoffEtfCta(candidate)) return true;
   if (isRiskoffEtfGold(anchor) && isRiskoffEtfGold(candidate)) return true;
+  if (isRiskoffEtfHygOnly21dConfirm(anchor) && isRiskoffEtfHygOnly21dConfirm(candidate)) return true;
   if (riskoffEtfPdbcCtaConflict(anchor, candidate)) return true;
   return false;
 }
 
 function anchorPairsWithBil(anchor: string): boolean {
-  return isRiskoffEtfCta(anchor) || isRiskoffEtfGold(anchor);
+  return isRiskoffEtfCta(anchor) || isRiskoffEtfGold(anchor) || isRiskoffEtfHygOnly21dConfirm(anchor);
 }
 
 function collapseDualFamily(
@@ -886,7 +904,7 @@ function collapsePdbcCtaPair(
   return [prefer];
 }
 
-/** Keep names still inside the minimum hold. Never leave two CTAs, two gold names, or PDBC with a CTA. */
+/** Keep names still inside the minimum hold. Never leave two CTAs, two gold names, two equity-factor confirm names, or PDBC with a CTA. */
 function applyOverlayMinHold(
   desired: RiskoffEtfSymbol[],
   protectedNames: RiskoffEtfSymbol[],
@@ -895,6 +913,7 @@ function applyOverlayMinHold(
   let kept = protectedNames.slice(0, RISKOFF_ETF_TOP_N);
   kept = collapseDualFamily(kept, desired, isRiskoffEtfCta);
   kept = collapseDualFamily(kept, desired, isRiskoffEtfGold);
+  kept = collapseDualFamily(kept, desired, isRiskoffEtfHygOnly21dConfirm);
   kept = collapsePdbcCtaPair(kept, desired);
   if (kept.length >= RISKOFF_ETF_TOP_N) return kept.slice(0, RISKOFF_ETF_TOP_N);
   const anchor = kept[0];
@@ -922,7 +941,15 @@ function retainProtectedWinners(
     if (replaceAt >= 0) out[replaceAt] = name;
   }
   const broken = breakPdbcCtaPair(
-    breakDualFamily(breakDualFamily(out, protectedNames, isRiskoffEtfCta), protectedNames, isRiskoffEtfGold),
+    breakDualFamily(
+      breakDualFamily(
+        breakDualFamily(out, protectedNames, isRiskoffEtfCta),
+        protectedNames,
+        isRiskoffEtfGold,
+      ),
+      protectedNames,
+      isRiskoffEtfHygOnly21dConfirm,
+    ),
     protectedNames,
   );
   return broken.slice(0, RISKOFF_ETF_TOP_N);
