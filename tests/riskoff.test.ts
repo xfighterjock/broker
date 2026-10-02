@@ -3485,9 +3485,9 @@ describe("risk-off ETF relative-strength expression", () => {
     }
     expect(pickRiskoffEtfWinner(usmvWins, "BIL", etfAbove200(), loses21, true)).toBe("BIL");
     expect(pickRiskoffEtfSleeve(usmvWins, "BIL", etfAbove200(), loses21, true)).toEqual(["BIL"]);
-    const usmvThenXlp = etfRs({ USMV: 0.18, XLP: 0.08 });
-    expect(pickRiskoffEtfWinner(usmvThenXlp, null, etfAbove200(), loses21, true)).toBe("XLP");
-    expect(pickRiskoffEtfSleeve(usmvThenXlp, null, etfAbove200(), loses21, true)).toEqual(["XLP"]);
+    const usmvThenFlot = etfRs({ USMV: 0.18, FLOT: 0.08 });
+    expect(pickRiskoffEtfWinner(usmvThenFlot, null, etfAbove200(), loses21, true)).toBe("FLOT");
+    expect(pickRiskoffEtfSleeve(usmvThenFlot, null, etfAbove200(), loses21, true)).toEqual(["FLOT"]);
     expect(riskoffEtfQualifiers(btalWins, etfAbove200(), etfRs21({ BTAL: -0.4 }), true)).toContain("BTAL");
     expect(pickRiskoffEtfWinner(usmvWins, null, etfAbove200(), loses21)).toBe("USMV");
     expect(pickRiskoffEtfWinner(usmvWins, null, etfAbove200(), loses21, false)).toBe("USMV");
@@ -3564,27 +3564,29 @@ describe("risk-off ETF relative-strength expression", () => {
   });
 
   it("HYG-only drops TLT, IEF, and XLU from RS eligibility even if 63d beats BIL; SPY below 200 keeps TLT and XLU", () => {
-    expect(RISKOFF_ETF_HYG_ONLY_INELIGIBLE).toEqual(["TLT", "IEF", "XLU", "PDBC", "KMLM", "GDX", "DBMF"]);
+    expect(RISKOFF_ETF_HYG_ONLY_INELIGIBLE).toEqual(["TLT", "IEF", "XLU", "PDBC", "KMLM", "GDX", "DBMF", "XLP"]);
     expect(RISKOFF_DURATION_SYMBOLS).toEqual(["TLT", "IEF"]);
-    expect([...RISKOFF_ETF_HYG_ONLY_INELIGIBLE]).not.toContain("XLP");
+    expect([...RISKOFF_ETF_HYG_ONLY_INELIGIBLE]).toContain("XLP");
     for (const symbol of RISKOFF_ETF_HYG_ONLY_INELIGIBLE) {
       expect(isRiskoffEtfHygOnlyIneligible(symbol)).toBe(true);
       expect(riskoffEtfHygOnlyRsEligible(symbol, true)).toBe(false);
       expect(riskoffEtfHygOnlyRsEligible(symbol, false)).toBe(true);
     }
-    expect(riskoffEtfHygOnlyRsEligible("XLP", true)).toBe(true);
+    expect(riskoffEtfHygOnlyRsEligible("XLP", true)).toBe(false);
+    expect(riskoffEtfHygOnlyRsEligible("FLOT", true)).toBe(true);
 
-    const beats21 = etfRs21({ TLT: 0.2, IEF: 0.18, XLU: 0.16, XLP: 0.04 });
-    const strong = etfRs({ TLT: 0.2, IEF: 0.18, XLU: 0.16, XLP: 0.05 });
+    const beats21 = etfRs21({ TLT: 0.2, IEF: 0.18, XLU: 0.16, XLP: 0.04, FLOT: 0.03 });
+    const strong = etfRs({ TLT: 0.2, IEF: 0.18, XLU: 0.16, XLP: 0.05, FLOT: 0.04 });
     const hygQualifiers = riskoffEtfQualifiers(strong, etfAbove200(), beats21, true);
     expect(hygQualifiers).not.toContain("TLT");
     expect(hygQualifiers).not.toContain("IEF");
     expect(hygQualifiers).not.toContain("XLU");
-    expect(hygQualifiers).toContain("XLP");
+    expect(hygQualifiers).not.toContain("XLP");
+    expect(hygQualifiers).toContain("FLOT");
     expect(pickRiskoffEtfWinner(tltWins, null, etfAbove200(), beats21, true)).toBe("BIL");
     expect(pickRiskoffEtfWinner(iefWins, null, etfAbove200(), beats21, true)).toBe("BIL");
     expect(pickRiskoffEtfWinner(xluWins, null, etfAbove200(), beats21, true)).toBe("BIL");
-    expect(pickRiskoffEtfSleeve(strong, null, etfAbove200(), beats21, true)).toEqual(["XLP"]);
+    expect(pickRiskoffEtfSleeve(strong, null, etfAbove200(), beats21, true)).toEqual(["FLOT"]);
 
     const full60 = RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED;
     const bilQty = sizeRiskoffEtfShares(91, DEFAULT_SLEEVE_EQUITY_USD, full60);
@@ -3763,13 +3765,13 @@ describe("risk-off ETF relative-strength expression", () => {
   });
 
   it("HYG-only drops KMLM from 63d RS even when 63d and 21d beat BIL and it is above its own 200; SPY below 200 still selects it", () => {
-    expect(RISKOFF_ETF_HYG_ONLY_INELIGIBLE).toEqual(["TLT", "IEF", "XLU", "PDBC", "KMLM", "GDX", "DBMF"]);
+    expect(RISKOFF_ETF_HYG_ONLY_INELIGIBLE).toEqual(["TLT", "IEF", "XLU", "PDBC", "KMLM", "GDX", "DBMF", "XLP"]);
     expect(RISKOFF_ETF_CTA_FAMILY).toEqual(["DBMF", "KMLM"]);
     expect(RISKOFF_ETF_SYMBOLS).toContain("KMLM");
     expect(RISKOFF_ETF_SYMBOLS).toContain("DBMF");
     expect(RISKOFF_QUOTE_STRIP).toContain("KMLM");
     expect([...RISKOFF_ETF_HYG_ONLY_INELIGIBLE]).toContain("DBMF");
-    expect([...RISKOFF_ETF_HYG_ONLY_INELIGIBLE]).not.toContain("XLP");
+    expect([...RISKOFF_ETF_HYG_ONLY_INELIGIBLE]).toContain("XLP");
     expect(isRiskoffEtfHygOnlyIneligible("KMLM")).toBe(true);
     expect(isRiskoffEtfHygOnlyIneligible("DBMF")).toBe(true);
     expect(isRiskoffEtfCta("KMLM")).toBe(true);
@@ -3875,13 +3877,13 @@ describe("risk-off ETF relative-strength expression", () => {
   });
 
   it("HYG-only drops DBMF from 63d RS even when 63d and 21d beat BIL and it is above its own 200; SPY below 200 still selects it; KMLM stays ineligible", () => {
-    expect(RISKOFF_ETF_HYG_ONLY_INELIGIBLE).toEqual(["TLT", "IEF", "XLU", "PDBC", "KMLM", "GDX", "DBMF"]);
+    expect(RISKOFF_ETF_HYG_ONLY_INELIGIBLE).toEqual(["TLT", "IEF", "XLU", "PDBC", "KMLM", "GDX", "DBMF", "XLP"]);
     expect(RISKOFF_ETF_CTA_FAMILY).toEqual(["DBMF", "KMLM"]);
     expect(RISKOFF_ETF_SYMBOLS).toContain("DBMF");
     expect(RISKOFF_ETF_SYMBOLS).toContain("KMLM");
     expect(RISKOFF_QUOTE_STRIP).toContain("DBMF");
     expect([...RISKOFF_ETF_HYG_ONLY_INELIGIBLE]).toContain("KMLM");
-    expect([...RISKOFF_ETF_HYG_ONLY_INELIGIBLE]).not.toContain("XLP");
+    expect([...RISKOFF_ETF_HYG_ONLY_INELIGIBLE]).toContain("XLP");
     expect([...RISKOFF_ETF_HYG_ONLY_INELIGIBLE]).not.toContain("GLD");
     expect(isRiskoffEtfHygOnlyIneligible("DBMF")).toBe(true);
     expect(isRiskoffEtfHygOnlyIneligible("KMLM")).toBe(true);
@@ -3986,14 +3988,14 @@ describe("risk-off ETF relative-strength expression", () => {
   });
 
   it("HYG-only drops GDX from 63d RS even when 63d and 21d beat BIL and it is above its own 200; SPY below 200 still selects it; GLD stays eligible", () => {
-    expect(RISKOFF_ETF_HYG_ONLY_INELIGIBLE).toEqual(["TLT", "IEF", "XLU", "PDBC", "KMLM", "GDX", "DBMF"]);
+    expect(RISKOFF_ETF_HYG_ONLY_INELIGIBLE).toEqual(["TLT", "IEF", "XLU", "PDBC", "KMLM", "GDX", "DBMF", "XLP"]);
     expect(RISKOFF_ETF_GOLD_FAMILY).toEqual(["GLD", "GDX"]);
     expect(RISKOFF_ETF_SYMBOLS).toContain("GDX");
     expect(RISKOFF_ETF_SYMBOLS).toContain("GLD");
     expect(RISKOFF_QUOTE_STRIP).toContain("GDX");
     expect([...RISKOFF_ETF_HYG_ONLY_INELIGIBLE]).not.toContain("GLD");
     expect([...RISKOFF_ETF_HYG_ONLY_INELIGIBLE]).toContain("DBMF");
-    expect([...RISKOFF_ETF_HYG_ONLY_INELIGIBLE]).not.toContain("XLP");
+    expect([...RISKOFF_ETF_HYG_ONLY_INELIGIBLE]).toContain("XLP");
     expect(isRiskoffEtfHygOnlyIneligible("GDX")).toBe(true);
     expect(isRiskoffEtfHygOnlyIneligible("GLD")).toBe(false);
     expect(isRiskoffEtfGold("GDX")).toBe(true);
@@ -4112,6 +4114,110 @@ describe("risk-off ETF relative-strength expression", () => {
     });
     expect(notHygOnly.winners).toEqual(["GDX", "BIL"]);
     expect(notHygOnly.buys.map((b) => b.symbol)).toContain("GDX");
+  });
+
+  it("HYG-only drops XLP from 63d RS even when it beats BIL and is above its own 200; SPY below 200 still selects it; DBMF stays ineligible", () => {
+    expect(RISKOFF_ETF_HYG_ONLY_INELIGIBLE).toEqual([
+      "TLT",
+      "IEF",
+      "XLU",
+      "PDBC",
+      "KMLM",
+      "GDX",
+      "DBMF",
+      "XLP",
+    ]);
+    expect(RISKOFF_ETF_HYG_ONLY_21D_CONFIRM).toEqual(["CLSE", "USMV", "QUAL", "FTLS"]);
+    expect([...RISKOFF_ETF_HYG_ONLY_21D_CONFIRM]).not.toContain("XLP");
+    expect(RISKOFF_ETF_SYMBOLS).toContain("XLP");
+    expect(RISKOFF_ETF_CANDIDATES).toContain("XLP");
+    expect(RISKOFF_QUOTE_STRIP).toContain("XLP");
+    expect([...RISKOFF_ETF_HYG_ONLY_INELIGIBLE]).toContain("DBMF");
+    expect(isRiskoffEtfHygOnlyIneligible("XLP")).toBe(true);
+    expect(isRiskoffEtfHygOnlyIneligible("DBMF")).toBe(true);
+    expect(isRiskoffEtfHygOnly21dConfirm("XLP")).toBe(false);
+    expect(isRiskoffEtfCta("XLP")).toBe(false);
+    expect(isRiskoffEtfGold("XLP")).toBe(false);
+    expect(riskoffEtfHygOnlyRsEligible("XLP", true)).toBe(false);
+    expect(riskoffEtfHygOnlyRsEligible("XLP", false)).toBe(true);
+    expect(riskoffEtfHygOnlyEquityConfirms21d("XLP", etfRs21({ XLP: 0.2 }), true)).toBe(true);
+
+    const beats21 = etfRs21({ XLP: 0.08, FTLS: 0.06, DBMF: 0.07 });
+    expect(riskoffEtfQualifiers(xlpWins, etfAbove200(), beats21, true)).not.toContain("XLP");
+    expect(pickRiskoffEtfWinner(xlpWins, null, etfAbove200(), beats21, true)).toBe("BIL");
+    expect(pickRiskoffEtfSleeve(xlpWins, null, etfAbove200(), beats21, true)).toEqual(["BIL"]);
+    expect(riskoffEtfQualifiers(xlpWins, etfAbove200({ XLP: false }), beats21, false)).not.toContain("XLP");
+
+    const withFtls = etfRs({ XLP: 0.2, FTLS: 0.12 });
+    expect(riskoffEtfQualifiers(withFtls, etfAbove200(), beats21, true)).toEqual(["FTLS"]);
+    expect(pickRiskoffEtfSleeve(withFtls, null, etfAbove200(), beats21, true)).toEqual(["FTLS"]);
+    expect(pickRiskoffEtfSleeve(withFtls, null, etfAbove200(), beats21, true)).not.toContain("XLP");
+
+    const parked = decideRiskoffEtf({
+      riskOn: false,
+      spyAbove200: true,
+      hygAbove200: false,
+      positions: [],
+      sleeve: defaultSleeves().riskoff,
+      returns: xlpWins,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: beats21,
+    });
+    expect(parked.winners).toEqual(["BIL"]);
+    expect(parked.winners).not.toContain("XLP");
+    expect(parked.buys.map((b) => b.symbol)).toEqual(["BIL"]);
+
+    const ftlsInstead = decideRiskoffEtf({
+      riskOn: false,
+      spyAbove200: true,
+      hygAbove200: false,
+      positions: [etfPos("FTLS", 50, 62), etfPos("XLP", 100, 80)],
+      sleeve: defaultSleeves().riskoff,
+      returns: withFtls,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: beats21,
+    });
+    expect(ftlsInstead.winners).toEqual(["FTLS"]);
+    expect(ftlsInstead.winners).not.toContain("XLP");
+    expect(ftlsInstead.sells.map((s) => s.symbol)).toContain("XLP");
+    expect(ftlsInstead.buys.map((b) => b.symbol)).not.toContain("XLP");
+
+    expect(riskoffEtfQualifiers(dbmfWins, etfAbove200(), beats21, true)).not.toContain("DBMF");
+    expect(pickRiskoffEtfSleeve(dbmfWins, null, etfAbove200(), beats21, true)).toEqual(["BIL"]);
+
+    expect(pickRiskoffEtfWinner(xlpWins, null, etfAbove200(), etfRs21({ XLP: -0.4 }), false)).toBe("XLP");
+    expect(pickRiskoffEtfSleeve(xlpWins, null, etfAbove200(), etfRs21({ XLP: -0.4 }), false)).toEqual(["XLP"]);
+
+    const spyBelow = decideRiskoffEtf({
+      riskOn: false,
+      spyAbove200: false,
+      hygAbove200: false,
+      positions: [],
+      sleeve: defaultSleeves().riskoff,
+      returns: xlpWins,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: etfRs21({ XLP: -0.4 }),
+    });
+    expect(spyBelow.winners).toEqual(["XLP"]);
+    expect(spyBelow.buys.map((b) => b.symbol)).toContain("XLP");
+    expect(spyBelow.buys[0].qty).toBe(sizeRiskoffEtfShares(80));
+
+    const notHygOnly = decideRiskoffEtf({
+      riskOn: false,
+      spyAbove200: true,
+      hygAbove200: true,
+      positions: [],
+      sleeve: defaultSleeves().riskoff,
+      returns: xlpWins,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: etfRs21({ XLP: -0.4 }),
+    });
+    expect(notHygOnly.winners).toEqual(["XLP"]);
+    expect(notHygOnly.buys.map((b) => b.symbol)).toContain("XLP");
   });
 
   it("put-gated overlay: SPY above 200 → ~60%; SPY below 200 → ~40%", () => {
