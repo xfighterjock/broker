@@ -178,6 +178,11 @@ export interface Position {
    * overlay so the two programs do not flatten or rotate each other.
    */
   gatedDuration?: boolean;
+  /**
+   * Paper risk-off idle-cash T-bill sweep (BIL). Distinct from the 63d RS
+   * overlay's own BIL leg so selection, hysteresis, and holds ignore it.
+   */
+  cashSweep?: boolean;
 }
 
 export interface FreezeCard {

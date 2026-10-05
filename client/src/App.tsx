@@ -877,7 +877,7 @@ export default function App() {
               <tbody>
                 {state.broker.positions.map((p) => (
                   <tr key={p.id}>
-                    <td><SymbolLabel symbol={p.symbol} /></td>
+                    <td><SymbolLabel symbol={p.symbol} />{p.cashSweep ? " sweep" : ""}</td>
                     <td>{p.side}</td>
                     <td>{p.qty}</td>
                     <td>{p.unrealizedPnl}</td>

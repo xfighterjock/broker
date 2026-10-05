@@ -132,9 +132,17 @@ export class MockBroker implements BrokerClient {
       vertical: input.vertical,
       overlay: input.overlay,
       gatedDuration: input.gatedDuration,
+      cashSweep: input.cashSweep === true ? true : undefined,
     };
     if (input.dayPnl != null && Number.isFinite(input.dayPnl)) pos.dayPnl = input.dayPnl;
-    this.positions = this.positions.filter((p) => p.symbol !== input.symbol);
+    if (pos.cashSweep !== true) delete pos.cashSweep;
+    const incomingSweep = input.cashSweep === true;
+    this.positions = this.positions.filter((p) => {
+      if (p.symbol.toUpperCase() !== input.symbol.toUpperCase()) return true;
+      // Overlay BIL and the idle-cash sweep are different lots.
+      if (Boolean(p.cashSweep) !== incomingSweep) return true;
+      return false;
+    });
     this.positions.push(pos);
     this.persist();
     return { ...pos };
@@ -181,6 +189,46 @@ export class MockBroker implements BrokerClient {
     return flat;
   }
 
+  /** Mark one lot. Two BIL lots (overlay and cash sweep) do not share a pnl. */
+  setPositionUnrealized(id: string, pnl: number, dayPnl?: number | null): void {
+    const p = this.positions.find((row) => row.id === id);
+    if (!p || p.side === "Flat") return;
+    p.unrealizedPnl = pnl;
+    if (dayPnl !== undefined) writeDayPnl(p, dayPnl);
+    this.persist();
+  }
+
+  flattenPositionIds(ids: string[]): Position[] {
+    const want = new Set(ids);
+    const flat: Position[] = [];
+    for (const p of this.positions) {
+      if (!want.has(p.id) || p.side === "Flat") continue;
+      p.qty = 0;
+      p.side = "Flat";
+      p.unrealizedPnl = 0;
+      delete p.dayPnl;
+      flat.push({ ...p });
+    }
+    this.persist();
+    return flat;
+  }
+
+  /** Drop shares from one lot. Qty at or below zero flattens that lot only. */
+  reducePositionQty(id: string, qty: number): Position | null {
+    const p = this.positions.find((row) => row.id === id);
+    if (!p || p.side !== "Long" || p.qty <= 0) return null;
+    if (!(qty > 0)) return { ...p };
+    p.qty -= qty;
+    if (p.qty <= 0) {
+      p.qty = 0;
+      p.side = "Flat";
+      p.unrealizedPnl = 0;
+      delete p.dayPnl;
+    }
+    this.persist();
+    return { ...p };
+  }
+
   setUnrealizedPnl(symbol: string, pnl: number, dayPnl?: number | null): void {
     const want = symbol.toUpperCase();
     for (const p of this.positions) {
@@ -224,7 +272,8 @@ export class MockBroker implements BrokerClient {
         p.symbol.toUpperCase() === want &&
         (input.sleeveId === undefined || p.sleeveId === input.sleeveId) &&
         !p.vertical &&
-        !p.overlay,
+        !p.overlay &&
+        !p.cashSweep,
     );
     if (!existing) return this.injectPosition(input);
     const addQty = input.qty;
@@ -272,7 +321,7 @@ export class MockBroker implements BrokerClient {
       if (p.side !== "Long" || p.qty <= 0) continue;
       if (p.symbol.toUpperCase() !== want) continue;
       if (p.sleeveId !== sleeveId) continue;
-      if (p.vertical || p.overlay) continue;
+      if (p.vertical || p.overlay || p.cashSweep) continue;
       p.qty -= qty;
       if (p.qty <= 0) {
         p.qty = 0;

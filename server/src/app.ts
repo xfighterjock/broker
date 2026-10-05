@@ -89,6 +89,7 @@ import { attachScanReady, getScan, getScanFeaturesCache, rankMomentum } from "./
 import {
   alignedZeroSessionMark,
   allSleeveBooks,
+  applyCashCredit,
   applyExitStats,
   applySessionPnl,
   closeSideFor,
@@ -137,6 +138,24 @@ import {
   notifyVetoConfirm,
 } from "./eventGateAlerts";
 import { fetchRiskoffEtfOverlay } from "./riskoffEtf";
+import { fetchMassiveCashDividends } from "./massive";
+import {
+  distributionCreditKey,
+  distributionWasChecked,
+  hasDistributionCredit,
+  listDistributionCredits,
+  loadDistributionCredits,
+  markDistributionChecked,
+  planRiskoffDistributionCredits,
+  rememberDistributionCredit,
+  riskoffDistributionSymbols,
+} from "./riskoffDistributions";
+import {
+  openRiskoffCashSweepPositions,
+  riskoffFreeCashUsd,
+  riskoffSleeveEquityUsd,
+  sweepSharesToFund,
+} from "./riskoffCashSweep";
 import {
   applyOverlayMarks,
   detectOverlaySettlements,
@@ -283,6 +302,7 @@ export function buildApp(deps: AppDeps): express.Express {
     sessionMarksHydrated: false,
     verticalStopCooldown: {} as Record<string, string>,
     verticalStopCooldownHydrated: false,
+    distributionCreditsHydrated: false,
   };
 
   async function ensureSleeves(): Promise<void> {
@@ -663,7 +683,7 @@ export function buildApp(deps: AppDeps): express.Express {
       if (!livePos) continue;
       const sleeveId = hit.position.sleeveId ?? hit.stop.sleeveId ?? "momentum";
       await deps.broker.cancelOrders([hit.stop.id], "paper stop hit");
-      await deps.broker.flattenSymbols([hit.position.symbol], "paper stop hit");
+      deps.broker.flattenPositionIds([hit.position.id]);
       await recordPaperExit({
         sleeveId,
         symbol: hit.position.symbol,
@@ -683,15 +703,124 @@ export function buildApp(deps: AppDeps): express.Express {
       const quote = matchedQuote(quotes, p.symbol);
       if (!quote || quote.last === null) continue;
       const last = quote.last;
-      deps.broker.setUnrealizedPnl(
-        p.symbol,
+      deps.broker.setPositionUnrealized(
+        p.id,
         signedPnl(p.side, p.avgPrice, last, p.qty, p.symbol),
         openLotDayPnl(p, quote),
       );
     }
     const vHits = await markVerticalsQuiet();
     const oHits = await markOverlaysQuiet();
+    await creditRiskoffDistributions(nySessionDate(clockNow()));
     return hits.length + vHits + oHits;
+  }
+
+  async function ensureDistributionCredits(): Promise<void> {
+    if (memory.distributionCreditsHydrated) return;
+    memory.distributionCreditsHydrated = true;
+    if (!deps.redis) return;
+    try {
+      const raw = await deps.redis.get(REDIS_KEYS.riskoffDistributions);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) return;
+      loadDistributionCredits(parsed.filter((k): k is string => typeof k === "string"));
+    } catch {
+      /* keep the in-memory set */
+    }
+  }
+
+  async function persistDistributionCredits(): Promise<void> {
+    if (!deps.redis) return;
+    try {
+      await deps.redis.set(REDIS_KEYS.riskoffDistributions, JSON.stringify(listDistributionCredits()));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** Ex-date cash distributions for risk-off ETF lots. Missing Massive rows credit nothing. */
+  async function creditRiskoffDistributions(sessionDate: string): Promise<void> {
+    if (deps.broker.mode !== "mock") return;
+    await ensureSleeves();
+    await ensureBlotter();
+    await ensureDistributionCredits();
+    const positions = deps.broker.getPositionsSync();
+    const symbols = riskoffDistributionSymbols(positions);
+    if (!symbols.length) return;
+    const rows = [];
+    for (const symbol of symbols) {
+      const key = distributionCreditKey("riskoff", symbol, sessionDate);
+      if (hasDistributionCredit(key) || distributionWasChecked(key)) continue;
+      const got = await fetchMassiveCashDividends(symbol, sessionDate);
+      if (got === null) continue;
+      markDistributionChecked(key);
+      rows.push(...got);
+    }
+    const planned = planRiskoffDistributionCredits({
+      positions,
+      distributions: rows,
+      sessionDate,
+    });
+    if (!planned.length) return;
+    for (const credit of planned) {
+      rememberDistributionCredit(credit.key);
+      const card = memory.sleeves.riskoff;
+      memory.sleeves.riskoff = {
+        ...card,
+        paper: applyCashCredit(card.paper, credit.creditUsd),
+        updatedAt: new Date().toISOString(),
+      };
+      deps.broker.addRealizedPnl(credit.creditUsd);
+      memory.blotter.push(
+        makeFill({
+          sleeveId: "riskoff",
+          symbol: credit.symbol,
+          side: "Sell",
+          qty: credit.qty,
+          price: credit.cashAmount,
+          notes: credit.note,
+        }),
+      );
+      deps.engine.log(
+        `paper distribution riskoff ${credit.symbol} ex ${credit.exDate} credit ${credit.creditUsd.toFixed(2)} (MockBroker, not E*TRADE, not live)`,
+      );
+    }
+    if (memory.blotter.length > 200) {
+      memory.blotter.splice(0, memory.blotter.length - 200);
+    }
+    await persistBlotter();
+    await persistSleeves();
+    await persistDistributionCredits();
+  }
+
+  async function sellSweepBeforeRiskoffDebit(neededUsd: number): Promise<void> {
+    await ensureSleeves();
+    const positions = deps.broker.getPositionsSync();
+    const sweep = openRiskoffCashSweepPositions(positions)[0];
+    if (!sweep) return;
+    const quotes = await fetchDelayedQuotes(["BIL"]).catch(() => []);
+    const bil = lastFromQuotes(quotes, "BIL") ?? (sweep.avgPrice > 0 ? sweep.avgPrice : null);
+    if (bil === null) return;
+    const quoteRows = quotes
+      .filter((q) => q.last !== null && Number.isFinite(q.last) && (q.last as number) > 0)
+      .map((q) => ({ symbol: q.symbol, last: q.last as number }));
+    const equity = riskoffSleeveEquityUsd(memory.sleeves.riskoff, positions);
+    const free = riskoffFreeCashUsd(equity, positions, quoteRows);
+    const qty = sweepSharesToFund({
+      neededUsd,
+      freeCashUsd: free,
+      sweepQty: sweep.qty,
+      bilLast: bil,
+    });
+    if (qty < 1) return;
+    await closePaperPosition({
+      sleeveId: "riskoff",
+      symbol: "BIL",
+      reason: "sell cash sweep to fund entry",
+      cashSweep: true,
+      qty,
+    });
   }
 
   async function markVerticalsQuiet(): Promise<number> {
@@ -1071,6 +1200,9 @@ export function buildApp(deps: AppDeps): express.Express {
       book.equityUsd,
     );
     if (!v.ok) return { ok: false, error: v.error };
+    if (parsed.sleeveId === "riskoff") {
+      await sellSweepBeforeRiskoffDebit(v.netDebitPaid);
+    }
     const pkg = verticalPackageSymbol({
       underlying: v.long.underlying,
       expiry: v.expiry,
@@ -1148,32 +1280,49 @@ export function buildApp(deps: AppDeps): express.Express {
       sleeveRealizedPnl: memory.sleeves[parsed.sleeveId].paper.realizedPnlUsd,
     });
     if (!v.ok) return { ok: false, error: v.error };
-    const open = deps.broker
-      .getPositionsSync()
-      .find((p) => p.side !== "Flat" && p.qty > 0 && matchSym(p.symbol, v.mapped));
-    if (open) return { ok: false, error: `already open ${open.symbol}` };
+    const wantSweep = parsed.cashSweep === true;
+    const sameRole = deps.broker.getPositionsSync().filter(
+      (p) =>
+        p.side !== "Flat" &&
+        p.qty > 0 &&
+        matchSym(p.symbol, v.mapped) &&
+        Boolean(p.cashSweep) === wantSweep &&
+        (!wantSweep || p.sleeveId === parsed.sleeveId),
+    );
+    const open = sameRole[0];
+    if (open && !wantSweep) return { ok: false, error: `already open ${open.symbol}` };
     if (v.warn) {
       deps.engine.log(`paper risk note ${v.mapped}: ${v.warn}`);
     }
     const side = positionSideFor(parsed.side);
-    deps.broker.injectPosition({
+    let bookedQty = parsed.qty;
+    let bookedAvg = last;
+    if (open && wantSweep) {
+      bookedQty = open.qty + parsed.qty;
+      bookedAvg = bookedQty === 0 ? last : (open.avgPrice * open.qty + last * parsed.qty) / bookedQty;
+    }
+    const booked = deps.broker.injectPosition({
       symbol: v.mapped,
-      qty: parsed.qty,
+      qty: bookedQty,
       side,
-      avgPrice: last,
+      avgPrice: bookedAvg,
       unrealizedPnl: 0,
-      dayPnl: openLotDayPnl({ side, qty: parsed.qty, symbol: v.mapped }, quote),
+      dayPnl: openLotDayPnl({ side, qty: bookedQty, symbol: v.mapped }, quote),
       sleeveId: parsed.sleeveId,
       gatedDuration: parsed.gatedDuration === true,
+      cashSweep: wantSweep,
     });
-    const stop = deps.broker.injectOrder({
-      symbol: v.mapped,
-      type: "StopMarket",
-      side: oppositeSide(parsed.side),
-      qty: parsed.qty,
-      stopPrice: parsed.stopPrice,
-      sleeveId: parsed.sleeveId,
-    });
+    const stop = wantSweep
+      ? null
+      : deps.broker.injectOrder({
+          symbol: v.mapped,
+          type: "StopMarket",
+          side: oppositeSide(parsed.side),
+          qty: bookedQty,
+          stopPrice: parsed.stopPrice,
+          sleeveId: parsed.sleeveId,
+        });
+    void booked;
     await ensureBlotter();
     const fill = makeFill({
       sleeveId: parsed.sleeveId,
@@ -1193,7 +1342,9 @@ export function buildApp(deps: AppDeps): express.Express {
       `${parsed.sleeveId} ${parsed.side} ${parsed.qty} ${v.mapped} @ ${last} stop ${parsed.stopPrice}`,
     );
     deps.engine.log(
-      `paper ${parsed.side} ${parsed.qty} ${v.mapped} @ ${last} stop ${stop.stopPrice} ${stop.side} StopMarket (MockBroker, not Tradovate, not live)`,
+      stop
+        ? `paper ${parsed.side} ${parsed.qty} ${v.mapped} @ ${last} stop ${stop.stopPrice} ${stop.side} StopMarket (MockBroker, not Tradovate, not live)`
+        : `paper ${parsed.side} ${parsed.qty} ${v.mapped} @ ${last} cash sweep (MockBroker, not Tradovate, not live)`,
     );
     if (parsed.sleeveId === "day") void notifyDayFill(v.mapped);
     return { ok: true, mapped: v.mapped, last };
@@ -1205,13 +1356,17 @@ export function buildApp(deps: AppDeps): express.Express {
     const mockErr = assertMockOnly();
     if (mockErr) return { ok: false, error: mockErr };
     const mapped = mapTicker(parsed.symbol) ?? parsed.symbol;
-    const pos = deps.broker.getPositionsSync().find(
+    const wantSweep = parsed.cashSweep === true;
+    const matches = deps.broker.getPositionsSync().filter(
       (p) =>
         p.side !== "Flat" &&
         p.qty > 0 &&
         matchSym(p.symbol, mapped) &&
         (p.sleeveId === parsed.sleeveId || p.sleeveId === undefined),
     );
+    const pos =
+      matches.find((p) => Boolean(p.cashSweep) === wantSweep) ??
+      (wantSweep ? undefined : matches.find((p) => p.cashSweep === true));
     if (!pos) return { ok: false, error: "no open paper position", status: 404 };
     let last: number;
     let pnl: number;
@@ -1234,22 +1389,42 @@ export function buildApp(deps: AppDeps): express.Express {
       notesPrice = last;
       pnl = signedPnl(pos.side, pos.avgPrice, last, pos.qty, pos.symbol);
     }
-    const live = new Set(["Working", "Submitted", "Accepted"]);
-    const working = deps.broker
-      .getOrdersSync()
-      .filter((o) => live.has(o.state) && matchSym(o.symbol, pos.symbol));
-    if (working.length) {
-      await deps.broker.cancelOrders(
-        working.map((o) => o.id),
-        `paper close ${parsed.reason}`,
-      );
+    const sellQty =
+      !pos.vertical && !pos.overlay && parsed.qty !== undefined && parsed.qty < pos.qty
+        ? parsed.qty
+        : pos.qty;
+    const full = sellQty >= pos.qty;
+    if (!pos.vertical && !pos.overlay) {
+      pnl = signedPnl(pos.side, pos.avgPrice, last, sellQty, pos.symbol);
     }
-    await deps.broker.flattenSymbols([pos.symbol], parsed.reason);
+    const live = new Set(["Working", "Submitted", "Accepted"]);
+    if (full && !pos.cashSweep) {
+      const working = deps.broker
+        .getOrdersSync()
+        .filter((o) => live.has(o.state) && matchSym(o.symbol, pos.symbol) && !pos.cashSweep);
+      if (working.length) {
+        await deps.broker.cancelOrders(
+          working.map((o) => o.id),
+          `paper close ${parsed.reason}`,
+        );
+      }
+    }
+    if (full) {
+      deps.broker.flattenPositionIds([pos.id]);
+    } else {
+      const left = deps.broker.reducePositionQty(pos.id, sellQty);
+      if (left && left.qty > 0) {
+        deps.broker.setPositionUnrealized(
+          left.id,
+          signedPnl(left.side, left.avgPrice, last, left.qty, left.symbol),
+        );
+      }
+    }
     await recordPaperExit({
       sleeveId: parsed.sleeveId,
       symbol: pos.symbol,
       side: closeSideFor(pos.side),
-      qty: pos.qty,
+      qty: sellQty,
       price: notesPrice,
       notes: parsed.reason,
       realizedPnl: pnl,
@@ -1419,6 +1594,7 @@ export function buildApp(deps: AppDeps): express.Express {
               stopPrice: buy.stopPrice,
               thesis: buy.thesis,
               gatedDuration: buy.gatedDuration === true,
+              cashSweep: buy.cashSweep === true,
             });
           }
           const quotes = await fetchDelayedQuotes([buy.symbol]);

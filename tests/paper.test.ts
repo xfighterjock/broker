@@ -439,7 +439,7 @@ describe("flatten on stop cross", () => {
   it("GET /api/status returns the book while delayed quotes hang, then the kicked mark still flattens", async () => {
     const { app, broker } = makeTestApp();
     stubQuotes({ SPY: 500 });
-    const flatten = vi.spyOn(broker, "flattenSymbols");
+    const flatten = vi.spyOn(broker, "flattenPositionIds");
     const srv = await listen(app);
     let releaseHang: ((last: number) => void) | null = null;
     try {
@@ -522,7 +522,7 @@ describe("flatten on stop cross", () => {
   it("GET /api/quotes flattens the mock position when last crosses the stop", async () => {
     const { app, broker } = makeTestApp();
     stubQuotes(500);
-    const flatten = vi.spyOn(broker, "flattenSymbols");
+    const flatten = vi.spyOn(broker, "flattenPositionIds");
     const cancel = vi.spyOn(broker, "cancelOrders");
     const tv = vi.spyOn(tradovate, "createTradovateFromEnv");
     const srv = await listen(app);

@@ -41,6 +41,13 @@ import {
   openRiskoffDurationPositions,
   overlayHoldsDurationName,
 } from "./riskoffDuration";
+import {
+  decideRiskoffCashSweep,
+  openRiskoffCashSweepPositions,
+  riskoffFreeCashUsd,
+  riskoffSleeveEquityUsd,
+  sweepSharesToFund,
+} from "./riskoffCashSweep";
 import { passesMomentumFilter } from "./scan";
 import {
   noteCreditLegOiSkip,
@@ -72,12 +79,18 @@ export type AutoBuy = {
   thesis: string;
   /** Risk-off gated duration lot. Persist on the MockBroker position. */
   gatedDuration?: boolean;
+  /** Risk-off idle-cash BIL sweep. Not the overlay BIL leg. */
+  cashSweep?: boolean;
 };
 
 export type AutoSell = {
   sleeveId: SleeveId;
   symbol: string;
   reason: string;
+  /** Close the idle-cash sweep lot when the symbol is also an overlay name. */
+  cashSweep?: boolean;
+  /** Partial close. Omit to flatten the matched lot. */
+  qty?: number;
 };
 
 export function isOwnershipArtifact(
@@ -1098,7 +1111,8 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
   if (!ctx.scanReady) {
     if (sleeveAutoOn(ctx, "riskoff")) {
       await placeRiskoffEtfBuys(ctx, etf.buys?.length ? etf.buys : etf.buy ? [etf.buy] : [], etf.winners ?? [], bought);
-      await placeRiskoffDurationBuy(ctx, duration.buy, bought);
+      await placeRiskoffDurationBuy(ctx, duration.buy, bought, sold);
+      await rebalanceRiskoffCashSweep(ctx, bought, sold);
     }
     return { bought, sold, verticals };
   }
@@ -1340,9 +1354,95 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
 
   if (sleeveAutoOn(ctx, "riskoff")) {
     await placeRiskoffEtfBuys(ctx, etf.buys?.length ? etf.buys : etf.buy ? [etf.buy] : [], etf.winners ?? [], bought);
-    await placeRiskoffDurationBuy(ctx, duration.buy, bought);
+    await placeRiskoffDurationBuy(ctx, duration.buy, bought, sold);
+    await rebalanceRiskoffCashSweep(ctx, bought, sold);
   }
   return { bought, sold, verticals };
+}
+
+function riskoffBilLast(ctx: AutopilotCtx): number | null {
+  for (const q of ctx.riskoffEtfQuotes ?? []) {
+    if (q.symbol.trim().toUpperCase() !== "BIL") continue;
+    if (Number.isFinite(q.last) && q.last > 0) return q.last;
+  }
+  return null;
+}
+
+/** Sell sweep BIL before a put or duration buy when sleeve cash is short. */
+async function sellRiskoffSweepToFund(
+  ctx: AutopilotCtx,
+  neededUsd: number,
+  sold: AutoSell[],
+): Promise<void> {
+  const positions = ctx.getPositions();
+  const sweep = openRiskoffCashSweepPositions(positions)[0];
+  if (!sweep) return;
+  const bilLast = riskoffBilLast(ctx) ?? (sweep.avgPrice > 0 ? sweep.avgPrice : null);
+  if (bilLast === null) return;
+  const equity = riskoffSleeveEquityUsd(ctx.getSleeves().riskoff, positions);
+  const free = riskoffFreeCashUsd(equity, positions, ctx.riskoffEtfQuotes ?? []);
+  const qty = sweepSharesToFund({
+    neededUsd,
+    freeCashUsd: free,
+    sweepQty: sweep.qty,
+    bilLast,
+  });
+  if (qty < 1) return;
+  const sell: AutoSell = {
+    sleeveId: "riskoff",
+    symbol: "BIL",
+    reason: "sell cash sweep to fund entry",
+    cashSweep: true,
+    qty,
+  };
+  const r = await ctx.close(sell);
+  if (r.ok) {
+    ctx.log(
+      `auto paper close riskoff BIL cash sweep ${qty} sh to fund entry (MockBroker, not Tradovate, not live)`,
+    );
+    sold.push(sell);
+  } else {
+    ctx.log(`auto paper close skip BIL cash sweep: ${r.error}`);
+  }
+}
+
+async function rebalanceRiskoffCashSweep(
+  ctx: AutopilotCtx,
+  bought: AutoBuy[],
+  sold: AutoSell[],
+): Promise<void> {
+  const bil = ctx.riskoffEtfReturns?.BIL;
+  const decision = decideRiskoffCashSweep({
+    riskOn: ctx.riskOn === true,
+    positions: ctx.getPositions(),
+    sleeve: ctx.getSleeves().riskoff,
+    quotes: ctx.riskoffEtfQuotes ?? [],
+    bilBarsOk: bil !== null && bil !== undefined && Number.isFinite(bil),
+    now: ctx.now,
+  });
+  for (const s of decision.sells) {
+    const r = await ctx.close(s);
+    if (r.ok) {
+      ctx.log(
+        `auto paper close riskoff ${s.symbol} cash sweep ${s.reason} (MockBroker, not Tradovate, not live)`,
+      );
+      sold.push(s);
+    } else {
+      ctx.log(`auto paper close skip ${s.symbol} cash sweep: ${r.error}`);
+    }
+  }
+  if (!decision.buy) return;
+  const r = await ctx.place(decision.buy);
+  if (r.ok) {
+    ctx.log(
+      `auto paper buy riskoff ${decision.buy.qty} BIL cash sweep ${decision.buy.thesis} (MockBroker, not Tradovate, not live)`,
+    );
+    bought.push(decision.buy);
+  } else if (/no delayed last/i.test(r.error)) {
+    ctx.log("auto paper skip BIL cash sweep no delayed last");
+  } else {
+    ctx.log(`auto paper skip BIL cash sweep: ${r.error}`);
+  }
 }
 
 async function placeRiskoffEtfBuys(
@@ -1388,6 +1488,7 @@ async function placeRiskoffDurationBuy(
   ctx: AutopilotCtx,
   buy: AutoBuy | null,
   bought: AutoBuy[],
+  sold: AutoSell[],
 ): Promise<void> {
   if (!buy) return;
   if (overlayHoldsDurationName(ctx.getPositions())) {
@@ -1410,6 +1511,11 @@ async function placeRiskoffDurationBuy(
   ) {
     return;
   }
+  let last: number | null = null;
+  for (const q of ctx.riskoffEtfQuotes ?? []) {
+    if (q.symbol.trim().toUpperCase() === buy.symbol.toUpperCase() && q.last > 0) last = q.last;
+  }
+  if (last !== null) await sellRiskoffSweepToFund(ctx, buy.qty * last, sold);
   const r = await ctx.place(buy);
   if (r.ok) {
     ctx.log(

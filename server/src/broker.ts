@@ -23,6 +23,8 @@ export interface InjectPositionInput {
   vertical?: VerticalMeta;
   overlay?: OverlayMeta;
   gatedDuration?: boolean;
+  /** Risk-off idle-cash BIL sweep. Not the 63d overlay BIL leg. */
+  cashSweep?: boolean;
 }
 
 export interface BrokerClient {

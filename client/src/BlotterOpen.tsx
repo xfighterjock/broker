@@ -85,6 +85,7 @@ export function BlotterOpenPositions({
               <tr key={p.id}>
                 <td>
                   <SymbolLabel symbol={p.symbol} />
+                  {p.cashSweep ? " sweep" : ""}
                 </td>
                 <td>{p.side}</td>
                 <td>{p.qty}</td>

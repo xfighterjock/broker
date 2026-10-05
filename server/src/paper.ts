@@ -45,12 +45,18 @@ export type PaperOrderBody = {
   thesis: string;
   /** Risk-off gated duration lot (TLT/IEF). Distinct from the 63d RS overlay. */
   gatedDuration?: boolean;
+  /** Risk-off idle-cash BIL sweep. Not the overlay BIL leg. */
+  cashSweep?: boolean;
 };
 
 export type PaperCloseBody = {
   sleeveId: SleeveId;
   symbol: string;
   reason: string;
+  /** Close the idle-cash BIL sweep, not an overlay lot with the same symbol. */
+  cashSweep?: boolean;
+  /** Partial close. Omit to flatten the matched lot. */
+  qty?: number;
 };
 
 export type ValidateOk = {
@@ -255,6 +261,7 @@ export function parsePaperOrder(body: unknown): PaperOrderBody | { error: string
     stopPrice,
     thesis,
     ...(b.gatedDuration === true ? { gatedDuration: true as const } : {}),
+    ...(b.cashSweep === true ? { cashSweep: true as const } : {}),
   };
 }
 
@@ -267,7 +274,21 @@ export function parsePaperClose(body: unknown): PaperCloseBody | { error: string
   const symbol = String(b.symbol ?? "").trim().toUpperCase();
   if (!symbol) return { error: "symbol required" };
   const reason = typeof b.reason === "string" && b.reason.trim() ? b.reason.trim() : "manual";
-  return { sleeveId: sleeveRaw as SleeveId, symbol, reason };
+  let qty: number | undefined;
+  if (b.qty !== undefined && b.qty !== null && b.qty !== "") {
+    const q = typeof b.qty === "number" ? b.qty : Number(b.qty);
+    if (!Number.isFinite(q) || q < 1 || !Number.isInteger(q)) {
+      return { error: "qty must be an integer >= 1" };
+    }
+    qty = q;
+  }
+  return {
+    sleeveId: sleeveRaw as SleeveId,
+    symbol,
+    reason,
+    ...(b.cashSweep === true ? { cashSweep: true as const } : {}),
+    ...(qty !== undefined ? { qty } : {}),
+  };
 }
 
 export type PaperResetBody = {
@@ -312,7 +333,7 @@ export function detectStopHits(
   const hits: StopHit[] = [];
   for (const p of positions) {
     if (p.side === "Flat" || p.qty <= 0) continue;
-    if (isVerticalPosition(p) || isOverlayPosition(p)) continue;
+    if (isVerticalPosition(p) || isOverlayPosition(p) || p.cashSweep) continue;
     const last = lastFromQuotes(quotes, p.symbol);
     if (last === null || last <= 0) continue;
     const stop = orders.find(
@@ -333,6 +354,12 @@ export function detectStopHits(
     });
   }
   return hits;
+}
+
+/** Cash distribution. Adds realized P/L and does not count as a trade win/loss. */
+export function applyCashCredit(paper: PaperStats, amount: number): PaperStats {
+  if (!Number.isFinite(amount) || amount === 0) return paper;
+  return { ...paper, realizedPnlUsd: paper.realizedPnlUsd + amount };
 }
 
 export function applyExitStats(paper: PaperStats, realizedPnl: number): PaperStats {
