@@ -20,15 +20,24 @@ const AGG_LOOKBACK_DAYS = 420;
 
 export type DailyBar = { close: number; volume: number };
 
+/** Cash distribution from Massive. Missing cash_amount is not represented. */
+export type MassiveCashDividend = {
+  ticker: string;
+  exDate: string;
+  cashAmount: number;
+};
+
 type CacheEntry<T> = { at: number; value: T };
 const expiryCache = new Map<string, CacheEntry<OptionExpiriesResponse>>();
 const chainCache = new Map<string, CacheEntry<OptionChainSnapshot>>();
 const aggCache = new Map<string, CacheEntry<DailyBar[] | null>>();
+const dividendCache = new Map<string, CacheEntry<MassiveCashDividend[] | null>>();
 
 export function resetMassiveCache(): void {
   expiryCache.clear();
   chainCache.clear();
   aggCache.clear();
+  dividendCache.clear();
   futuresContractCache.clear();
   futuresAggCache.clear();
 }
@@ -315,6 +324,8 @@ export async function fetchMassiveDailyBars(ticker: string): Promise<DailyBar[] 
   const url =
     `${MASSIVE_BASE}/v2/aggs/ticker/${encodeURIComponent(ticker)}/range/1/day/${ymdUtc(from)}/${ymdUtc(to)}` +
     `?adjusted=true&sort=asc&limit=50000`;
+  // adjusted=true is split adjustment only. Massive does not dividend-adjust
+  // aggregate closes, so close/close returns are not total returns.
   const got = await massiveGetJson(url, key);
   if (!got.ok) {
     aggCache.set(ticker, { at: now, value: null });
@@ -323,6 +334,72 @@ export async function fetchMassiveDailyBars(ticker: string): Promise<DailyBar[] 
   const bars = parseMassiveDailyBars(got.body);
   aggCache.set(ticker, { at: now, value: bars });
   return bars;
+}
+
+/**
+ * Parse Massive cash dividends. Accepts `/stocks/v1/dividends` and the older
+ * `/v3/reference/dividends` shape (`results[].cash_amount`, `ex_dividend_date`).
+ * Rows without a positive USD cash amount or an ex-date are dropped. A body
+ * that is not a results array is null (caller must not invent a credit).
+ */
+export function parseMassiveCashDividends(body: unknown): MassiveCashDividend[] | null {
+  const root = asRecord(body);
+  if (!root || !Array.isArray(root.results)) return null;
+  const out: MassiveCashDividend[] = [];
+  for (const row of root.results) {
+    const r = asRecord(row);
+    if (!r) continue;
+    const ticker = str(r.ticker);
+    const exDate = str(r.ex_dividend_date);
+    const cash = num(r.cash_amount);
+    if (!ticker || !exDate || !/^\d{4}-\d{2}-\d{2}$/.test(exDate)) continue;
+    if (cash === null || !(cash > 0)) continue;
+    const currency = str(r.currency);
+    if (currency && currency.toUpperCase() !== "USD") continue;
+    out.push({ ticker: ticker.toUpperCase(), exDate, cashAmount: cash });
+  }
+  return out;
+}
+
+/**
+ * Cash dividends for one ticker. Null when the key is missing or both
+ * Massive dividend routes fail — callers credit nothing. Empty array means
+ * the endpoint answered and listed no usable cash rows.
+ */
+export async function fetchMassiveCashDividends(
+  ticker: string,
+  exDate?: string,
+): Promise<MassiveCashDividend[] | null> {
+  const key = massiveApiKey();
+  if (!key) return null;
+  const symbol = ticker.trim().toUpperCase();
+  if (!symbol) return null;
+  const cacheKey = exDate ? `${symbol}|${exDate}` : symbol;
+  const now = Date.now();
+  const hit = dividendCache.get(cacheKey);
+  if (hit && now - hit.at < MASSIVE_CACHE_MS) return hit.value;
+  const params = new URLSearchParams({
+    ticker: symbol,
+    limit: "20",
+    sort: "ex_dividend_date.desc",
+  });
+  if (exDate) params.set("ex_dividend_date", exDate);
+  const q = params.toString();
+  const urls = [
+    `${MASSIVE_BASE}/stocks/v1/dividends?${q}`,
+    `${MASSIVE_BASE}/v3/reference/dividends?${q}`,
+  ];
+  let parsed: MassiveCashDividend[] | null = null;
+  for (const url of urls) {
+    const got = await massiveGetJson(url, key);
+    if (!got.ok) continue;
+    const rows = parseMassiveCashDividends(got.body);
+    if (rows === null) continue;
+    parsed = rows;
+    break;
+  }
+  dividendCache.set(cacheKey, { at: now, value: parsed });
+  return parsed;
 }
 
 /** Display MES=F / F:MES / MES → Massive product_code MES. Unknown =F roots stay unmapped. */
