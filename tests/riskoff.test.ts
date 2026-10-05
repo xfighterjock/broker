@@ -37,6 +37,7 @@ import {
   RISKOFF_ETF_HYG_ONLY_21D_CONFIRM,
   RISKOFF_ETF_HYG_ONLY_INELIGIBLE,
   RISKOFF_ETF_LOOKBACK_DAYS,
+  RISKOFF_ETF_REALIZED_VOL_SESSIONS,
   RISKOFF_ETF_MIN_HOLD_SESSIONS,
   RISKOFF_ETF_MISSING_BARS_MAX_MISSES,
   RISKOFF_ETF_NOTIONAL_FRAC,
@@ -80,6 +81,10 @@ import {
   riskoffEtfRebalanceDue,
   riskoffEtfSessionsHeld,
   riskoffEtfSleeveFrac,
+  riskoffEtfSleeveFracs,
+  riskoffEtfInverseVolShares,
+  riskoffEtfInvvolSplitPercents,
+  realizedVolFromCloses,
   sizeRiskoffEtfShares,
   type RiskoffEtfAbove200,
   type RiskoffEtfReturns,
@@ -5117,5 +5122,292 @@ describe("flatten risk-off puts while SPY is above 200dma", () => {
     expect(result.sold.map((s) => s.symbol).sort()).toEqual(["GDX", "PDBC"]);
     expect(result.sold.every((s) => s.reason === "sleeve loss cap")).toBe(true);
     expect(result.bought.filter((b) => b.sleeveId === "riskoff")).toEqual([]);
+  });
+
+  it("HYG-only inverse-vol: 5.9% and 9.9% vols weight ~62.5/37.5; SPY below 200, one name, and a missing vol stay equal", async () => {
+    expect(RISKOFF_ETF_REALIZED_VOL_SESSIONS).toBe(20);
+    const rets = [
+      0.01, -0.005, 0.002, 0.008, -0.003, 0.004, -0.001, 0.006, -0.002, 0.003, 0.007, -0.004, 0.001,
+      -0.006, 0.005, 0.002, -0.003, 0.004, 0.001, -0.002,
+    ];
+    const closes = [100];
+    for (const r of rets) closes.push(closes[closes.length - 1] * (1 + r));
+    expect(realizedVolFromCloses(closes)).toBeCloseTo(0.07215575258826526, 10);
+    expect(realizedVolFromCloses(closes.slice(0, 20))).toBeNull();
+    expect(realizedVolFromCloses(Array.from({ length: 21 }, () => 100))).toBeNull();
+
+    const low = 0.059;
+    const high = 0.099;
+    const shares = riskoffEtfInverseVolShares([low, high]);
+    expect(shares).not.toBeNull();
+    const ftlsShare = (shares as number[])[0];
+    const qualShare = (shares as number[])[1];
+    expect(ftlsShare).toBeCloseTo(0.625, 2);
+    expect(qualShare).toBeCloseTo(0.375, 2);
+    expect(ftlsShare).toBeCloseTo(high / (low + high), 10);
+    expect(ftlsShare + qualShare).toBeCloseTo(1, 10);
+    const book = RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED;
+    const fracs = riskoffEtfSleeveFracs(["FTLS", "QUAL"], book, {
+      hygOnly: true,
+      vols: { FTLS: low, QUAL: high },
+    });
+    expect(fracs[0] + fracs[1]).toBeCloseTo(book, 10);
+    expect(fracs[0]).toBeCloseTo(book * ftlsShare, 10);
+    expect(riskoffEtfInvvolSplitPercents(fracs)).toEqual([63, 37]);
+    expect(
+      riskoffEtfSleeveFracs(["FTLS", "QUAL"], book, {
+        hygOnly: false,
+        vols: { FTLS: low, QUAL: high },
+      }),
+    ).toEqual([book / 2, book / 2]);
+    expect(
+      riskoffEtfSleeveFracs(["FTLS", "QUAL"], book, {
+        hygOnly: true,
+        vols: { FTLS: low, QUAL: null },
+      }),
+    ).toEqual([book / 2, book / 2]);
+    expect(riskoffEtfSleeveFracs(["FTLS"], book, { hygOnly: true, vols: { FTLS: low } })).toEqual([book]);
+    expect(
+      riskoffEtfSleeveFracs(["GLD", "BIL"], book, { hygOnly: true, vols: { GLD: low, BIL: 0.002 } }),
+    ).toEqual([book / 2, book / 2]);
+    expect(riskoffEtfInverseVolShares([low, 0])).toBeNull();
+    expect(riskoffEtfInverseVolShares([low])).toBeNull();
+
+    const pair = etfRs({ FTLS: 0.19, BTAL: 0.1 });
+    const beats21 = etfRs21({ FTLS: 0.05, BTAL: 0.04 });
+    const vols = { FTLS: low, BTAL: high };
+    const hyg = decideRiskoffEtf({
+      riskOn: false,
+      spyAbove200: true,
+      hygAbove200: false,
+      positions: [],
+      sleeve: defaultSleeves().riskoff,
+      returns: pair,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: beats21,
+      realizedVol20: vols,
+    });
+    expect(hyg.winners).toEqual(["FTLS", "BTAL"]);
+    expect(hyg.buys.map((b) => b.symbol)).toEqual(["FTLS", "BTAL"]);
+    expect(hyg.buys[0].qty).toBe(sizeRiskoffEtfShares(62, DEFAULT_SLEEVE_EQUITY_USD, book * ftlsShare));
+    expect(hyg.buys[1].qty).toBe(sizeRiskoffEtfShares(19, DEFAULT_SLEEVE_EQUITY_USD, book * qualShare));
+    expect(hyg.buys[0].thesis).toMatch(/top-2 FTLS\+BTAL invvol 63\/37 FTLS$/);
+    expect(hyg.buys[1].thesis).toMatch(/top-2 FTLS\+BTAL invvol 63\/37 BTAL$/);
+    expect(hyg.buys[0].qty).not.toBe(sizeRiskoffEtfShares(62, DEFAULT_SLEEVE_EQUITY_USD, book / 2));
+    expect(getRiskoffEtfMissingBarsMisses()).toBe(0);
+
+    const below = decideRiskoffEtf({
+      riskOn: false,
+      spyAbove200: false,
+      hygAbove200: false,
+      positions: [],
+      sleeve: defaultSleeves().riskoff,
+      returns: etfRs({ GDX: 0.3, GLD: 0.2, UUP: 0.08 }),
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: etfRs21({ GDX: 0.1, GLD: 0.09 }),
+      realizedVol20: { GDX: low, GLD: low, UUP: high },
+    });
+    const half40 = riskoffEtfSleeveFrac(2);
+    expect(below.winners).toEqual(["GDX", "UUP"]);
+    expect(below.buys[0].thesis).toMatch(/top-2 GDX\+UUP 50\/50/);
+    expect(below.buys[0].qty).toBe(sizeRiskoffEtfShares(40, DEFAULT_SLEEVE_EQUITY_USD, half40));
+    expect(below.buys[1].qty).toBe(sizeRiskoffEtfShares(28, DEFAULT_SLEEVE_EQUITY_USD, half40));
+
+    const notHygOnly = decideRiskoffEtf({
+      riskOn: false,
+      spyAbove200: true,
+      hygAbove200: true,
+      positions: [],
+      sleeve: defaultSleeves().riskoff,
+      returns: pair,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: beats21,
+      realizedVol20: vols,
+    });
+    const half60 = riskoffEtfSleeveFrac(2, book);
+    expect(notHygOnly.winners).toEqual(["FTLS", "BTAL"]);
+    expect(notHygOnly.buys[0].thesis).toMatch(/50\/50/);
+    expect(notHygOnly.buys[0].qty).toBe(sizeRiskoffEtfShares(62, DEFAULT_SLEEVE_EQUITY_USD, half60));
+
+    const one = decideRiskoffEtf({
+      riskOn: false,
+      spyAbove200: true,
+      hygAbove200: false,
+      positions: [],
+      sleeve: defaultSleeves().riskoff,
+      returns: flotWins,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: etfRs21({ FLOT: 0.04 }),
+      realizedVol20: { FLOT: low },
+    });
+    expect(one.winners).toEqual(["FLOT"]);
+    expect(one.buy?.qty).toBe(sizeRiskoffEtfShares(51, DEFAULT_SLEEVE_EQUITY_USD, book));
+    expect(one.buy?.thesis).toMatch(/winner FLOT$/);
+    expect(one.buy?.thesis).not.toMatch(/invvol/);
+
+    const loneGold = decideRiskoffEtf({
+      riskOn: false,
+      spyAbove200: true,
+      hygAbove200: false,
+      positions: [],
+      sleeve: defaultSleeves().riskoff,
+      returns: gldWins,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: etfRs21({ GLD: 0.05 }),
+      realizedVol20: { GLD: low, BIL: 0.002 },
+    });
+    expect(loneGold.winners).toEqual(["GLD", "BIL"]);
+    expect(loneGold.buys[0].thesis).toMatch(/50\/50/);
+    expect(loneGold.buys[0].qty).toBe(sizeRiskoffEtfShares(180, DEFAULT_SLEEVE_EQUITY_USD, half60));
+
+    const missingVol = decideRiskoffEtf({
+      riskOn: false,
+      spyAbove200: true,
+      hygAbove200: false,
+      positions: [],
+      sleeve: defaultSleeves().riskoff,
+      returns: pair,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: beats21,
+      realizedVol20: { FTLS: low, BTAL: null },
+    });
+    expect(missingVol.winners).toEqual(["FTLS", "BTAL"]);
+    expect(missingVol.buys[0].thesis).toMatch(/top-2 FTLS\+BTAL 50\/50/);
+    expect(missingVol.buys[0].qty).toBe(sizeRiskoffEtfShares(62, DEFAULT_SLEEVE_EQUITY_USD, half60));
+    expect(missingVol.buys[1].qty).toBe(sizeRiskoffEtfShares(19, DEFAULT_SLEEVE_EQUITY_USD, half60));
+    expect(getRiskoffEtfMissingBarsMisses()).toBe(0);
+
+    const zeroVol = decideRiskoffEtf({
+      riskOn: false,
+      spyAbove200: true,
+      hygAbove200: false,
+      positions: [],
+      sleeve: defaultSleeves().riskoff,
+      returns: pair,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: beats21,
+      realizedVol20: { FTLS: low, BTAL: 0 },
+    });
+    expect(zeroVol.buys[0].thesis).toMatch(/50\/50/);
+
+    const gdxBlocked = decideRiskoffEtf({
+      riskOn: false,
+      spyAbove200: true,
+      hygAbove200: false,
+      positions: [],
+      sleeve: defaultSleeves().riskoff,
+      returns: etfRs({ GDX: 0.3, GLD: 0.2, UUP: 0.08 }),
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: etfRs21({ GDX: 0.1, GLD: 0.09, UUP: 0.02 }),
+      realizedVol20: { GDX: 0.2, GLD: low, UUP: high },
+    });
+    expect(gdxBlocked.winners).toEqual(["GLD", "UUP"]);
+    expect(gdxBlocked.winners).not.toContain("GDX");
+    expect(riskoffEtfQualifiers(etfRs({ GDX: 0.3, GLD: 0.2, UUP: 0.08 }), etfAbove200(), etfRs21({ GDX: 0.1, GLD: 0.09 }), true)).not.toContain("GDX");
+    expect(riskoffEtfQualifiers(etfRs({ GDX: 0.3, GLD: 0.2, UUP: 0.08 }), etfAbove200(), etfRs21({ GDX: 0.1, GLD: 0.09 }), true)).toContain("GLD");
+    expect(gdxBlocked.buys[0].thesis).toMatch(/top-2 GLD\+UUP invvol 63\/37/);
+    expect(gdxBlocked.buys[0].qty).toBe(sizeRiskoffEtfShares(180, DEFAULT_SLEEVE_EQUITY_USD, book * ftlsShare));
+    expect(RISKOFF_ETF_GOLD_FAMILY).toEqual(["GLD", "GDX"]);
+    expect(RISKOFF_ETF_HYG_ONLY_INELIGIBLE).toContain("GDX");
+
+    const roundsToZero = decideRiskoffEtf({
+      riskOn: false,
+      spyAbove200: true,
+      hygAbove200: false,
+      positions: [],
+      sleeve: defaultSleeves().riskoff,
+      returns: pair,
+      quotes: etfQuotes({ FTLS: 62, BTAL: 25000 }),
+      above200: etfAbove200(),
+      returns21: beats21,
+      realizedVol20: vols,
+    });
+    expect(roundsToZero.buys[0].thesis).toMatch(/50\/50/);
+    expect(roundsToZero.buys.find((b) => b.symbol === "BTAL")?.qty).toBe(
+      sizeRiskoffEtfShares(25000, DEFAULT_SLEEVE_EQUITY_USD, half60),
+    );
+
+    const heldQty = (symbol: "FTLS" | "BTAL", last: number) =>
+      sizeRiskoffEtfShares(last, DEFAULT_SLEEVE_EQUITY_USD, half60);
+    const mildHold = decideRiskoffEtf({
+      riskOn: false,
+      spyAbove200: true,
+      hygAbove200: false,
+      positions: [etfPos("FTLS", heldQty("FTLS", 62), 62), etfPos("BTAL", heldQty("BTAL", 19), 19)],
+      sleeve: defaultSleeves().riskoff,
+      returns: pair,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: beats21,
+      realizedVol20: vols,
+    });
+    expect(mildHold.buys).toEqual([]);
+    expect(mildHold.sells).toEqual([]);
+    expect(mildHold.reason).toBe("hold FTLS+BTAL");
+
+    const extreme = decideRiskoffEtf({
+      riskOn: false,
+      spyAbove200: true,
+      hygAbove200: false,
+      positions: [etfPos("FTLS", heldQty("FTLS", 62), 62), etfPos("BTAL", heldQty("BTAL", 19), 19)],
+      sleeve: defaultSleeves().riskoff,
+      returns: pair,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: beats21,
+      realizedVol20: { FTLS: 0.02, BTAL: 0.2 },
+    });
+    const extremeShare = 0.2 / (0.02 + 0.2);
+    expect(extreme.sells.map((s) => s.symbol).sort()).toEqual(["BTAL", "FTLS"]);
+    expect(extreme.buys.find((b) => b.symbol === "FTLS")?.qty).toBe(
+      sizeRiskoffEtfShares(62, DEFAULT_SLEEVE_EQUITY_USD, book * extremeShare),
+    );
+    expect(extreme.buys[0].thesis).toMatch(/invvol 91\/9/);
+
+    const omitted = decideRiskoffEtf({
+      riskOn: false,
+      spyAbove200: true,
+      hygAbove200: false,
+      positions: [],
+      sleeve: defaultSleeves().riskoff,
+      returns: pair,
+      quotes: allEtfQuotes,
+      above200: etfAbove200(),
+      returns21: beats21,
+    });
+    expect(omitted.buys[0].thesis).toMatch(/top-2 FTLS\+BTAL 50\/50/);
+    expect(omitted.buys[0].qty).toBe(sizeRiskoffEtfShares(62, DEFAULT_SLEEVE_EQUITY_USD, half60));
+
+    const paper = paperBook();
+    const auto = await runAutopilot({
+      enabled: true,
+      getPositions: paper.getPositions,
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [],
+      featureRows: [],
+      scanReady: true,
+      riskOn: false,
+      riskChecks: { spyAbove200: true, hygAbove200: false },
+      riskoffEtfReturns: pair,
+      riskoffEtfReturns21: beats21,
+      riskoffEtfAbove200: etfAbove200(),
+      riskoffEtfQuotes: allEtfQuotes,
+      riskoffEtfRealizedVol20: vols,
+      place: paper.place,
+      close: paper.close,
+      log: () => {},
+    });
+    const overlayBuys = auto.bought.filter((b) => b.symbol === "FTLS" || b.symbol === "BTAL");
+    expect(overlayBuys.map((b) => b.symbol)).toEqual(["FTLS", "BTAL"]);
+    expect(overlayBuys[0].qty).toBe(sizeRiskoffEtfShares(62, DEFAULT_SLEEVE_EQUITY_USD, book * ftlsShare));
+    expect(overlayBuys[0].thesis).toMatch(/invvol 63\/37/);
   });
 });

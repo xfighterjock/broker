@@ -400,7 +400,11 @@ export const RISKOFF_ETF_COMMODITY_BETA = "PDBC" as const;
  * qualifier. Paper / MockBroker only.
  */
 export const RISKOFF_ETF_CTA_CONFIRM_DAYS = 21;
-/** While RISK OFF, split overlay notional 50/50 across this many qualifiers. */
+/**
+ * While RISK OFF, allocate the overlay across this many qualifiers.
+ * Equal weight, except HYG-only inverse-vol when both names are non-BIL
+ * and both 20-session realized vols are finite. Paper / MockBroker only.
+ */
 export const RISKOFF_ETF_TOP_N = 2;
 /**
  * Exact trading-day total-return lookback for the risk-off ETF overlay vs BIL.
@@ -408,6 +412,16 @@ export const RISKOFF_ETF_TOP_N = 2;
  * multi-month (not the 20-session UUP dollar veto on the global gate).
  */
 export const RISKOFF_ETF_LOOKBACK_DAYS = 63;
+/**
+ * Daily-return window for HYG-only inverse-vol overlay weights
+ * (RISKOFF_ETF_REALIZED_VOL_SESSIONS). Sample standard deviation of the last
+ * 20 simple returns (ddof=1), annualized by sqrt(252), from the same adjusted
+ * daily closes as the 63d return. Not the 20-session UUP dollar veto. A short
+ * series, a non-positive close, or a zero stdev is a missing vol: that
+ * decision stays equal-weight. Does not trip the missing-bars debounce.
+ * Paper / MockBroker only.
+ */
+export const RISKOFF_ETF_REALIZED_VOL_SESSIONS = 20;
 /**
  * Base overlay fraction of the $100k risk-off mock book (~$40k) while RISK
  * OFF and spyAbove200 === false (puts can come online). Puts keep the rest

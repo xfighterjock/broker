@@ -1356,6 +1356,7 @@ export function buildApp(deps: AppDeps): express.Express {
         riskoffEtfReturns: riskoffEtfOverlay?.returns ?? null,
         riskoffEtfReturns21: riskoffEtfOverlay?.returns21 ?? null,
         riskoffEtfAbove200: riskoffEtfOverlay?.above200 ?? null,
+        riskoffEtfRealizedVol20: riskoffEtfOverlay?.realizedVol20 ?? null,
         riskoffEtfQuotes,
         verticalStopCooldown: memory.verticalStopCooldown,
         now: new Date(),
