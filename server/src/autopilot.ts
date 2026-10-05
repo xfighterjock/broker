@@ -34,6 +34,7 @@ import {
   riskoffSleeveLossCapHit,
   type RiskoffEtfAbove200,
   type RiskoffEtfReturns,
+  type RiskoffEtfVols,
 } from "./riskoffEtf";
 import {
   decideRiskoffDuration,
@@ -908,6 +909,12 @@ export type AutopilotCtx = {
    * Own-200 qualifier filter: name not known above 200 is skipped; none → BIL.
    */
   riskoffEtfAbove200?: Partial<RiskoffEtfAbove200> | null;
+  /**
+   * Annualized 20-session realized vol from the same dailies. HYG-only
+   * top-2 weights use the inverse. Omit and that decision stays 50/50.
+   * Paper / MockBroker only. Not a live order input.
+   */
+  riskoffEtfRealizedVol20?: Partial<RiskoffEtfVols> | null;
   /** Delayed lasts used to size/rotate the risk-off ETF long. */
   riskoffEtfQuotes?: Array<{ symbol: string; last: number }>;
   /** Underlying -> ET ymd of last 50% debit stop. Same-day skip. */
@@ -1020,6 +1027,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
         quotes: ctx.riskoffEtfQuotes ?? [],
         above200: ctx.riskoffEtfAbove200 ?? null,
         returns21: ctx.riskoffEtfReturns21 ?? null,
+        realizedVol20: ctx.riskoffEtfRealizedVol20 ?? null,
         spyAbove200,
         hygAbove200,
         now: ctx.now,

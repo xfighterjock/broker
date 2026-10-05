@@ -274,7 +274,7 @@ export function OptionsPanel({
       <div className="body">
         <div className="hint">
           {putsOnly
-            ? "Massive Starter chain (DELAYED 15m). Paper put debit verticals on MockBroker (SPY/QQQ/IWM after SPY 200dma break; HYG/LQD/JNK when that credit name is below its own 200dma). The defensive ETF overlay (GLD/GDX/PDBC/UUP/TLT/IEF/FLOT/XLU/XLP/DBMF/KMLM/CLSE/USMV/QUAL/FTLS/BTAL vs BIL; top-2 50/50) is a separate sleeve position when RISK OFF. Never a live send."
+            ? "Massive Starter chain (DELAYED 15m). Paper put debit verticals on MockBroker (SPY/QQQ/IWM after SPY 200dma break; HYG/LQD/JNK when that credit name is below its own 200dma). The defensive ETF overlay (GLD/GDX/PDBC/UUP/TLT/IEF/FLOT/XLU/XLP/DBMF/KMLM/CLSE/USMV/QUAL/FTLS/BTAL vs BIL; top-2 50/50, or inverse-vol in HYG-only) is a separate sleeve position when RISK OFF. Never a live send."
             : HINT}
         </div>
         <div className="paper-form options-form">
@@ -410,12 +410,12 @@ export function OptionsPanel({
         {putsOnly && (
           <>
             <label>
-              <SymbolList symbols={RISKOFF_ETF_SYMBOLS} /> (top-2 50/50)
+              <SymbolList symbols={RISKOFF_ETF_SYMBOLS} /> (top-2 50/50, or inverse-vol in HYG-only)
             </label>
             <div className="hint">
               Autopilot holds the one or two names among GLD, GDX, PDBC, UUP, TLT, IEF, FLOT, XLU, XLP, DBMF, KMLM, CLSE, USMV, QUAL, FTLS, and BTAL that
               beat BIL on 63-session return and sit above their own 200dma while RISK OFF. Two qualifiers
-              split the overlay 50/50; one name outside CTA, gold, and CLSE/USMV/QUAL/FTLS takes the full sleeve; a lone CTA, a lone gold name, or a lone equity-factor confirm name is 50/50 with BIL; none sits in BIL. If #1 is CTA
+              split the overlay 50/50, except HYG-only RISK OFF weights two non-BIL names by inverse 20-session realized vol when both vols are finite; one name outside CTA, gold, and CLSE/USMV/QUAL/FTLS takes the full sleeve; a lone CTA, a lone gold name, or a lone equity-factor confirm name is 50/50 with BIL; none sits in BIL. If #1 is CTA
               (DBMF/KMLM), #2 is a non-CTA name other than PDBC when one clears (GDX, FLOT, CLSE, USMV, QUAL, FTLS, or BTAL can fill that slot); otherwise #2 is BIL. Never KMLM+DBMF. Never PDBC+DBMF or PDBC+KMLM. If #1 is PDBC, #2 is a non-CTA name when one clears; otherwise #2 is BIL. If #1 is gold (GLD/GDX), #2 is a non-gold name when one clears; otherwise #2 is BIL. Never GLD+GDX. If #1 is CLSE, USMV, QUAL, or FTLS, #2 is outside that set when one clears (BTAL, FLOT, UUP, or GLD can fill that slot); otherwise #2 is BIL. Never two of CLSE/USMV/QUAL/FTLS. Re-rank only at the NY cash close, and do not RS-rotate a name off until it has been held 5 trading sessions. GDX is equity-levered gold beta, FLOT is IG floating-rate credit, USMV is min-vol equity, QUAL is quality-factor equity, FTLS is long/short equity, and BTAL is market-neutral anti-beta; none of them is CTA, so a weak 21-session return does not skip them. Flattened on RISK ON. Modest size so puts still have
               room.
             </div>

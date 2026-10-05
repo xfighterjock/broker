@@ -10,6 +10,7 @@ import {
   RISKOFF_ETF_HYG_ONLY_21D_CONFIRM,
   RISKOFF_ETF_HYG_ONLY_INELIGIBLE,
   RISKOFF_ETF_LOOKBACK_DAYS,
+  RISKOFF_ETF_REALIZED_VOL_SESSIONS,
   RISKOFF_ETF_MIN_HOLD_SESSIONS,
   RISKOFF_ETF_MISSING_BARS_MAX_MISSES,
   RISKOFF_ETF_NOTIONAL_FRAC,
@@ -30,6 +31,9 @@ export type RiskoffEtfReturns = Record<RiskoffEtfSymbol, number | null>;
 /** Own-200 vs last close. Null = short/missing series (fail closed). BIL is unused. */
 export type RiskoffEtfAbove200 = Record<RiskoffEtfSymbol, boolean | null>;
 
+/** Annualized 20-session realized vol. Null = insufficient bars or zero vol. Not a missing-bars miss. */
+export type RiskoffEtfVols = Record<RiskoffEtfSymbol, number | null>;
+
 export type RiskoffEtfOverlaySnapshot = {
   /** 63d total returns. Incomplete universe → missing-bars debounce. */
   returns: RiskoffEtfReturns;
@@ -41,6 +45,12 @@ export type RiskoffEtfOverlaySnapshot = {
    */
   returns21: RiskoffEtfReturns;
   above200: RiskoffEtfAbove200;
+  /**
+   * RISKOFF_ETF_REALIZED_VOL_SESSIONS realized vol from the same dailies.
+   * Used only to weight a HYG-only top-2. A null name falls that decision
+   * back to equal weight. It does not debounce the overlay.
+   */
+  realizedVol20: RiskoffEtfVols;
 };
 
 export type RiskoffEtfBuy = {
@@ -303,6 +313,120 @@ export function riskoffEtfSleeveFrac(
   return totalFrac;
 }
 
+export function emptyRiskoffEtfVols(): RiskoffEtfVols {
+  const out = {} as RiskoffEtfVols;
+  for (const s of RISKOFF_ETF_SYMBOLS) out[s] = null;
+  return out;
+}
+
+/**
+ * Annualized sample standard deviation of the last `sessions` daily simple
+ * returns. Needs `sessions + 1` positive closes. Pandas `rolling(20).std()`
+ * (ddof=1) times sqrt(252). A short series, a non-positive close, or a zero
+ * stdev returns null so inverse-vol falls back to equal weight.
+ */
+export function realizedVolFromCloses(
+  closes: number[],
+  sessions = RISKOFF_ETF_REALIZED_VOL_SESSIONS,
+): number | null {
+  if (sessions < 2 || closes.length <= sessions) return null;
+  const rets: number[] = [];
+  for (let i = closes.length - sessions; i < closes.length; i++) {
+    const prev = closes[i - 1];
+    const cur = closes[i];
+    if (!(prev > 0) || !(cur > 0) || !Number.isFinite(prev) || !Number.isFinite(cur)) return null;
+    const r = cur / prev - 1;
+    if (!Number.isFinite(r)) return null;
+    rets.push(r);
+  }
+  const mean = rets.reduce((sum, r) => sum + r, 0) / rets.length;
+  let ss = 0;
+  for (const r of rets) {
+    const d = r - mean;
+    ss += d * d;
+  }
+  const std = Math.sqrt(ss / (rets.length - 1));
+  if (!Number.isFinite(std) || !(std > 0)) return null;
+  return std * Math.sqrt(252);
+}
+
+export function riskoffEtfVolsFromBars(
+  bars: Partial<Record<RiskoffEtfSymbol, DailyBar[] | null | undefined>>,
+): RiskoffEtfVols {
+  const out = emptyRiskoffEtfVols();
+  for (const s of RISKOFF_ETF_SYMBOLS) {
+    out[s] = realizedVolFromCloses(closesFromBars(bars[s]));
+  }
+  return out;
+}
+
+/**
+ * Inverse-vol shares of 1. Share_i = (1/vol_i) / sum(1/vol). Null when any
+ * vol is missing, non-finite, or not strictly positive — the caller keeps
+ * equal weight for that decision. Annualization cancels.
+ */
+export function riskoffEtfInverseVolShares(
+  vols: ReadonlyArray<number | null | undefined>,
+): number[] | null {
+  if (vols.length < 2) return null;
+  const inv: number[] = [];
+  let sum = 0;
+  for (const v of vols) {
+    if (typeof v !== "number" || !Number.isFinite(v) || !(v > 0)) return null;
+    const w = 1 / v;
+    inv.push(w);
+    sum += w;
+  }
+  if (!(sum > 0) || !Number.isFinite(sum)) return null;
+  return inv.map((w) => w / sum);
+}
+
+/** Integer percents of the overlay that sum to 100. Nearest integer, then the largest rounding error absorbs the drift. */
+export function riskoffEtfInvvolSplitPercents(bookFracs: readonly number[]): number[] {
+  const total = bookFracs.reduce((sum, f) => sum + f, 0);
+  if (!(total > 0) || !Number.isFinite(total)) return bookFracs.map(() => 0);
+  const raw = bookFracs.map((f) => (100 * f) / total);
+  const rounded = raw.map((x) => Math.round(x));
+  const drift = 100 - rounded.reduce((sum, n) => sum + n, 0);
+  if (drift !== 0 && rounded.length > 0) {
+    let idx = 0;
+    let best = drift > 0 ? -Infinity : Infinity;
+    for (let i = 0; i < raw.length; i++) {
+      const err = raw[i] - rounded[i];
+      if (drift > 0 ? err > best : err < best) {
+        best = err;
+        idx = i;
+      }
+    }
+    rounded[idx] += drift;
+  }
+  return rounded;
+}
+
+/**
+ * Per-name fraction of the $100k book. Sums to `totalFrac`.
+ * Equal split unless the book is HYG-only, every selected name is a non-BIL
+ * risk asset, and every selected name has a positive realized vol. One
+ * qualifier, a BIL pair, SPY below 200, and a missing vol stay on
+ * riskoffEtfSleeveFrac.
+ */
+export function riskoffEtfSleeveFracs(
+  names: readonly RiskoffEtfSymbol[],
+  totalFrac: number,
+  opts?: {
+    hygOnly?: boolean;
+    vols?: Partial<Record<string, number | null>> | null;
+  },
+): number[] {
+  const equal = names.map(() => riskoffEtfSleeveFrac(names.length, totalFrac));
+  if (opts?.hygOnly !== true) return equal;
+  if (names.length < RISKOFF_ETF_TOP_N) return equal;
+  if (names.some((n) => n === RISKOFF_ETF_CASH_SYMBOL)) return equal;
+  const shares = riskoffEtfInverseVolShares(names.map((n) => opts.vols?.[n]));
+  if (!shares) return equal;
+  return shares.map((share) => totalFrac * share);
+}
+
 /** True when a held overlay lot is materially off the current 40/60 target. */
 export function overlayLotNeedsResize(heldQty: number, targetQty: number, last: number): boolean {
   if (!(heldQty >= 0) || !(targetQty >= 0)) return false;
@@ -334,11 +458,15 @@ export function riskoffEtfReturnsReady(returns: RiskoffEtfReturns): boolean {
  * 200); omit it to test RS/hysteresis in isolation. Names that fail 200 are
  * skipped; if none qualify → BIL. BIL itself is never 200-filtered.
  * While RISK OFF, pickRiskoffEtfSleeve then takes the top-2 qualifiers at
- * 50/50 overlay notional (one name outside CTA, gold, and
+ * equal overlay notional (one name outside CTA, gold, and
  * RISKOFF_ETF_HYG_ONLY_21D_CONFIRM at full size; a lone CTA, a lone gold
  * name, or a lone equity-factor confirm name is 50/50 with BIL; none → BIL). Overlay
  * notional is 60% while spyAbove200 === true (puts gated) and 40% when SPY
- * is below 200. When #1 is in RISKOFF_ETF_CTA_FAMILY, #2 is the highest
+ * is below 200. In HYG-only RISK OFF only, decideRiskoffEtf then weights those
+ * two selected non-BIL names by inverse RISKOFF_ETF_REALIZED_VOL_SESSIONS
+ * realized vol (weights sum to that 60%). A missing vol, one qualifier, a
+ * BIL pair, and SPY below 200 stay equal. Selection gates are unchanged.
+ * When #1 is in RISKOFF_ETF_CTA_FAMILY, #2 is the highest
  * non-CTA qualifier other than PDBC (a gold name may fill that slot). If
  * none clears beat-BIL and own-200, #2 is BIL at 50/50 — never two CTAs
  * (no KMLM+DBMF) and never PDBC beside that CTA. A lone CTA is still
@@ -980,21 +1108,61 @@ function breakDualFamily(
   return [keep, rest[0] ?? RISKOFF_ETF_CASH_SYMBOL];
 }
 
+type OverlayAllocation = { fracs: number[]; split: string };
+
+/**
+ * Book fractions for the selected names. Inverse-vol only in HYG-only when
+ * every name is non-BIL and every vol is usable. If that split would size a
+ * quoted name to 0 shares, fall back to equal weight for the decision.
+ */
+function overlayAllocation(
+  names: RiskoffEtfSymbol[],
+  totalFrac: number,
+  hygOnly: boolean,
+  vols: Partial<Record<string, number | null>> | null | undefined,
+  quotes: Map<string, number>,
+): OverlayAllocation {
+  const equalFracs = names.map(() => riskoffEtfSleeveFrac(names.length, totalFrac));
+  const equal: OverlayAllocation = { fracs: equalFracs, split: "50/50" };
+  if (names.length < RISKOFF_ETF_TOP_N) return equal;
+  const inv = riskoffEtfSleeveFracs(names, totalFrac, { hygOnly, vols });
+  const usedInv = inv.some((f, i) => Math.abs(f - equalFracs[i]) > 1e-12);
+  if (!usedInv) return equal;
+  for (let i = 0; i < names.length; i++) {
+    const last = quotes.get(names[i]);
+    if (last === undefined) continue;
+    if (sizeRiskoffEtfShares(last, DEFAULT_SLEEVE_EQUITY_USD, inv[i]) < 1) return equal;
+  }
+  const pcts = riskoffEtfInvvolSplitPercents(inv);
+  return { fracs: inv, split: `invvol ${pcts.join("/")}` };
+}
+
 function rebuyPriorOverlay(
   targets: RiskoffEtfSymbol[],
   quotes: Map<string, number>,
   spyAbove200?: boolean | null,
+  weighting?: {
+    hygOnly: boolean;
+    vols?: Partial<Record<string, number | null>> | null;
+  },
 ): RiskoffEtfDecision {
   const names = targets.filter((s) => isRiskoffEtfSymbol(s));
   const totalFrac = riskoffEtfNotionalFrac(spyAbove200);
-  const frac = riskoffEtfSleeveFrac(names.length, totalFrac);
+  const alloc = overlayAllocation(
+    names,
+    totalFrac,
+    weighting?.hygOnly === true,
+    weighting?.vols,
+    quotes,
+  );
   const buys: RiskoffEtfBuy[] = [];
-  for (const name of names) {
+  for (let i = 0; i < names.length; i++) {
+    const name = names[i];
     const last = quotes.get(name);
     if (last === undefined) continue;
-    const qty = sizeRiskoffEtfShares(last, DEFAULT_SLEEVE_EQUITY_USD, frac);
+    const qty = sizeRiskoffEtfShares(last, DEFAULT_SLEEVE_EQUITY_USD, alloc.fracs[i]);
     if (qty < 1) continue;
-    const thesis = overlayThesis(names, null);
+    const thesis = overlayThesis(names, null, alloc.split);
     buys.push({
       sleeveId: "riskoff",
       symbol: name,
@@ -1031,6 +1199,8 @@ function decideIntradayOverlay(input: {
   open: Position[];
   quotes: Map<string, number>;
   spyAbove200?: boolean | null;
+  hygOnly?: boolean;
+  realizedVol20?: Partial<Record<string, number | null>> | null;
 }): RiskoffEtfDecision {
   const ymd = riskoffEtfNyYmd(input.now);
   if (input.open.length > 0) {
@@ -1043,7 +1213,10 @@ function decideIntradayOverlay(input: {
     return holdLastSleeve(input.open, reason);
   }
   if (pendingPriorRebuy && priorOverlayTargets.length > 0) {
-    return rebuyPriorOverlay(priorOverlayTargets, input.quotes, input.spyAbove200);
+    return rebuyPriorOverlay(priorOverlayTargets, input.quotes, input.spyAbove200, {
+      hygOnly: input.hygOnly === true,
+      vols: input.realizedVol20,
+    });
   }
   return {
     winner: null,
@@ -1058,10 +1231,11 @@ function decideIntradayOverlay(input: {
 function overlayThesis(
   names: RiskoffEtfSymbol[],
   trendPark: string | null,
+  split = "50/50",
 ): string {
   if (trendPark) return trendPark;
   if (names.length >= 2) {
-    return `auto risk-off ETF RS ${RISKOFF_ETF_LOOKBACK_DAYS}d top-2 ${names.join("+")} 50/50`;
+    return `auto risk-off ETF RS ${RISKOFF_ETF_LOOKBACK_DAYS}d top-2 ${names.join("+")} ${split}`;
   }
   return `auto risk-off ETF RS ${RISKOFF_ETF_LOOKBACK_DAYS}d winner ${names[0]}`;
 }
@@ -1107,7 +1281,9 @@ export function decideRiskoffEtf(input: {
    * Same spyAbove200 as the put gate (riskoffEquityPutsAllowed). True → 60%
    * overlay (puts gated). False/missing → 40%. Does not change RISK ON flatten.
    * With hygAbove200 === false and risk off, also turns on the gold 21d gate,
-   * the equity-factor 21d gate, and the TLT/IEF/XLU/PDBC/KMLM/GDX/DBMF/XLP RS drop.
+   * the equity-factor 21d gate, the TLT/IEF/XLU/PDBC/KMLM/GDX/DBMF/XLP RS drop,
+   * and inverse-vol weights on a two-name non-BIL sleeve. SPY below 200 keeps
+   * equal weight.
    * KMLM stays in the CTA family. GDX stays in the gold family. GLD is not
    * in that drop. DBMF is in that drop and stays in the CTA family.
    * XLP is in that drop and is not 21d-confirmed. When SPY is below 200
@@ -1143,6 +1319,14 @@ export function decideRiskoffEtf(input: {
    * A held name with no stamp is treated as entered on this rebalance.
    */
   entrySessions?: Partial<Record<string, string>> | null;
+  /**
+   * Annualized 20-session realized vol from the same dailies as `returns`.
+   * HYG-only top-2 (both names non-BIL) is weighted by the inverse. Omit,
+   * null, or a missing/non-positive vol on a selected name keeps equal
+   * weight for that decision. Not a missing-bars miss. SPY below 200 ignores
+   * this map. Paper / MockBroker only.
+   */
+  realizedVol20?: Partial<Record<RiskoffEtfSymbol, number | null>> | null;
   /**
    * Blotter sleeve book (sleeveBooks.riskoff). dailyPnlUsd or totalPnlUsd
    * at or below −lossCapUsd flattens the overlay the same way realized does.
@@ -1185,6 +1369,8 @@ export function decideRiskoffEtf(input: {
       open,
       quotes,
       spyAbove200: input.spyAbove200,
+      hygOnly,
+      realizedVol20: input.realizedVol20,
     });
   }
 
@@ -1235,7 +1421,7 @@ export function decideRiskoffEtf(input: {
   let winners = tradable.slice(0, RISKOFF_ETF_TOP_N);
   if (protectedNames.length) winners = retainProtectedWinners(winners, protectedNames);
   const winner = winners[0];
-  const frac = riskoffEtfSleeveFrac(winners.length, totalFrac);
+  const alloc = overlayAllocation(winners, totalFrac, hygOnly, input.realizedVol20, quotes);
   const want = new Set(winners.map((s) => s.toUpperCase()));
   const extras = open.filter((p) => !want.has(p.symbol.toUpperCase()));
   const label = winners.join("+");
@@ -1250,10 +1436,11 @@ export function decideRiskoffEtf(input: {
   const heldBy = new Map(heldWanted.map((p) => [p.symbol.toUpperCase(), p]));
   const toBuy: RiskoffEtfSymbol[] = [];
   let resized = false;
-  for (const name of winners) {
+  for (let i = 0; i < winners.length; i++) {
+    const name = winners[i];
     const last = quotes.get(name);
     if (last === undefined) continue;
-    const targetQty = sizeRiskoffEtfShares(last, DEFAULT_SLEEVE_EQUITY_USD, frac);
+    const targetQty = sizeRiskoffEtfShares(last, DEFAULT_SLEEVE_EQUITY_USD, alloc.fracs[i]);
     if (targetQty < 1) continue;
     const held = heldBy.get(name);
     if (!held) {
@@ -1286,9 +1473,10 @@ export function decideRiskoffEtf(input: {
   for (const name of toBuy) {
     const last = quotes.get(name);
     if (last === undefined) continue;
-    const qty = sizeRiskoffEtfShares(last, DEFAULT_SLEEVE_EQUITY_USD, frac);
+    const idx = winners.indexOf(name);
+    const qty = sizeRiskoffEtfShares(last, DEFAULT_SLEEVE_EQUITY_USD, alloc.fracs[idx]);
     if (qty < 1) continue;
-    const thesis = overlayThesis(winners, trendPark);
+    const thesis = overlayThesis(winners, trendPark, alloc.split);
     buys.push({
       sleeveId: "riskoff",
       symbol: name,
@@ -1329,7 +1517,7 @@ async function fetchRiskoffEtfBars(): Promise<Partial<
   return bars;
 }
 
-/** Same Massive dailies for 63d returns, the shared 21d beat-BIL window, and each name's 200dma. One fetch. */
+/** Same Massive dailies for 63d returns, the shared 21d beat-BIL window, each name's 200dma, and 20-session realized vol. One fetch. */
 export async function fetchRiskoffEtfOverlay(): Promise<RiskoffEtfOverlaySnapshot | null> {
   const bars = await fetchRiskoffEtfBars();
   if (!bars) return null;
@@ -1337,6 +1525,7 @@ export async function fetchRiskoffEtfOverlay(): Promise<RiskoffEtfOverlaySnapsho
     returns: riskoffEtfReturnsFromBars(bars),
     returns21: riskoffEtfReturnsFromBars(bars, RISKOFF_ETF_CTA_CONFIRM_DAYS),
     above200: riskoffEtfAbove200FromBars(bars),
+    realizedVol20: riskoffEtfVolsFromBars(bars),
   };
 }
 
