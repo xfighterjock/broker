@@ -190,7 +190,7 @@ describe("gated TLT/IEF duration", () => {
     });
     expect(decided.buy).toBeNull();
 
-    const book = paperBook([etfPos("TLT", 200, 90, true), etfPos("GLD", 100, 180)]);
+    const book = paperBook([etfPos("TLT", 200, 90, true), etfPos("FTLS", 100, 62)]);
     const result = await runAutopilot({
       enabled: true,
       getPositions: book.getPositions,
@@ -200,8 +200,8 @@ describe("gated TLT/IEF duration", () => {
       scanReady: true,
       riskOn: false,
       riskChecks: { spyAbove200: true, hygAbove200: false, dollarVeto: false },
-      riskoffEtfReturns: gldWins,
-      riskoffEtfReturns21: etfRs({ GLD: 0.05 }),
+      riskoffEtfReturns: etfRs({ FTLS: 0.19 }),
+      riskoffEtfReturns21: etfRs({ FTLS: 0.05 }),
       riskoffEtfAbove200: etfAbove200(),
       riskoffEtfQuotes: allEtfQuotes,
       place: book.place,
@@ -209,14 +209,14 @@ describe("gated TLT/IEF duration", () => {
       log: () => {},
     });
     expect(result.sold.some((s) => s.symbol === "TLT" && /gated duration/i.test(s.reason))).toBe(true);
-    expect(result.sold.find((s) => s.symbol === "GLD")?.reason ?? "").not.toMatch(/gated duration/i);
+    expect(result.sold.find((s) => s.symbol === "FTLS")?.reason ?? "").not.toMatch(/gated duration/i);
     expect(book.getPositions().filter((p) => p.gatedDuration)).toEqual([]);
-    expect(book.getPositions().some((p) => p.symbol === "GLD" && !p.gatedDuration)).toBe(true);
+    expect(book.getPositions().some((p) => p.symbol === "FTLS" && !p.gatedDuration)).toBe(true);
     expect(result.bought.filter((b) => b.gatedDuration)).toEqual([]);
-    const overlayGld = book.getPositions().find((p) => p.symbol === "GLD" && !p.gatedDuration);
-    expect(overlayGld?.qty).toBe(
+    const overlayFtls = book.getPositions().find((p) => p.symbol === "FTLS" && !p.gatedDuration);
+    expect(overlayFtls?.qty).toBe(
       sizeRiskoffEtfShares(
-        180,
+        62,
         DEFAULT_SLEEVE_EQUITY_USD,
         riskoffEtfSleeveFrac(2, RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED),
       ),
@@ -357,7 +357,7 @@ describe("gated TLT/IEF duration", () => {
 
   it("HYG-only RS drop of TLT/IEF does not change the gated duration book", () => {
     expect(RISKOFF_DURATION_SYMBOLS).toEqual(["TLT", "IEF"]);
-    expect(RISKOFF_ETF_HYG_ONLY_INELIGIBLE).toEqual(["TLT", "IEF", "XLU", "PDBC", "KMLM", "GDX", "DBMF", "XLP"]);
+    expect(RISKOFF_ETF_HYG_ONLY_INELIGIBLE).toEqual(["TLT", "IEF", "XLU", "PDBC", "KMLM", "GDX", "DBMF", "XLP", "GLD"]);
 
     const spyBelow = decideRiskoffDuration({
       riskOn: false,

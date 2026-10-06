@@ -189,15 +189,16 @@ export type RiskoffQuoteSymbol = (typeof RISKOFF_QUOTE_STRIP)[number];
  * after FTLS and before BIL, so CLSE/USMV/QUAL/FTLS still win an exact tie.
  * Array order is the tie-break.
  * BIL is the cash/T-bill benchmark, last. GDX, PDBC, FLOT, CLSE, USMV, QUAL,
- * FTLS, and BTAL are not CTA. GLD takes the 21d beat-BIL window only in
- * HYG-only RISK OFF and stays eligible when that beat passes. GDX remains in
- * RISKOFF_ETF_GOLD_FAMILY, but in HYG-only it is RS-ineligible even if that
- * 21d window beats BIL. CLSE, USMV, QUAL, and FTLS
+ * FTLS, and BTAL are not CTA. GLD and GDX remain in
+ * RISKOFF_ETF_GOLD_FAMILY. In HYG-only RISK OFF both are RS-ineligible
+ * (RISKOFF_ETF_HYG_ONLY_INELIGIBLE) even if the gold 21d beat-BIL window
+ * passes. When SPY is below 200 both stay eligible under ordinary 63d and
+ * own-200. CLSE, USMV, QUAL, and FTLS
  * (RISKOFF_ETF_HYG_ONLY_21D_CONFIRM) take that same window only in HYG-only
  * RISK OFF — not CTA and not gold. That set is also the never-dual
  * equity-factor family: when RS #1 is in it, #2 is outside the set or BIL.
  * FLOT and BTAL are not gold
- * and have no 21d confirmation. TLT, IEF, XLU, PDBC, KMLM, GDX, DBMF, and XLP
+ * and have no 21d confirmation. TLT, IEF, XLU, PDBC, KMLM, GDX, DBMF, XLP, and GLD
  * (RISKOFF_ETF_HYG_ONLY_INELIGIBLE) are not RS qualifiers in HYG-only RISK OFF
  * even if 63d beats BIL and own-200 is true; when SPY is below 200 they stay
  * on the ordinary gates. The PDBC drop blocks a lone-PDBC full overlay and a
@@ -207,9 +208,11 @@ export type RiskoffQuoteSymbol = (typeof RISKOFF_QUOTE_STRIP)[number];
  * never-dual-CTA and that 21d confirm when it is eligible. GDX
  * (equity-levered gold / miners) is HYG-only RS-ineligible the same way:
  * 63d beat-BIL, own-200, and the HYG-only gold 21d beat-BIL do not qualify
- * GDX. GLD stays eligible with that existing HYG-only gold 21d beat-BIL.
- * GDX remains in RISKOFF_ETF_GOLD_FAMILY for never-dual-gold and for
- * SPY-under-200 eligibility (gold 21d is off there). DBMF is HYG-only
+ * GDX. GLD (bullion) is HYG-only RS-ineligible the same way: 63d beat-BIL,
+ * own-200, and the HYG-only gold 21d beat-BIL do not qualify GLD. GLD and
+ * GDX remain in RISKOFF_ETF_GOLD_FAMILY for never-dual-gold and for
+ * SPY-under-200 eligibility (gold 21d is off there; ordinary gates are 63d
+ * beat-BIL, own-200, and never-dual-gold). DBMF is HYG-only
  * RS-ineligible the same way as KMLM: 63d beat-BIL, own-200, and the
  * always-on CTA 21d beat-BIL confirm do not qualify DBMF in that regime.
  * DBMF stays in RISKOFF_ETF_CTA_FAMILY for never-dual-CTA and that 21d
@@ -273,12 +276,11 @@ export type RiskoffEtfCtaSymbol = (typeof RISKOFF_ETF_CTA_FAMILY)[number];
  * (VanEck Gold Miners, equity-levered gold beta) are the same diversifier
  * sleeve. GDX is not CTA. GDX remains in this set for never-dual-gold and
  * for SPY-under-200 eligibility. In HYG-only RISK OFF (SPY above 200 and HYG
- * below 200) GLD must also beat BIL on RISKOFF_ETF_CTA_CONFIRM_DAYS; when
- * SPY is below 200 that 21d check is off. GDX (equity-levered gold / miners)
- * is not an RS qualifier in that HYG-only regime
+ * below 200) GLD and GDX are not RS qualifiers
  * (RISKOFF_ETF_HYG_ONLY_INELIGIBLE) even if 63d beats BIL, own-200 is true,
- * and the HYG-only gold 21d beat-BIL passes. GLD is not in that drop and
- * stays eligible when the 21d beat-BIL passes. When RS #1 is in this set, #2
+ * and the HYG-only gold 21d beat-BIL passes. Both stay in this set. When
+ * SPY is below 200 that 21d check is off and both stay eligible under
+ * ordinary 63d beat-BIL, own-200, and never-dual-gold. When RS #1 is in this set, #2
  * is the highest-ranked qualifier outside the family. If no non-gold name
  * clears beat-BIL and own-200, #2 is BIL at 50/50 — never GLD+GDX. A non-gold
  * #1 may still take one gold name as #2 when that name is eligible. A CTA #1
@@ -312,7 +314,8 @@ export type RiskoffEtfGoldSymbol = (typeof RISKOFF_ETF_GOLD_FAMILY)[number];
  * and QUAL is not added to that ineligible set. KMLM is dropped from
  * HYG-only RS the same way and stays in RISKOFF_ETF_CTA_FAMILY. GDX is
  * dropped from HYG-only RS the same way and stays in
- * RISKOFF_ETF_GOLD_FAMILY. GLD is not in that drop. DBMF is
+ * RISKOFF_ETF_GOLD_FAMILY. GLD is in that drop and stays in
+ * RISKOFF_ETF_GOLD_FAMILY. DBMF is
  * dropped from HYG-only RS the same way as KMLM and stays in
  * RISKOFF_ETF_CTA_FAMILY. Paper / MockBroker only.
  */
@@ -324,7 +327,7 @@ export type RiskoffEtfHygOnly21dSymbol = (typeof RISKOFF_ETF_HYG_ONLY_21D_CONFIR
  * even when 63d beats BIL and they are above their own 200dma. TLT and IEF
  * are duration; XLU is utilities; XLP is consumer staples; PDBC is broad
  * commodity beta; KMLM and DBMF are the CTA names; GDX is equity-levered
- * gold / miners. XLP is not CTA, not gold, and not on
+ * gold / miners; GLD is bullion. XLP is not CTA, not gold, and not on
  * RISKOFF_ETF_HYG_ONLY_21D_CONFIRM — the full HYG-only drop is the gate.
  * The PDBC drop blocks the qualifier-conditional trap: a lone PDBC taking the full
  * overlay, and a PDBC+FTLS HYG-only sleeve. The KMLM drop is the same kind
@@ -335,8 +338,11 @@ export type RiskoffEtfHygOnly21dSymbol = (typeof RISKOFF_ETF_HYG_ONLY_21D_CONFIR
  * kind of trap: 63d beat-BIL, own-200, and the HYG-only gold 21d beat-BIL
  * still do not qualify GDX in HYG-only. GDX remains in
  * RISKOFF_ETF_GOLD_FAMILY for never-dual-gold and for SPY-under-200
- * eligibility (gold 21d is off there). GLD is not a member and stays eligible
- * with that existing HYG-only gold 21d beat-BIL. The DBMF drop is the same
+ * eligibility (gold 21d is off there). The GLD drop is the same kind of
+ * trap: 63d beat-BIL, own-200, and the HYG-only gold 21d beat-BIL still do
+ * not qualify GLD in HYG-only. GLD remains in RISKOFF_ETF_GOLD_FAMILY for
+ * never-dual-gold and for SPY-under-200 eligibility (ordinary 63d beat-BIL
+ * and own-200; gold 21d is off there). The DBMF drop is the same
  * kind of trap as KMLM: 63d beat-BIL, own-200, and the always-on CTA 21d
  * beat-BIL confirm still do not qualify DBMF in HYG-only. DBMF remains in
  * RISKOFF_ETF_CTA_FAMILY for never-dual-CTA and that 21d confirm when it is
@@ -346,13 +352,14 @@ export type RiskoffEtfHygOnly21dSymbol = (typeof RISKOFF_ETF_HYG_ONLY_21D_CONFIR
  * KMLM and DBMF keep the ordinary CTA gates (63d beat-BIL, own-200, 21d confirm,
  * never-dual-CTA, never-pair-PDBC). GDX keeps the ordinary gold gates (63d beat-BIL, own-200,
  * never-dual-gold; gold 21d is hygOnly-gated and off when SPY is below 200).
+ * GLD keeps those same ordinary gold gates when SPY is below 200.
  * Does not change RISKOFF_DURATION_SYMBOLS or the gated duration book.
  * XLP stays in RISKOFF_ETF_SYMBOLS, the candidates, the quote strip, and
  * the defensive tie-break after XLU. When SPY is below 200 (or HYG-only
  * is not active) XLP stays eligible under ordinary beat-BIL and own-200.
  * Paper / MockBroker only.
  */
-export const RISKOFF_ETF_HYG_ONLY_INELIGIBLE = ["TLT", "IEF", "XLU", "PDBC", "KMLM", "GDX", "DBMF", "XLP"] as const;
+export const RISKOFF_ETF_HYG_ONLY_INELIGIBLE = ["TLT", "IEF", "XLU", "PDBC", "KMLM", "GDX", "DBMF", "XLP", "GLD"] as const;
 export type RiskoffEtfHygOnlyIneligibleSymbol = (typeof RISKOFF_ETF_HYG_ONLY_INELIGIBLE)[number];
 /**
  * Broad commodity beta on the 63d RS overlay, mutually exclusive with
@@ -364,7 +371,8 @@ export type RiskoffEtfHygOnlyIneligibleSymbol = (typeof RISKOFF_ETF_HYG_ONLY_INE
  * (RISKOFF_ETF_HYG_ONLY_INELIGIBLE), so a lone-PDBC full overlay and a
  * PDBC+FTLS sleeve do not open. KMLM is also in that ineligible set and
  * stays in RISKOFF_ETF_CTA_FAMILY. GDX is also in that set and stays in
- * RISKOFF_ETF_GOLD_FAMILY; GLD is not in the drop. DBMF is in that set and
+ * RISKOFF_ETF_GOLD_FAMILY. GLD is in that set and stays in
+ * RISKOFF_ETF_GOLD_FAMILY. DBMF is in that set and
  * stays in RISKOFF_ETF_CTA_FAMILY. XLP is in that ineligible set and is not
  * 21d-confirmed; when SPY is below 200 it stays eligible under ordinary
  * beat-BIL and own-200. Where PDBC remains eligible (SPY below 200,
@@ -394,9 +402,10 @@ export const RISKOFF_ETF_COMMODITY_BETA = "PDBC" as const;
  * 21d confirm when it is eligible, and is also in that ineligible set: the
  * 21d confirm does not keep KMLM as a HYG-only RS qualifier. GDX stays in
  * RISKOFF_ETF_GOLD_FAMILY. The HYG-only gold 21d beat-BIL does not keep GDX
- * as a HYG-only RS qualifier; GLD is not in that set and stays eligible when
- * that beat passes. When SPY is below 200 the gold 21d check is off and GDX
- * stays eligible under ordinary 63d and own-200. DBMF stays on this
+ * or GLD as a HYG-only RS qualifier; both are in that set and stay in the
+ * gold family. When SPY is below 200 the gold 21d check is off and both
+ * stay eligible under ordinary 63d and own-200 (never-dual-gold still
+ * applies). DBMF stays on this
  * always-on CTA 21d confirm when it is eligible, and is also in that
  * ineligible set: the 21d confirm does not keep DBMF as a HYG-only RS
  * qualifier. Paper / MockBroker only.
