@@ -144,10 +144,19 @@ describe("GET /api/public/risk", () => {
       expect(body.riskChecks).not.toHaveProperty("jnkAbove200");
       expect(body).not.toHaveProperty("creditLegAbove200");
       expect(typeof body.riskOn).toBe("boolean");
-      expect(typeof body.riskChecks.spyAbove200).toBe("boolean");
-      expect(typeof body.riskChecks.acwiAbove200).toBe("boolean");
-      expect(typeof body.riskChecks.hygAbove200).toBe("boolean");
+      // true/false only when bars computed the check. null = missing series, not "below".
+      for (const key of ["spyAbove200", "acwiAbove200", "hygAbove200"] as const) {
+        const value = body.riskChecks[key];
+        expect(value === null || typeof value === "boolean").toBe(true);
+      }
       expect(typeof body.riskChecks.dollarVeto).toBe("boolean");
+      if (
+        body.riskChecks.spyAbove200 === null &&
+        body.riskChecks.acwiAbove200 === null &&
+        body.riskChecks.hygAbove200 === null
+      ) {
+        expect(body.riskOn).toBe(false);
+      }
       expect(
         body.riskChecks.uup20dPct === null || typeof body.riskChecks.uup20dPct === "number",
       ).toBe(true);

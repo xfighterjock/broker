@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { featuresFromBars, type ScanFeatures } from "../server/src/scan";
 import {
+  RISK_ABOVE200_STALE_MAX_MISSES,
   RISK_UUP_VETO_FRAC,
   above200FromBars,
+  applyAbove200Staleness,
   resetRiskCache,
   riskFromFeatures,
   riskOffFallback,
+  riskTooltip,
   uup20dReturn,
 } from "../server/src/risk";
 import { decideBuys, decideCallVerticalIntents, runAutopilot } from "../server/src/autopilot";
@@ -76,7 +79,9 @@ describe("riskFromFeatures", () => {
       uup20dPct: 0,
     });
     expect(off.riskOn).toBe(false);
-    expect(off.checks.acwiAbove200).toBe(false);
+    expect(off.checks.acwiAbove200).toBeNull();
+    expect(off.checks.spyAbove200).toBe(true);
+    expect(off.checks.hygAbove200).toBe(true);
   });
 
   it("LQD/JNK own-200 stay off the public checks object and fail closed when bars are missing", () => {
@@ -134,7 +139,74 @@ describe("riskFromFeatures", () => {
     });
     expect(missing.riskOn).toBe(false);
     expect(missing.checks.dollarVeto).toBe(true);
+    expect(missing.checks.spyAbove200).toBe(true);
     expect(riskOffFallback().riskOn).toBe(false);
+    expect(riskOffFallback().checks.spyAbove200).toBeNull();
+    expect(riskOffFallback().checks.acwiAbove200).toBeNull();
+    expect(riskOffFallback().checks.hygAbove200).toBeNull();
+  });
+
+  it("tooltip says 200dma missing, not below, when the series was not computed", () => {
+    const tip = riskTooltip(riskOffFallback());
+    expect(tip).toMatch(/SPY 200dma missing/);
+    expect(tip).toMatch(/ACWI 200dma missing/);
+    expect(tip).toMatch(/HYG 200dma missing/);
+    expect(tip).not.toMatch(/below 200dma/);
+    expect(tip).toMatch(/RISK OFF|risk-off|UUP 20d missing/i);
+    const partial = riskFromFeatures({
+      spy: null,
+      acwi: feat(true),
+      hyg: feat(false),
+      uup20dPct: 0.01,
+    });
+    expect(partial.riskOn).toBe(false);
+    expect(partial.checks.spyAbove200).toBeNull();
+    expect(partial.checks.hygAbove200).toBe(false);
+    const line = riskTooltip(partial);
+    expect(line).toMatch(/SPY 200dma missing/);
+    expect(line).toMatch(/HYG below 200dma/);
+    expect(line).not.toMatch(/SPY below 200dma/);
+  });
+});
+
+describe("above200 staleness window", () => {
+  it("repeats the last computed boolean for two misses, then publishes null", () => {
+    expect(RISK_ABOVE200_STALE_MAX_MISSES).toBe(3);
+    const good = riskFromFeatures({
+      spy: feat(true),
+      acwi: feat(true),
+      hyg: feat(false),
+      uup20dPct: 0.01,
+    });
+    expect(applyAbove200Staleness(good).checks.spyAbove200).toBe(true);
+
+    const missed = riskFromFeatures({
+      spy: null,
+      acwi: feat(true),
+      hyg: feat(false),
+      uup20dPct: 0.01,
+    });
+    expect(applyAbove200Staleness(missed).checks.spyAbove200).toBe(true);
+    expect(applyAbove200Staleness(missed).checks.spyAbove200).toBe(true);
+    const expired = applyAbove200Staleness(missed);
+    expect(expired.checks.spyAbove200).toBeNull();
+    expect(expired.checks.hygAbove200).toBe(false);
+    expect(expired.riskOn).toBe(false);
+    expect(riskTooltip(expired)).toMatch(/SPY 200dma missing/);
+    expect(riskTooltip(expired)).not.toMatch(/SPY below 200dma/);
+
+    const back = applyAbove200Staleness(good);
+    expect(back.checks.spyAbove200).toBe(true);
+    expect(riskTooltip(back)).not.toMatch(/SPY 200dma missing/);
+  });
+
+  it("does not invent a below-200 read when nothing has been computed", () => {
+    const first = applyAbove200Staleness(riskOffFallback());
+    expect(first.checks.spyAbove200).toBeNull();
+    expect(first.checks.hygAbove200).toBeNull();
+    expect(first.riskOn).toBe(false);
+    expect(riskTooltip(first)).toMatch(/SPY 200dma missing/);
+    expect(riskTooltip(first)).not.toMatch(/below 200dma/);
   });
 });
 

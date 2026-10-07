@@ -298,7 +298,25 @@ export type RiskoffPutChecks = {
   lqdAbove200?: boolean | null;
   jnkAbove200?: boolean | null;
   dollarVeto?: boolean | null;
+  /** Present on the risk snapshot. Null means the UUP series was missing. */
+  uup20dPct?: number | null;
 };
+
+/** Keep null (bars missing) distinct from an omitted check. */
+function regimeCheck(
+  checks: RiskoffPutChecks | null | undefined,
+  key: "spyAbove200" | "hygAbove200",
+): boolean | null | undefined {
+  if (!checks || !Object.prototype.hasOwnProperty.call(checks, key)) return undefined;
+  const value = checks[key];
+  if (typeof value === "boolean" || value === null) return value;
+  return undefined;
+}
+
+function uupFromChecks(checks: RiskoffPutChecks | null | undefined): number | null | undefined {
+  if (!checks || !Object.prototype.hasOwnProperty.call(checks, "uup20dPct")) return undefined;
+  return checks.uup20dPct ?? null;
+}
 
 const RISKOFF_EQUITY_PUTS = new Set<string>([...RISKOFF_SYMBOLS, "IWM"]);
 const RISKOFF_CREDIT_LEG_SET = new Set<string>(RISKOFF_CREDIT_LEG_SYMBOLS);
@@ -1041,8 +1059,8 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
         above200: ctx.riskoffEtfAbove200 ?? null,
         returns21: ctx.riskoffEtfReturns21 ?? null,
         realizedVol20: ctx.riskoffEtfRealizedVol20 ?? null,
-        spyAbove200,
-        hygAbove200,
+        spyAbove200: regimeCheck(ctx.riskChecks, "spyAbove200"),
+        hygAbove200: regimeCheck(ctx.riskChecks, "hygAbove200"),
         now: ctx.now,
         sleeveBook: riskoffBook,
       })
@@ -1070,6 +1088,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
         riskOn,
         spyAbove200,
         dollarVeto: knownBool(ctx.riskChecks?.dollarVeto),
+        uup20dPct: uupFromChecks(ctx.riskChecks),
         positions: ctx.getPositions(),
         sleeve: ctx.getSleeves().riskoff,
         quotes: ctx.riskoffEtfQuotes ?? [],

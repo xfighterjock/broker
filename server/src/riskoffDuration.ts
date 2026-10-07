@@ -63,7 +63,8 @@ export function overlayHoldsDurationName(positions: Position[]): boolean {
 
 /**
  * RISK OFF + SPY known below 200dma + dollar veto clear.
- * Missing spyAbove200 or dollarVeto fails closed (no new duration long).
+ * Null spyAbove200 or dollarVeto fails closed (no new duration long).
+ * Null is not "known below".
  */
 export function riskoffDurationAllowed(
   riskOn: boolean,
@@ -106,10 +107,38 @@ function flattenOpen(open: Position[], reason: string): RiskoffDurationDecision 
   };
 }
 
+/** Keep an open gated-duration lot. A missing check must not sell it. */
+function holdOpen(open: Position[], reason: string): RiskoffDurationDecision {
+  const held = open.find((p) => isRiskoffDurationSymbol(p.symbol));
+  return {
+    symbol: held && isRiskoffDurationSymbol(held.symbol) ? held.symbol : null,
+    reason,
+    sells: [],
+    buy: null,
+  };
+}
+
+/**
+ * dollarVeto true with a present UUP 20d print is a measured spike.
+ * dollarVeto true only because uup20dPct is null is a missing series — hold.
+ * Omitting uup20dPct keeps the boolean (callers that pass dollarVeto: true alone).
+ */
+function measuredDollarVeto(dollarVeto?: boolean | null, uup20dPct?: number | null): boolean {
+  if (dollarVeto !== true) return false;
+  if (uup20dPct === null) return false;
+  return true;
+}
+
 export function decideRiskoffDuration(input: {
   riskOn: boolean;
   spyAbove200?: boolean | null;
   dollarVeto?: boolean | null;
+  /**
+   * UUP 20-session return from the risk badge. Null + dollarVeto true means
+   * the veto is the missing-series fail-closed, not a measured spike, so an
+   * open duration lot is held. Omit to honor dollarVeto as given.
+   */
+  uup20dPct?: number | null;
   positions: Position[];
   sleeve: SleeveCard;
   quotes: Array<{ symbol: string; last: number }>;
@@ -131,17 +160,17 @@ export function decideRiskoffDuration(input: {
   if (riskoffSleeveLossCapHit(input.sleeve, input.sleeveBook)) {
     return flattenOpen(open, "sleeve loss cap");
   }
-  if (typeof input.spyAbove200 !== "boolean") {
-    return flattenOpen(open, "missing spyAbove200: flatten gated duration");
-  }
-  if (typeof input.dollarVeto !== "boolean") {
-    return flattenOpen(open, "missing dollarVeto: flatten gated duration");
-  }
   if (input.spyAbove200 === true) {
     return flattenOpen(open, "SPY above 200dma: flatten gated duration");
   }
-  if (input.dollarVeto === true) {
+  if (measuredDollarVeto(input.dollarVeto, input.uup20dPct)) {
     return flattenOpen(open, "dollar veto: flatten gated duration");
+  }
+  if (typeof input.spyAbove200 !== "boolean") {
+    return holdOpen(open, "missing spyAbove200: hold gated duration");
+  }
+  if (typeof input.dollarVeto !== "boolean" || (input.dollarVeto === true && input.uup20dPct === null)) {
+    return holdOpen(open, "missing dollarVeto: hold gated duration");
   }
   const overlayNames = [
     ...(input.overlayWinners ?? []),

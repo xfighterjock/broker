@@ -443,7 +443,10 @@ export const RISKOFF_ETF_NOTIONAL_FRAC = 0.40;
  * Put-gated overlay scale-up. While RISK OFF and spyAbove200 === true
  * (same SPY-above-200 check that gates equity/credit puts), size the 63d
  * RS overlay at ~60% of the book. When SPY loses 200 (puts can fire), cut
- * back to RISKOFF_ETF_NOTIONAL_FRAC. Missing spyAbove200 does not scale up.
+ * back to RISKOFF_ETF_NOTIONAL_FRAC. The pure helper treats a raw null as
+ * 40%. decideRiskoffEtf does not pass that raw null: a missing SPY 200dma
+ * holds the last regime, or the HYG-only 60% rules when nothing has been
+ * computed, so a data miss does not drop the overlay to the SPY-below set.
  * RISK ON still flattens (no separate ON path). Paper / MockBroker only.
  */
 export const RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED = 0.60;

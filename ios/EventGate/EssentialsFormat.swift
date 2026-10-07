@@ -89,9 +89,13 @@ enum EssentialsFormat {
             return "SPY/ACWI/HYG above 200dma · \(uup)"
         }
         var failed: [String] = []
-        if c.spyAbove200 == false { failed.append("SPY below 200dma") }
-        if c.acwiAbove200 == false { failed.append("ACWI below 200dma") }
-        if c.hygAbove200 == false { failed.append("HYG below 200dma") }
+        func above(_ label: String, _ value: Bool?) {
+            if value == false { failed.append("\(label) below 200dma") }
+            else if value == nil { failed.append("\(label) 200dma missing") }
+        }
+        above("SPY", c.spyAbove200)
+        above("ACWI", c.acwiAbove200)
+        above("HYG", c.hygAbove200)
         if c.dollarVeto == true {
             if let pct = c.uup20dPct, pct.isFinite {
                 failed.append("UUP 20d \(String(format: "%.1f", pct * 100))% (dollar veto)")

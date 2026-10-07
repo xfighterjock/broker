@@ -14,10 +14,24 @@ import type { RedisClient } from "./redis";
 export const RISK_UUP_VETO_FRAC = 0.03;
 export const RISK_CACHE_MS = 15 * 60 * 1000;
 
+/**
+ * Consecutive risk refreshes that may repeat the last computed above200
+ * boolean before that check is published as null. Same count as
+ * RISKOFF_ETF_MISSING_BARS_MAX_MISSES. At RISK_CACHE_MS (15 min) misses 1–2
+ * cover about 45 minutes — a few refreshes, inside one cash session — and
+ * the third null publish is "200dma missing", not "below". Process-local;
+ * a restart with bars still missing publishes null. Not a full session hold.
+ */
+export const RISK_ABOVE200_STALE_MAX_MISSES = 3;
+
+const ABOVE200_KEYS = ["spyAbove200", "acwiAbove200", "hygAbove200"] as const;
+type Above200Key = (typeof ABOVE200_KEYS)[number];
+
 export type RiskChecks = {
-  spyAbove200: boolean;
-  acwiAbove200: boolean;
-  hygAbove200: boolean;
+  /** True/false only from real bars. Null = missing or shorter than 200 sessions. Not "below". */
+  spyAbove200: boolean | null;
+  acwiAbove200: boolean | null;
+  hygAbove200: boolean | null;
   uup20dPct: number | null;
   dollarVeto: boolean;
 };
@@ -63,9 +77,9 @@ export function riskOffFallback(): RiskSnapshot {
   return {
     riskOn: false,
     checks: {
-      spyAbove200: false,
-      acwiAbove200: false,
-      hygAbove200: false,
+      spyAbove200: null,
+      acwiAbove200: null,
+      hygAbove200: null,
       uup20dPct: null,
       dollarVeto: true,
     },
@@ -73,7 +87,18 @@ export function riskOffFallback(): RiskSnapshot {
   };
 }
 
-/** Pure. Missing series fail that check => risk-off. Dollar veto if UUP 20d missing or > +3%. */
+/** True/false from a computed feature. Missing or too-short bars stay null — not false. */
+function above200OrNull(feat: ScanFeatures | null): boolean | null {
+  if (!feat) return null;
+  return feat.above200;
+}
+
+/**
+ * Pure. riskOn fails closed (false) unless every above200 check is true and
+ * the dollar veto is clear. A missing series is null on that check, not false,
+ * so sleeve logic can tell "known below" from "bars missing".
+ * Dollar veto if UUP 20d missing or > +3%.
+ */
 export function riskFromFeatures(input: {
   spy: ScanFeatures | null;
   acwi: ScanFeatures | null;
@@ -82,11 +107,11 @@ export function riskFromFeatures(input: {
   lqd?: ScanFeatures | null;
   jnk?: ScanFeatures | null;
 }): RiskSnapshot {
-  const spyAbove200 = Boolean(input.spy?.above200);
-  const acwiAbove200 = Boolean(input.acwi?.above200);
-  const hygAbove200 = Boolean(input.hyg?.above200);
+  const spyAbove200 = above200OrNull(input.spy);
+  const acwiAbove200 = above200OrNull(input.acwi);
+  const hygAbove200 = above200OrNull(input.hyg);
   const dollarVeto = input.uup20dPct === null || input.uup20dPct > RISK_UUP_VETO_FRAC;
-  const riskOn = spyAbove200 && acwiAbove200 && hygAbove200 && !dollarVeto;
+  const riskOn = spyAbove200 === true && acwiAbove200 === true && hygAbove200 === true && !dollarVeto;
   return {
     riskOn,
     checks: {
@@ -103,6 +128,12 @@ export function riskFromFeatures(input: {
   };
 }
 
+function above200Phrase(label: string, value: boolean | null): string | null {
+  if (value === false) return `${label} below 200dma`;
+  if (value === null) return `${label} 200dma missing`;
+  return null;
+}
+
 export function riskTooltip(snap: RiskSnapshot): string {
   const c = snap.checks;
   const note = "Does not bind the day book.";
@@ -114,9 +145,13 @@ export function riskTooltip(snap: RiskSnapshot): string {
     return `SPY/ACWI/HYG above 200dma · ${uup}. ${note}`;
   }
   const failed: string[] = [];
-  if (!c.spyAbove200) failed.push("SPY below 200dma");
-  if (!c.acwiAbove200) failed.push("ACWI below 200dma");
-  if (!c.hygAbove200) failed.push("HYG below 200dma");
+  for (const phrase of [
+    above200Phrase("SPY", c.spyAbove200),
+    above200Phrase("ACWI", c.acwiAbove200),
+    above200Phrase("HYG", c.hygAbove200),
+  ]) {
+    if (phrase) failed.push(phrase);
+  }
   if (c.dollarVeto) {
     failed.push(
       c.uup20dPct === null || !Number.isFinite(c.uup20dPct)
@@ -132,6 +167,52 @@ let inflight: Promise<RiskSnapshot> | null = null;
 let redis: RedisClient | null = null;
 let lastKnownRiskOn: boolean | null = null;
 let persistedHydrated = false;
+let lastGoodAbove: Record<Above200Key, boolean | null> = {
+  spyAbove200: null,
+  acwiAbove200: null,
+  hygAbove200: null,
+};
+let aboveMisses: Record<Above200Key, number> = {
+  spyAbove200: 0,
+  acwiAbove200: 0,
+  hygAbove200: 0,
+};
+
+function freshAboveMemory(): void {
+  lastGoodAbove = { spyAbove200: null, acwiAbove200: null, hygAbove200: null };
+  aboveMisses = { spyAbove200: 0, acwiAbove200: 0, hygAbove200: 0 };
+}
+
+/**
+ * Repeat the last computed above200 for fewer than RISK_ABOVE200_STALE_MAX_MISSES
+ * consecutive nulls, then publish null. Recomputes riskOn from the carried
+ * checks: a null still fails the badge closed, a carried true does not.
+ * Dollar veto is not carried — missing UUP stays a veto.
+ */
+export function applyAbove200Staleness(snap: RiskSnapshot): RiskSnapshot {
+  const checks: RiskChecks = { ...snap.checks };
+  for (const key of ABOVE200_KEYS) {
+    const value = checks[key];
+    if (typeof value === "boolean") {
+      lastGoodAbove[key] = value;
+      aboveMisses[key] = 0;
+      continue;
+    }
+    aboveMisses[key] += 1;
+    const held = lastGoodAbove[key];
+    if (held !== null && aboveMisses[key] < RISK_ABOVE200_STALE_MAX_MISSES) {
+      checks[key] = held;
+    } else {
+      checks[key] = null;
+    }
+  }
+  const riskOn =
+    checks.spyAbove200 === true &&
+    checks.acwiAbove200 === true &&
+    checks.hygAbove200 === true &&
+    !checks.dollarVeto;
+  return { ...snap, riskOn, checks };
+}
 
 export function attachRiskRedis(client: RedisClient | null): void {
   redis = client;
@@ -152,6 +233,7 @@ export function resetRiskCache(): void {
   inflight = null;
   lastKnownRiskOn = null;
   persistedHydrated = false;
+  freshAboveMemory();
   resetEventGateAlertState();
 }
 
@@ -229,7 +311,7 @@ async function runRisk(): Promise<RiskSnapshot> {
     fetchMassiveDailyBars("JNK"),
   ]);
   const hardFailure = gateBarsMissing(spyBars, acwiBars, hygBars, uupBars);
-  const snap = hardFailure
+  const raw = hardFailure
     ? riskOffFallback()
     : riskFromFeatures({
         spy: spyBars ? featuresFromBars(spyBars) : null,
@@ -239,6 +321,7 @@ async function runRisk(): Promise<RiskSnapshot> {
         lqd: lqdBars ? featuresFromBars(lqdBars) : null,
         jnk: jnkBars ? featuresFromBars(jnkBars) : null,
       });
+  const snap = applyAbove200Staleness(raw);
   cached = { at: Date.now(), snap };
   await applyResolvedRisk(snap, { hardFailure });
   return snap;
