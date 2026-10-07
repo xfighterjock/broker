@@ -81,6 +81,17 @@ struct SettingsView: View {
             }
 
             Section {
+                Link(destination: EventGateIdentity.webHome) {
+                    Label("Open Event Gate on web", systemImage: "safari")
+                }
+                .accessibilityIdentifier("open-event-gate-web")
+            } header: {
+                Text("Web")
+            } footer: {
+                Text("Opens https://broker.logikmancer.com in Safari. Sign in on the web if the in-app E*TRADE PIN sheet cannot finish. The web login is separate from this phone’s Keychain session.")
+            }
+
+            Section {
                 Button("Sign out", role: .destructive) {
                     Task { await auth.logout() }
                 }

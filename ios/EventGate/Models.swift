@@ -103,6 +103,18 @@ struct EtradeStartResult: Decodable {
     let error: String?
 }
 
+/// One in-app Safari presentation of the E*TRADE authorize page.
+/// Memory only. Never persisted, logged, or drawn as text (the URL carries the request token).
+struct EtradeAuthorizeTicket: Identifiable, Equatable {
+    let id: UUID
+    let url: URL
+
+    init(url: URL) {
+        self.id = UUID()
+        self.url = url
+    }
+}
+
 struct CalendarEventSnap: Codable {
     let id: String?
     let type: String?

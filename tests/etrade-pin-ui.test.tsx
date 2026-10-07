@@ -53,7 +53,7 @@ describe("EtradePinBar", () => {
     expect(node.querySelector(".etrade-pin")).toBeNull();
   });
 
-  it("shows Authorize and a PIN field when needs_pin, without secrets in the DOM", () => {
+  it("shows a Re-authorize banner and a PIN field when needs_pin, without secrets in the DOM", () => {
     const node = render(
       <EtradePinBar
         auth="needs_pin"
@@ -63,20 +63,48 @@ describe("EtradePinBar", () => {
         setErr={() => {}}
       />,
     );
-    expect(node.textContent).toMatch(/E\*TRADE needs PIN/);
-    expect(node.textContent).toMatch(/Authorize/);
+    expect(node.textContent).toMatch(/E\*TRADE needs PIN — Re-authorize/);
     expect(node.querySelector("[aria-label=\"E*TRADE PIN\"]")).toBeTruthy();
     expect(node.textContent).not.toContain(SECRET);
     expect(node.textContent).not.toMatch(/us\.etrade\.com/);
     expect(node.innerHTML).not.toContain(AUTHORIZE_URL);
   });
 
-  it("opens the authorize URL in a new tab and never paints it", async () => {
-    const open = vi.fn(() => null);
+  it("shows the same banner for an E*TRADE error", () => {
+    const node = render(
+      <EtradePinBar
+        auth="error"
+        variant="header"
+        onRefresh={() => {}}
+        setAuthNeeded={() => {}}
+        setErr={() => {}}
+      />,
+    );
+    expect(node.textContent).toMatch(/E\*TRADE error — Re-authorize/);
+    expect(node.querySelector(".etrade-pin-header")).toBeTruthy();
+  });
+
+  it("opens a blank window in the click, then navigates it, and never paints the URL", async () => {
+    const order: string[] = [];
+    const popup = {
+      closed: false,
+      opener: {} as Window | null,
+      close: () => {},
+      location: {
+        replace: (url: string) => {
+          order.push(`replace:${url}`);
+        },
+      },
+    };
+    const open = vi.fn((url: string) => {
+      order.push(`open:${url}`);
+      return popup;
+    });
     vi.stubGlobal("open", open);
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
+        order.push("fetch");
         expect(String(input)).toMatch(/\/api\/etrade\/oauth\/start$/);
         return {
           ok: true,
@@ -96,10 +124,45 @@ describe("EtradePinBar", () => {
     await act(async () => {
       (node.querySelector(".etrade-pin-auth") as HTMLButtonElement).click();
     });
-    expect(open).toHaveBeenCalledWith(AUTHORIZE_URL, "_blank", "noopener,noreferrer");
+    expect(order[0]).toBe("open:about:blank");
+    expect(order.indexOf("open:about:blank")).toBeLessThan(order.indexOf("fetch"));
+    expect(order.indexOf("fetch")).toBeLessThan(order.indexOf(`replace:${AUTHORIZE_URL}`));
+    expect(open).not.toHaveBeenCalledWith(AUTHORIZE_URL, "_blank", "noopener,noreferrer");
     expect(node.textContent).not.toMatch(/us\.etrade\.com/);
     expect(node.innerHTML).not.toContain("ck-prod-TESTKEY");
     expect(node.textContent).toMatch(/Open again/);
+  });
+
+  it("keeps the authorize URL out of the page when the pop-up is blocked", async () => {
+    vi.stubGlobal("open", vi.fn(() => null));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ ok: true, authorizeUrl: AUTHORIZE_URL }),
+      })),
+    );
+    const node = render(
+      <EtradePinBar
+        auth="needs_pin"
+        variant="essentials"
+        onRefresh={() => {}}
+        setAuthNeeded={() => {}}
+        setErr={() => {}}
+      />,
+    );
+    await act(async () => {
+      (node.querySelector(".etrade-pin-auth") as HTMLButtonElement).click();
+    });
+    expect(node.textContent).toMatch(/Pop-up blocked/);
+    expect(node.textContent).toMatch(/Open again/);
+    expect(node.innerHTML).not.toContain(AUTHORIZE_URL);
+    expect(node.innerHTML).not.toContain("ck-prod-TESTKEY");
+    await act(async () => {
+      (node.querySelector(".tiny") as HTMLButtonElement).click();
+    });
+    expect(node.innerHTML).not.toContain(AUTHORIZE_URL);
   });
 
   it("submits the PIN to /api/etrade/oauth/pin and does not echo it", async () => {

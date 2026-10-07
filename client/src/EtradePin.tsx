@@ -18,23 +18,36 @@ export function EtradePinBar({
   const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
   const [opened, setOpened] = useState(false);
+  const [popupNote, setPopupNote] = useState<string | null>(null);
   const authorizeUrlRef = useRef<string | null>(null);
 
-  if (auth !== "needs_pin" && auth !== "error") return null;
+  if (!auth || auth === "ok") return null;
 
   function handleApiErr(err: { status?: number; message?: string }) {
     if (err.status === 401 && err.message === "auth required") setAuthNeeded(true);
     else setErr(err.message || "E*TRADE authorize failed");
   }
 
-  async function openAuthorize(url: string) {
-    authorizeUrlRef.current = url;
-    window.open(url, "_blank", "noopener,noreferrer");
-    setOpened(true);
+  function navigatePopup(popup: Window | null, url: string): boolean {
+    if (!popup || popup.closed) return false;
+    try {
+      popup.opener = null;
+    } catch {
+      /* The E*TRADE page must not script this window. */
+    }
+    popup.location.replace(url);
+    return true;
+  }
+
+  function openBlank(): Window | null {
+    // Must run in the click turn. A later window.open (after await) is blocked on iOS Safari.
+    return window.open("about:blank", "_blank");
   }
 
   async function authorize() {
+    const popup = openBlank();
     setBusy(true);
+    setPopupNote(null);
     try {
       const body = (await api("/api/etrade/oauth/start", {
         method: "POST",
@@ -42,22 +55,43 @@ export function EtradePinBar({
       })) as { authorizeUrl?: string };
       const url = typeof body.authorizeUrl === "string" ? body.authorizeUrl : "";
       if (!/^https:\/\/us\.etrade\.com\/e\/t\/etws\/authorize\?/.test(url)) {
+        popup?.close();
         setErr("E*TRADE authorize failed");
         return;
       }
-      await openAuthorize(url);
+      authorizeUrlRef.current = url;
+      if (!navigatePopup(popup, url)) {
+        popup?.close();
+        setOpened(true);
+        setPopupNote("Pop-up blocked. Allow pop-ups for Event Gate, then tap Open again.");
+        return;
+      }
+      setOpened(true);
+      setPopupNote(null);
       setErr(null);
     } catch (e: unknown) {
+      popup?.close();
       handleApiErr(e as { status?: number; message?: string });
     } finally {
       setBusy(false);
     }
   }
 
-  async function retryOpen() {
+  function retryOpen() {
     const url = authorizeUrlRef.current;
-    if (url) await openAuthorize(url);
-    else await authorize();
+    if (!url) {
+      void authorize();
+      return;
+    }
+    const popup = openBlank();
+    if (!navigatePopup(popup, url)) {
+      popup?.close();
+      setPopupNote("Pop-up blocked. Allow pop-ups for Event Gate, then tap Open again.");
+      return;
+    }
+    setOpened(true);
+    setPopupNote(null);
+    setErr(null);
   }
 
   async function submitPin(e: FormEvent) {
@@ -73,6 +107,7 @@ export function EtradePinBar({
       setPin("");
       authorizeUrlRef.current = null;
       setOpened(false);
+      setPopupNote(null);
       setErr(null);
       await onRefresh();
     } catch (e: unknown) {
@@ -82,19 +117,21 @@ export function EtradePinBar({
     }
   }
 
-  const title = auth === "needs_pin" ? "E*TRADE needs PIN" : "E*TRADE error";
+  const title =
+    auth === "needs_pin" ? "E*TRADE needs PIN" : auth === "error" ? "E*TRADE error" : "E*TRADE needs re-auth";
 
   return (
-    <div className={`etrade-pin etrade-pin-${variant}`} data-etrade-auth={auth}>
-      <span className="badge etrade-pin-badge">{title}</span>
+    <div className={`etrade-pin etrade-pin-${variant}`} data-etrade-auth={auth} role="region" aria-label={title}>
       <button type="button" className="etrade-pin-auth" disabled={busy} onClick={() => void authorize()}>
-        Authorize
+        {title} — Re-authorize
       </button>
+      <p className="etrade-pin-hint">E*TRADE shows a PIN. Type it here. This does not place an order.</p>
       {opened ? (
-        <button type="button" className="tiny" disabled={busy} onClick={() => void retryOpen()}>
+        <button type="button" className="tiny" disabled={busy} onClick={() => retryOpen()}>
           Open again
         </button>
       ) : null}
+      {popupNote ? <p className="etrade-pin-hint">{popupNote}</p> : null}
       <form className="etrade-pin-form" onSubmit={(e) => void submitPin(e)}>
         <label className="etrade-pin-label">
           <span className="etrade-pin-label-text">PIN</span>

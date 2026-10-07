@@ -615,14 +615,15 @@ export default function App() {
         >
           {state.riskOn ? "RISK ON" : "RISK OFF"}
         </span>
-        <EtradePinBar
-          auth={state.etradeAuth}
-          variant="header"
-          onRefresh={refresh}
-          setAuthNeeded={setAuthNeeded}
-          setErr={setErr}
-        />
       </header>
+
+      <EtradePinBar
+        auth={state.etradeAuth}
+        variant="header"
+        onRefresh={refresh}
+        setAuthNeeded={setAuthNeeded}
+        setErr={setErr}
+      />
 
       <nav className="tabs">
         {TAB_LABELS.map((t) => {
