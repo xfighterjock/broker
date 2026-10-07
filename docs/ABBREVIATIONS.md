@@ -120,7 +120,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **inverse-vol** — Inverse realized-volatility weights on the risk-off 63d RS overlay, paper / MockBroker only. In HYG-only RISK OFF (risk off, spyAbove200 === true, hygAbove200 === false), a top-2 sleeve of two non-BIL names is sized by share_i = (1/vol_i) / sum(1/vol), and those shares are scaled so they sum to the current overlay allocation (RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED, 60%, because puts are gated). Vol is realized vol (RISKOFF_ETF_REALIZED_VOL_SESSIONS). Annualization cancels in the ratio. Vols of 5.9% and 9.9% are about 62.7/37.3 of the overlay (about 62.5/37.5); the fill note rounds to integers that sum to 100 (`top-2 FTLS+BTAL invvol 63/37`). One qualifier, a BIL pair, SPY below 200, a missing or zero vol, and a split that would size a quoted name to 0 shares stay equal-weight (`50/50`). Not used in full risk-off (SPY below 200). Does not change gates, the 5-session min-hold, the cash-close churn brake, hysteresis, or the 40/60 scale.
 
-**iOS Event Gate** — Native SwiftUI app in ios/ (bundle com.logikmancer.mybroker). Phone Event Gate client: essentials (clock, cash open/close countdown under the ET clock, US cash closed/holiday strip, GATE, RISK, AUTO PAPER chips, knowledge_time / Stage-3 arm + Stamp knowledge time, Flatten, sleeve P/L, E*TRADE PIN), paged Activity log, plus FCM. Users-table login + optional Face ID / Touch ID unlock of the Keychain session. Web `/m` remains for browsers. Push notification glyph is the AppIcon (same auto-agent artwork as the web favicon).
+**iOS Event Gate** — Native SwiftUI app in ios/ (bundle com.logikmancer.mybroker). Phone Event Gate client: essentials (clock, cash open/close countdown under the ET clock, US cash closed/holiday strip, GATE, RISK, AUTO PAPER chips, knowledge_time / Stage-3 arm + Stamp knowledge time, Flatten, sleeve P/L, E*TRADE re-auth banner), paged Activity log, plus FCM. When `etradeAuth` is not `ok`, the banner opens in-app Safari (SFSafariViewController) and the PIN is typed in the app. Settings links to the web app as a fallback. Users-table login + optional Face ID / Touch ID unlock of the Keychain session. Web `/m` remains for browsers. A new phone build is an Xcode install, not a web deploy. Push notification glyph is the AppIcon (same auto-agent artwork as the web favicon).
 
 **IWM** — iShares Russell 2000 ETF. Options quote strip; optional third equity-index put on riskoff when SPY is below 200dma and IWM is quoted.
 
@@ -170,7 +170,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **NYSE** — New York Stock Exchange cash calendar. Event Gate `marketSession` uses the NYSE equity holiday set (New Year’s, MLK, Presidents’, Good Friday, Memorial Day, Juneteenth, Independence Day, Labor Day, Thanksgiving, Christmas, plus weekend observance) in America/New_York. Orthogonal to GATE.
 
-**OAuth** — E*TRADE 1.0a handshake. In-app Authorize + PIN; in-process renew during the cash session.
+**OAuth** — E*TRADE 1.0a handshake. Authorize + PIN (`oauth_callback=oob`); in-process renew during the cash session. Web and iOS both call `POST /api/etrade/oauth/start` then `POST /api/etrade/oauth/pin`. The authorize URL is not shown as text.
 
 **OI** — Open interest. Options-chain leg field. HYG/LQD/JNK auto put-debit entries refuse either leg below RISKOFF_HYG_MIN_OPEN_INTEREST (100), including every ladder candidate (nearby strikes / next 30-45 DTE expiry / credit-leg monthly 21–60 fallback); no OI floor on manual entries or SPY/QQQ/IWM/options auto verticals.
 
@@ -182,7 +182,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **PDBC** — Invesco Optimum Yield Diversified Commodity Strategy ETF. Broad commodity beta (energy, agriculture, industrial and precious metals) on the risk-off 63d RS overlay. Same gates as the other non-CTA names: 63d split-adjusted price return strictly above BIL, and last above its own 200dma, or that name is skipped (none left → BIL). Exact RS ties place it with commodities, after GDX and before UUP (GLD > GDX > PDBC > UUP > duration (TLT, IEF) > IG floater (FLOT) > defensives (XLU, XLP) > trend (DBMF, KMLM) > long/short equity (CLSE) > min-vol (USMV) > quality (QUAL) > FTLS > BTAL). Bullion still wins a tie against miners; PDBC is not in the gold family. Top-2 50/50 and the 50bp hysteresis apply. Not CTA (not in RISKOFF_ETF_CTA_FAMILY; see RISKOFF_ETF_COMMODITY_BETA) and not subject to the 21-session beat-BIL confirmation; a weak or missing 21d return does not skip PDBC. Not an RS overlay qualifier in HYG-only RISK OFF (RISKOFF_ETF_HYG_ONLY_INELIGIBLE), even if 63d beats BIL and PDBC is above its own 200dma. That drop blocks a lone PDBC taking the full overlay and a PDBC+FTLS HYG-only sleeve. When SPY is below 200 (or HYG-only is not active) PDBC stays eligible under ordinary beat-BIL and own-200. Where it remains eligible it is mutually exclusive with the CTA family for the #2 diversifier only: when PDBC is RS #1, #2 is the highest non-CTA qualifier, else BIL at 50/50; when RS #1 is DBMF or KMLM, #2 must not be PDBC (next non-PDBC qualifier, else BIL). Never PDBC+DBMF or PDBC+KMLM. A non-CTA #1 other than PDBC may still take PDBC as #2. When PDBC is eligible, a lone PDBC still takes the full overlay fraction. The exclusion wins at the cash-close rebalance even inside the 5-session min-hold, same as never-dual-CTA and never-dual-gold. Paper / MockBroker only.
 
-**PIN** — E*TRADE verifier after Authorize. Typed in Event Gate (desktop header, web /m, or the iOS essentials home). Needed after midnight ET. Never stored in git or chat.
+**PIN** — E*TRADE verifier after Authorize. Typed in Event Gate (desktop banner under the header, web `/m`, or the iOS essentials banner). Needed after midnight ET, and when renew returns HTTP 401 (`etradeAuth` `needs_pin`). Never stored in git or chat.
 
 **Postgres** — Database for calendar events, freeze snapshots, `users` + `user_sessions`, iOS FCM device tokens, push-alert dedupe, and the activity journal (`gate_log`, plus `session_logs`). Activity rows older than 90 days are deleted.
 
@@ -245,6 +245,8 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 **SESSION FLATTEN** — Gate mode around flatten ET +/- 5m (and daily-loss). Flattens gated day-sleeve names.
 
 **SESSION_SECRET** — Cookie-signing secret for `eg.sid`. Production AUTH_MODE=users requires this or GATE_PASSWORD as fallback. Not the users-table login.
+
+**SFSafariViewController** — In-app Safari sheet in the iOS Event Gate app. Used only to show the E*TRADE authorize page during PIN re-auth. Done returns to the native PIN field. Not a WKWebView of the Event Gate SPA. The authorize URL is not logged.
 
 **SH** — ProShares Short S&P 500. Not a live risk-off expression.
 

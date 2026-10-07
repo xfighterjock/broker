@@ -203,6 +203,18 @@ enum EssentialsFormat {
         url.hasPrefix(etradeAuthorizePrefix)
     }
 
+    /// Full-width essentials banner when E*TRADE is not authorized.
+    /// `ok` and a missing field stay quiet. `needs_pin` is the midnight-ET / HTTP 401 renew case.
+    /// `error` is missing consumer keys. Any other non-ok value is treated as not authorized.
+    static func etradeReauthBanner(_ auth: String?) -> String? {
+        guard let auth else { return nil }
+        let trimmed = auth.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed == "ok" { return nil }
+        if trimmed == "needs_pin" { return "E*TRADE needs PIN — Re-authorize" }
+        if trimmed == "error" { return "E*TRADE error — Re-authorize" }
+        return "E*TRADE needs re-auth — Re-authorize"
+    }
+
     static func parseIso(_ iso: String) -> Date? {
         let withFrac = ISO8601DateFormatter()
         withFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]

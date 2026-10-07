@@ -51,19 +51,21 @@ struct EssentialsView: View {
     @State private var confirmFlatten = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                header
-                marketClosed
-                EtradePinView()
-                summary
-                riskBadge
-                controls
-                sleeves
-                if let err = status.lastError, !err.isEmpty {
-                    Text(err)
-                        .foregroundStyle(Color(red: 0.89, green: 0.29, blue: 0.29))
-                        .padding(16)
+        VStack(spacing: 0) {
+            EtradePinView()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    header
+                    marketClosed
+                    summary
+                    riskBadge
+                    controls
+                    sleeves
+                    if let err = status.lastError, !err.isEmpty {
+                        Text(err)
+                            .foregroundStyle(Color(red: 0.89, green: 0.29, blue: 0.29))
+                            .padding(16)
+                    }
                 }
             }
         }

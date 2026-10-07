@@ -302,10 +302,19 @@ describe("MobileEssentials", () => {
     expect(onFlatten).toHaveBeenCalledTimes(1);
   });
 
-  it("shows Authorize + PIN when etradeAuth is needs_pin", () => {
+  it("shows Authorize + PIN when etradeAuth is needs_pin, above the closed strip", () => {
+    const base = snapshot({ etradeAuth: "needs_pin" });
     const node = render(
       <MobileEssentials
-        state={snapshot({ etradeAuth: "needs_pin" })}
+        state={snapshot({
+          etradeAuth: "needs_pin",
+          marketSession: {
+            ...base.marketSession,
+            cashOpen: false,
+            inCashSession: false,
+            closedReason: "weekend",
+          },
+        })}
         onToggleGate={() => {}}
         onToggleAutoPaper={() => {}}
         onToggleAutoSleeve={() => {}}
@@ -323,5 +332,9 @@ describe("MobileEssentials", () => {
     expect(node.textContent).toMatch(/Authorize/);
     expect(node.querySelector("[aria-label=\"E*TRADE PIN\"]")).toBeTruthy();
     expect(node.querySelector("[data-etrade-auth=needs_pin]")).toBeTruthy();
+    const pinAt = node.innerHTML.indexOf("data-etrade-auth");
+    const closedAt = node.innerHTML.indexOf("essentials-market-closed");
+    expect(pinAt).toBeGreaterThan(-1);
+    expect(closedAt).toBeGreaterThan(pinAt);
   });
 });

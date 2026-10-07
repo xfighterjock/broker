@@ -1,6 +1,5 @@
 import Combine
 import Foundation
-import UIKit
 
 @MainActor
 final class StatusController: ObservableObject {
@@ -11,7 +10,9 @@ final class StatusController: ObservableObject {
     @Published var busy = false
     @Published var pin = ""
     @Published var authorizeOpened = false
-    @Published var lastAuthorizeURL: String?
+    /// Bumps when in-app Safari should present. The view reads `url` and does not render it.
+    @Published var authorizeTicket: EtradeAuthorizeTicket?
+    private var lastAuthorizeURL: String?
 
     private var settings: AppSettings?
     private var auth: AuthController?
@@ -108,18 +109,24 @@ final class StatusController: ObservableObject {
             lastAuthorizeURL = url
             authorizeOpened = true
             lastError = nil
-            await openURL(parsed)
+            authorizeTicket = EtradeAuthorizeTicket(url: parsed)
         } catch {
             handle(error, label: "E*TRADE authorize")
         }
     }
 
     func retryEtradeAuthorize() async {
-        if let raw = lastAuthorizeURL, let url = URL(string: raw) {
-            await openURL(url)
+        if let raw = lastAuthorizeURL,
+           EssentialsFormat.isValidEtradeAuthorizeURL(raw),
+           let url = URL(string: raw) {
+            authorizeTicket = EtradeAuthorizeTicket(url: url)
             return
         }
         await startEtradeAuthorize()
+    }
+
+    func noteAuthorizePresentFailed() {
+        lastError = "Could not open E*TRADE. Use Open Event Gate on web in Settings."
     }
 
     func submitEtradePin() async {
@@ -131,6 +138,7 @@ final class StatusController: ObservableObject {
             try await api.submitEtradePin(value)
             pin = ""
             lastAuthorizeURL = nil
+            authorizeTicket = nil
             authorizeOpened = false
             lastError = nil
             applySnapshot(try await api.gateStatus())
@@ -170,11 +178,5 @@ final class StatusController: ObservableObject {
             return
         }
         lastError = "\(label) failed: \(error.localizedDescription)"
-    }
-
-    private func openURL(_ url: URL) async {
-        await MainActor.run {
-            UIApplication.shared.open(url)
-        }
     }
 }

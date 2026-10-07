@@ -143,6 +143,35 @@ describe("iOS Event Gate scaffold", () => {
     expect(pbx).toContain("ActivityLogController.swift");
   });
 
+  it("essentials banner starts in-app E*TRADE re-auth and Settings links to the web app", () => {
+    const pin = readFileSync(resolve("ios/EventGate/EtradePinView.swift"), "utf8");
+    const format = readFileSync(resolve("ios/EventGate/EssentialsFormat.swift"), "utf8");
+    const status = readFileSync(resolve("ios/EventGate/StatusController.swift"), "utf8");
+    const essentials = readFileSync(resolve("ios/EventGate/EssentialsView.swift"), "utf8");
+    const settings = readFileSync(resolve("ios/EventGate/SettingsView.swift"), "utf8");
+    const api = readFileSync(resolve("ios/EventGate/BrokerAPI.swift"), "utf8");
+    expect(format).toContain("E*TRADE needs PIN — Re-authorize");
+    expect(format).toContain("E*TRADE error — Re-authorize");
+    expect(format).toContain("etradeReauthBanner");
+    expect(pin).toContain("SFSafariViewController");
+    expect(pin).toContain("etrade-reauth");
+    expect(pin).toContain("Submit PIN");
+    expect(pin).not.toContain("UIApplication.shared.open");
+    expect(status).toContain("authorizeTicket");
+    expect(status).toContain("startEtradeOAuth");
+    expect(status).toContain("submitEtradePin");
+    expect(status).not.toContain("UIApplication.shared.open");
+    expect(api).toContain("/api/etrade/oauth/start");
+    expect(api).toContain("/api/etrade/oauth/pin");
+    expect(essentials.indexOf("EtradePinView()")).toBeGreaterThan(-1);
+    expect(essentials.indexOf("EtradePinView()")).toBeLessThan(essentials.indexOf("marketClosed"));
+    expect(settings).toContain("Open Event Gate on web");
+    expect(settings).toContain("https://broker.logikmancer.com");
+    const design = readFileSync(resolve("docs/DESIGN.md"), "utf8");
+    expect(design).toContain("SFSafariViewController");
+    expect(design).toContain("Open Event Gate on web");
+  });
+
   it("gitignore blocks the real plist and Xcode userdata", () => {
     const gi = readFileSync(resolve(".gitignore"), "utf8");
     expect(gi).toMatch(/ios\/\*\*\/GoogleService-Info\.plist/);

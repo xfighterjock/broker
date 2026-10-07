@@ -3,6 +3,8 @@ import Combine
 
 enum EventGateIdentity {
     static let defaultBaseURL = "https://broker.logikmancer.com"
+    /// Public web app. Settings link. Not the Keychain session.
+    static let webHome = URL(string: "https://broker.logikmancer.com")!
     /// Must match the VPS default when nginx does not inject x-remote-user.
     static let tokenPrincipal = "event-gate"
 }

@@ -79,6 +79,8 @@ export function MobileEssentials({
         </div>
       </header>
 
+      {pin}
+
       {marketSessionLine(state) && (
         <div
           className={`essentials-market-closed${state.marketSession?.cashOpen ? " early" : ""}`}
@@ -87,8 +89,6 @@ export function MobileEssentials({
           {marketSessionLine(state)}
         </div>
       )}
-
-      {pin}
 
       <section className="essentials-summary" aria-label="session">
         <div className="essentials-summary-row">
