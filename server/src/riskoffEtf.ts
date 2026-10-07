@@ -84,6 +84,14 @@ export type RiskoffEtfDecision = {
 
 /** Consecutive missing-bars / incomplete-returns decisions. Process-local. */
 let missingBarsMisses = 0;
+/**
+ * Last computed SPY/HYG 200dma seen by decideRiskoffEtf. Used only when the
+ * caller passes null (bars missing), so a miss does not flip the overlay onto
+ * the SPY-below-200 rule set. Not read when the caller omits the field.
+ * Process-local, same life as the missing-bars streak. Not persisted.
+ */
+let lastRegimeSpy: boolean | null = null;
+let lastRegimeHyg: boolean | null = null;
 /** NY date (YYYY-MM-DD) of the last cash-close RS rebalance. Process-local. */
 let lastRebalanceYmd: string | null = null;
 /** Sleeve to restore after an intraday missing-bars flatten, until the next cash-close rebalance. */
@@ -97,13 +105,21 @@ export function getRiskoffEtfMissingBarsMisses(): number {
   return missingBarsMisses;
 }
 
-/** Clears missing-bars streak and the overlay rebalance clock (entry sessions, prior rebuy, last close). */
+/** Clears missing-bars streak, overlay regime memory, and the rebalance clock. */
 export function resetRiskoffEtfMissingBarsMisses(): void {
   missingBarsMisses = 0;
+  lastRegimeSpy = null;
+  lastRegimeHyg = null;
   lastRebalanceYmd = null;
   priorOverlayTargets = [];
   pendingPriorRebuy = false;
   entrySessionBySymbol.clear();
+}
+
+/** Test/boot helper. Same clear as the regime half of resetRiskoffEtfMissingBarsMisses. */
+export function resetRiskoffOverlayRegime(): void {
+  lastRegimeSpy = null;
+  lastRegimeHyg = null;
 }
 
 export function riskoffEtfNyYmd(now: Date): string {
@@ -297,9 +313,11 @@ export function applyRiskoffEtfAbsoluteTrend(
 }
 
 /**
- * Overlay book fraction from the same spyAbove200 used to gate equity/credit
- * puts. SPY known above 200 → 60% (puts gated). SPY below 200 or missing →
- * 40% (do not scale up without the signal). RISK ON still flattens first.
+ * Overlay book fraction from a resolved spyAbove200. SPY known above 200 →
+ * 60% (puts gated). SPY known below 200, or an omitted/null check passed
+ * straight in → 40%. decideRiskoffEtf does not pass a raw null here: it
+ * substitutes the last regime (or the HYG-only pair when nothing has been
+ * computed) so a data miss does not drop 60% → 40%.
  */
 export function riskoffEtfNotionalFrac(spyAbove200?: boolean | null): number {
   return spyAbove200 === true ? RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED : RISKOFF_ETF_NOTIONAL_FRAC;
@@ -606,8 +624,10 @@ export function riskoffEtfCtaConfirms21d(
 
 /**
  * HYG-only RISK OFF: the book is RISK OFF, SPY is known above its 200dma,
- * and HYG is known below its 200dma. Missing spyAbove200 or hygAbove200 is
- * not this regime. SPY below 200 (puts can be on) is not this regime.
+ * and HYG is known below its 200dma. A raw null is not this regime.
+ * decideRiskoffEtf does not pass that raw null: it holds the last computed
+ * pair, and with no history treats a null pair as HYG-only so a miss cannot
+ * lift the ineligible list. SPY known below 200 is not this regime.
  */
 export function riskoffHygOnlyRiskOff(
   riskOn: boolean,
@@ -615,6 +635,40 @@ export function riskoffHygOnlyRiskOff(
   hygAbove200?: boolean | null,
 ): boolean {
   return riskOn === false && spyAbove200 === true && hygAbove200 === false;
+}
+
+/**
+ * Regime inputs for decideRiskoffEtf. Booleans update the latch. An omitted
+ * pair (both undefined) is left alone so older callers keep the 40% / not
+ * HYG-only default. Explicit null uses the latch. Null with no latch is the
+ * HYG-only pair (spy above, hyg below): the SPY-below rule set stays off
+ * until a real below-200 print arrives. A null SPY with HYG known below and
+ * no latch is the same pair. A latch that last saw SPY below is kept.
+ */
+export function resolveRiskoffOverlayRegime(
+  spyIn?: boolean | null,
+  hygIn?: boolean | null,
+): { spyAbove200: boolean | null | undefined; hygAbove200: boolean | null | undefined } {
+  if (spyIn === undefined && hygIn === undefined) {
+    return { spyAbove200: undefined, hygAbove200: undefined };
+  }
+  if (typeof spyIn === "boolean") lastRegimeSpy = spyIn;
+  if (typeof hygIn === "boolean") lastRegimeHyg = hygIn;
+
+  let spy: boolean | null | undefined = spyIn;
+  let hyg: boolean | null | undefined = hygIn;
+  if (spyIn === null) spy = lastRegimeSpy;
+  if (hygIn === null) hyg = lastRegimeHyg;
+
+  const spyUnknown = spy == null;
+  const hygUnknown = hyg == null;
+  if (spyIn === null && hygIn === null && spyUnknown && hygUnknown) {
+    return { spyAbove200: true, hygAbove200: false };
+  }
+  if (spyIn === null && spyUnknown && hyg === false) {
+    return { spyAbove200: true, hygAbove200: false };
+  }
+  return { spyAbove200: spy ?? undefined, hygAbove200: hyg ?? undefined };
 }
 
 /**
@@ -1284,8 +1338,10 @@ export function decideRiskoffEtf(input: {
   returns21?: RiskoffEtfReturns | null;
   /**
    * Same spyAbove200 as the put gate (riskoffEquityPutsAllowed). True → 60%
-   * overlay (puts gated). False/missing → 40%. Does not change RISK ON flatten.
-   * With hygAbove200 === false and risk off, also turns on the gold 21d gate,
+   * overlay (puts gated). False → 40%. Null is not false: resolveRiskoffOverlayRegime
+   * holds the last computed pair (or the HYG-only pair when nothing has been
+   * computed) before notional and the HYG-only gates run. Does not change RISK ON flatten.
+   * With the resolved pair HYG-only (spy above, hyg below), also turns on the gold 21d gate,
    * the equity-factor 21d gate, the TLT/IEF/XLU/PDBC/KMLM/GDX/DBMF/XLP/GLD RS drop,
    * and inverse-vol weights on a two-name non-BIL sleeve. SPY below 200 keeps
    * equal weight.
@@ -1297,8 +1353,10 @@ export function decideRiskoffEtf(input: {
   spyAbove200?: boolean | null;
   /**
    * HYG 200dma from the risk badge. HYG-only RISK OFF is risk off, this
-   * false, and spyAbove200 true. Missing is not HYG-only (gold 21d, equity
-   * 21d, and the TLT/IEF/XLU/PDBC/KMLM/GDX/DBMF/XLP/GLD RS drop stay off). GDX and GLD stay in
+   * false, and spyAbove200 true. A raw null is not HYG-only on the pure
+   * predicate; decideRiskoffEtf substitutes the last regime first, so a
+   * missing bar does not turn the gold 21d, equity 21d, and
+   * TLT/IEF/XLU/PDBC/KMLM/GDX/DBMF/XLP/GLD RS drop off. GDX and GLD stay in
    * the gold family. DBMF is in that drop and stays in the CTA family.
    * XLP is in that drop and is not 21d-confirmed.
    */
@@ -1341,6 +1399,9 @@ export function decideRiskoffEtf(input: {
 }): RiskoffEtfDecision {
   const open = openRiskoffEtfPositions(input.positions);
   const priorMisses = input.missingBarsMisses ?? missingBarsMisses;
+  const regime = resolveRiskoffOverlayRegime(input.spyAbove200, input.hygAbove200);
+  const regimeSpy = regime.spyAbove200;
+  const regimeHyg = regime.hygAbove200;
 
   if (input.riskOn) {
     missingBarsMisses = 0;
@@ -1359,7 +1420,7 @@ export function decideRiskoffEtf(input: {
   const heldNames = open.map((p) => p.symbol);
   const above200 = input.above200 ?? emptyRiskoffEtfAbove200();
   const returns21 = input.returns21 ?? emptyRiskoffEtfReturns();
-  const hygOnly = riskoffHygOnlyRiskOff(input.riskOn, input.spyAbove200, input.hygAbove200);
+  const hygOnly = riskoffHygOnlyRiskOff(input.riskOn, regimeSpy, regimeHyg);
   const rsSleeve = pickRiskoffEtfSleeve(input.returns, heldNames, undefined, returns21, hygOnly);
   let sleeve = pickRiskoffEtfSleeve(input.returns, heldNames, above200, returns21, hygOnly);
   if (sleeve === null || rsSleeve === null) {
@@ -1373,7 +1434,7 @@ export function decideRiskoffEtf(input: {
       now: input.now,
       open,
       quotes,
-      spyAbove200: input.spyAbove200,
+      spyAbove200: regimeSpy,
       hygOnly,
       realizedVol20: input.realizedVol20,
     });
@@ -1397,7 +1458,7 @@ export function decideRiskoffEtf(input: {
     if (decision.winners.length) priorOverlayTargets = [...decision.winners];
     return decision;
   };
-  const totalFrac = riskoffEtfNotionalFrac(input.spyAbove200);
+  const totalFrac = riskoffEtfNotionalFrac(regimeSpy);
   const canSize = (name: RiskoffEtfSymbol, frac: number): boolean => {
     const last = quotes.get(name);
     if (last === undefined) return false;

@@ -32,9 +32,9 @@ const CREDIT_LEG = new Set<string>(RISKOFF_CREDIT_LEG_SYMBOLS);
 export type RiskAlertSnap = {
   riskOn: boolean;
   checks: {
-    spyAbove200: boolean;
-    acwiAbove200: boolean;
-    hygAbove200: boolean;
+    spyAbove200: boolean | null;
+    acwiAbove200: boolean | null;
+    hygAbove200: boolean | null;
     uup20dPct: number | null;
     dollarVeto: boolean;
   };
@@ -97,9 +97,13 @@ export function riskFlipBody(snap: RiskAlertSnap): string {
     return `SPY, ACWI, HYG above 200dma; ${uup}; dollar veto cleared`;
   }
   const failed: string[] = [];
-  if (!c.spyAbove200) failed.push("SPY below 200dma");
-  if (!c.acwiAbove200) failed.push("ACWI below 200dma");
-  if (!c.hygAbove200) failed.push("HYG below 200dma");
+  const above = (label: string, value: boolean | null) => {
+    if (value === false) failed.push(`${label} below 200dma`);
+    else if (value === null) failed.push(`${label} 200dma missing`);
+  };
+  above("SPY", c.spyAbove200);
+  above("ACWI", c.acwiAbove200);
+  above("HYG", c.hygAbove200);
   if (c.dollarVeto) {
     failed.push(
       c.uup20dPct === null || !Number.isFinite(c.uup20dPct)
@@ -110,12 +114,18 @@ export function riskFlipBody(snap: RiskAlertSnap): string {
   return failed.join("; ") || "risk-off";
 }
 
+function aboveBit(value: boolean | null): string {
+  if (value === true) return "1";
+  if (value === false) return "0";
+  return "x";
+}
+
 export function riskCheckSignature(snap: RiskAlertSnap): string {
   const c = snap.checks;
   return [
-    c.spyAbove200 ? "s1" : "s0",
-    c.acwiAbove200 ? "a1" : "a0",
-    c.hygAbove200 ? "h1" : "h0",
+    `s${aboveBit(c.spyAbove200)}`,
+    `a${aboveBit(c.acwiAbove200)}`,
+    `h${aboveBit(c.hygAbove200)}`,
     c.dollarVeto ? "d1" : "d0",
   ].join("");
 }

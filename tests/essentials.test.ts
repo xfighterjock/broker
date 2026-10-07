@@ -219,6 +219,26 @@ describe("risk why line", () => {
     expect(line).toMatch(/dollar veto/);
     expect(line).not.toMatch(/ACWI below/);
   });
+
+  it("says 200dma missing when the series was not computed", () => {
+    const s = snapshot({
+      riskOn: false,
+      riskChecks: {
+        spyAbove200: null,
+        acwiAbove200: true,
+        hygAbove200: null,
+        uup20dPct: null,
+        dollarVeto: true,
+      },
+    });
+    const line = riskWhyLine(s);
+    expect(line).toMatch(/SPY 200dma missing/);
+    expect(line).toMatch(/HYG 200dma missing/);
+    expect(line).not.toMatch(/SPY below 200dma/);
+    expect(line).not.toMatch(/HYG below 200dma/);
+    expect(line).not.toMatch(/ACWI/);
+    expect(riskBadgeTitle(s)).toMatch(/SPY 200dma missing/);
+  });
 });
 
 describe("AUTO PAPER flags", () => {

@@ -96,9 +96,13 @@ export function riskWhyLine(s: StatusSnapshot): string {
     return `SPY/ACWI/HYG above 200dma · ${uup}`;
   }
   const failed: string[] = [];
-  if (!c.spyAbove200) failed.push("SPY below 200dma");
-  if (!c.acwiAbove200) failed.push("ACWI below 200dma");
-  if (!c.hygAbove200) failed.push("HYG below 200dma");
+  const above = (label: string, value: boolean | null) => {
+    if (value === false) failed.push(`${label} below 200dma`);
+    else if (value === null) failed.push(`${label} 200dma missing`);
+  };
+  above("SPY", c.spyAbove200);
+  above("ACWI", c.acwiAbove200);
+  above("HYG", c.hygAbove200);
   if (c.dollarVeto) {
     failed.push(
       c.uup20dPct === null || !Number.isFinite(c.uup20dPct)

@@ -439,12 +439,11 @@ describe("HTTP overlay (mocked E*TRADE chain, MockBroker only)", () => {
         expect(typeof snap.sleeveBooks[id].dailyPnlUsd).toBe("number");
       }
       expect(typeof snap.riskOn).toBe("boolean");
-      expect(snap.riskChecks).toMatchObject({
-        spyAbove200: expect.any(Boolean),
-        acwiAbove200: expect.any(Boolean),
-        hygAbove200: expect.any(Boolean),
-        dollarVeto: expect.any(Boolean),
-      });
+      for (const key of ["spyAbove200", "acwiAbove200", "hygAbove200"] as const) {
+        const value = snap.riskChecks[key];
+        expect(value === null || typeof value === "boolean").toBe(true);
+      }
+      expect(typeof snap.riskChecks.dollarVeto).toBe("boolean");
     } finally {
       await srv.close();
     }
