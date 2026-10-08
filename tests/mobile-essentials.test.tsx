@@ -337,4 +337,37 @@ describe("MobileEssentials", () => {
     expect(pinAt).toBeGreaterThan(-1);
     expect(closedAt).toBeGreaterThan(pinAt);
   });
+
+  it("shows read-only knowledge_time and Stage-3, with no stamp control", () => {
+    const quiet = render(
+      <MobileEssentials
+        state={snapshot()}
+        onToggleGate={() => {}}
+        onToggleAutoPaper={() => {}}
+        onToggleAutoSleeve={() => {}}
+        onFlatten={() => {}}
+      />,
+    );
+    expect(quiet.querySelector("[data-testid=knowledge-time-value]")?.textContent).toBe("—");
+    expect(quiet.querySelector("[data-testid=stage3-arm]")?.textContent).toBe("Stage-3 not armed");
+    expect(quiet.textContent).not.toMatch(/Stamp knowledge time/);
+    expect(quiet.querySelector("button")?.textContent === "Stamp knowledge time").toBe(false);
+
+    const armed = render(
+      <MobileEssentials
+        state={snapshot({ knowledgeTime: "2026-09-01T12:30:00.000Z" })}
+        onToggleGate={() => {}}
+        onToggleAutoPaper={() => {}}
+        onToggleAutoSleeve={() => {}}
+        onFlatten={() => {}}
+      />,
+    );
+    expect(armed.querySelector("[data-testid=knowledge-time-value]")?.textContent).toBe(
+      "2026-09-01T12:30:00.000Z",
+    );
+    expect(armed.querySelector("[data-testid=stage3-arm]")?.textContent).toBe(
+      "Stage-3 armed (auto)",
+    );
+    expect(armed.textContent).not.toMatch(/Stamp knowledge time/);
+  });
 });

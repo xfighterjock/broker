@@ -88,13 +88,6 @@ final class StatusController: ObservableObject {
         }
     }
 
-    func stampKnowledgeTime() async {
-        guard let api = makeAPI() else { return }
-        await mutate {
-            try await api.stampKnowledgeTime()
-        }
-    }
-
     func startEtradeAuthorize() async {
         guard let api = makeAPI() else { return }
         busy = true

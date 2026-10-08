@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   defaultAutoPaperBySleeve,
@@ -24,6 +26,9 @@ import {
   riskWhyLine,
   sleeveOpenHint,
   sleevePnlRows,
+  snapshotNow,
+  stage3Armed,
+  stage3Line,
 } from "../client/src/essentials";
 
 function book(daily: number, total: number, equity = 100_000 + total): SleeveBook {
@@ -308,5 +313,31 @@ describe("sleeve P/L rows", () => {
     expect(sleeveOpenHint("momentum", positions)).toBe("1 open · 2 lots");
     expect(sleeveOpenHint("day", positions)).toBeNull();
     expect(sleevePnlRows(snapshot().sleeveBooks, positions)[1].hint).toBe("1 open · 2 lots");
+  });
+});
+
+describe("Stage-3 read-only display", () => {
+  const now = new Date("2026-09-01T17:32:01.000Z");
+
+  it("is not armed without a same-ET-day stamp", () => {
+    expect(stage3Armed(now, null)).toBe(false);
+    expect(stage3Line(now, null)).toBe("Stage-3 not armed");
+    expect(stage3Line(now, "2026-08-31T12:30:00.000Z")).toBe("Stage-3 not armed");
+    expect(stage3Armed(now, "2026-09-01T18:00:00.000Z")).toBe(false);
+  });
+
+  it("reads armed (auto) when knowledge_time is set for this ET day", () => {
+    const kt = "2026-09-01T12:30:00.000Z";
+    expect(stage3Armed(now, kt)).toBe(true);
+    expect(stage3Line(now, kt)).toBe("Stage-3 armed (auto)");
+    expect(snapshotNow(snapshot({ knowledgeTime: kt })).toISOString()).toBe(now.toISOString());
+  });
+
+  it("desktop freeze panel has no stamp button", () => {
+    const app = readFileSync(resolve("client/src/App.tsx"), "utf8");
+    expect(app).not.toContain("Stamp knowledge time");
+    expect(app).not.toContain("/api/knowledge-time");
+    expect(app).toContain("stage3Line");
+    expect(app).toContain("knowledge-time-value");
   });
 });

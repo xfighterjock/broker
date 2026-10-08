@@ -7,6 +7,7 @@ import type {
   StatusSnapshot,
 } from "../../shared/types";
 import { anyAutoPaperOn, defaultAutoPaperBySleeve } from "../../shared/types";
+import { etParts } from "../../shared/clock";
 import { marketSessionBanner } from "../../shared/marketSession";
 
 export { marketSessionBanner };
@@ -169,6 +170,37 @@ export function sleevePnlRows(
 
 export const FLATTEN_CONFIRM =
   "Flatten gated paper positions? This is the print-day / emergency veto (MockBroker, not live).";
+
+export const STAGE3_ARMED_LABEL = "Stage-3 armed (auto)";
+export const STAGE3_NOT_ARMED_LABEL = "Stage-3 not armed";
+
+function sameEtCalendarDay(a: Date, b: Date): boolean {
+  const pa = etParts(a);
+  const pb = etParts(b);
+  return pa.year === pb.year && pa.month === pb.month && pa.day === pb.day;
+}
+
+/** Display twin of server `dayStochArmed`: same ET day and now at or after the stamp. */
+export function stage3Armed(now: Date, knowledgeTime: string | null | undefined): boolean {
+  if (!knowledgeTime) return false;
+  const kt = Date.parse(knowledgeTime);
+  if (!Number.isFinite(kt)) return false;
+  if (now.getTime() < kt) return false;
+  return sameEtCalendarDay(now, new Date(kt));
+}
+
+export function stage3Line(now: Date, knowledgeTime: string | null | undefined): string {
+  return stage3Armed(now, knowledgeTime) ? STAGE3_ARMED_LABEL : STAGE3_NOT_ARMED_LABEL;
+}
+
+export function snapshotNow(state: Pick<StatusSnapshot, "clock"> | null | undefined): Date {
+  const raw = state?.clock?.nowUtc;
+  if (raw) {
+    const t = Date.parse(raw);
+    if (Number.isFinite(t)) return new Date(t);
+  }
+  return new Date();
+}
 
 export function marketSessionLine(
   s: Pick<StatusSnapshot, "marketSession"> | null | undefined,

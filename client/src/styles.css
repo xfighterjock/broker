@@ -609,6 +609,29 @@ tr.active-row { background: #1a2430; }
   background: var(--green);
 }
 .essentials-toggle .badge { font-size: 15px; padding: 6px 10px; }
+.essentials-knowledge {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 2px 0;
+}
+.essentials-knowledge-row {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+.essentials-knowledge-row .mono {
+  color: var(--text);
+  letter-spacing: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
 .essentials-auto-chips {
   display: flex;
   flex-wrap: wrap;

@@ -14,6 +14,9 @@ import {
   marketSessionLine,
   riskWhyLine,
   sleevePnlRows,
+  snapshotNow,
+  stage3Armed,
+  stage3Line,
 } from "./essentials";
 
 export function useEssentialsView(): boolean {
@@ -144,6 +147,20 @@ export function MobileEssentials({
           variant="essentials"
           onToggle={onToggleAutoSleeve}
         />
+        <div className="essentials-knowledge" aria-label="knowledge time">
+          <div className="essentials-knowledge-row">
+            <span>knowledge_time</span>
+            <span className="mono" data-testid="knowledge-time-value">
+              {state.knowledgeTime ?? "—"}
+            </span>
+          </div>
+          <span
+            className={`badge ${stage3Armed(snapshotNow(state), state.knowledgeTime) ? "on" : "off"}`}
+            data-testid="stage3-arm"
+          >
+            {stage3Line(snapshotNow(state), state.knowledgeTime)}
+          </span>
+        </div>
         <button type="button" className="essentials-flatten danger" onClick={flatten}>
           Flatten
         </button>
