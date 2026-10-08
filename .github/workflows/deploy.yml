@@ -1,0 +1,94 @@
+# Build, test, and deploy Event Gate to the VPS.
+# Secrets (repository Actions secrets, never committed):
+#   DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY, DEPLOY_KNOWN_HOSTS
+#   DEPLOY_PORT (optional; omit to use 22)
+# When DEPLOY_SSH_KEY is unset the deploy step skips with a notice and the job stays green.
+
+name: Deploy Event Gate
+
+run-name: Deploy ${{ github.ref_name }} (${{ github.sha }})
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+    inputs:
+      skip_restart:
+        description: Skip systemctl restart event-gate (still rsync, and still require the unit to be active)
+        required: false
+        type: boolean
+        default: false
+
+# One VPS sync at a time. A second run waits. It is not cancelled mid-rsync.
+concurrency:
+  group: event-gate-vps-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Test and typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check deploy script
+        run: bash deploy/gha-sync.test.sh
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck server
+        run: npm run typecheck:server
+
+      - name: Typecheck client
+        run: npm run typecheck:client
+
+      - name: Test
+        run: npm test
+
+  deploy:
+    name: Deploy to VPS
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build server
+        run: npm run build -w @broker/server
+
+      - name: Build client
+        run: npm run build -w @broker/client
+
+      - name: Rsync and restart
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          # Always the string true or false. Push has no input. Dispatch passes the checkbox.
+          SKIP_RESTART: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.skip_restart == 'true' && 'true' || 'false' }}
+        run: bash deploy/gha-sync.sh
