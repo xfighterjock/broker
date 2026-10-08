@@ -254,10 +254,7 @@ enum EssentialsFormat {
 
     static func stage3Line(now: Date, knowledgeTime: String?) -> String {
         if dayStochArmed(now: now, knowledgeTime: knowledgeTime) {
-            return "Stage-3 armed"
-        }
-        if knowledgeTime == nil || knowledgeTime?.isEmpty == true {
-            return "Stage-3 not armed — no knowledge_time"
+            return "Stage-3 armed (auto)"
         }
         return "Stage-3 not armed"
     }

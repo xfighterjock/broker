@@ -1,6 +1,6 @@
 import { sameEtDay } from "./dayMomentum";
-import { freezeCardEmpty, isPrintEvent } from "./eventGateAlerts";
-import type { CalendarEvent, FreezeCard } from "../../shared/types";
+import { isPrintEvent } from "./eventGateAlerts";
+import type { CalendarEvent } from "../../shared/types";
 
 export type KnowledgeTimeStampSource = "manual" | "ops" | "auto";
 
@@ -37,15 +37,17 @@ export function knowledgeTimeAnchorEvent(
   return todays[0];
 }
 
+/**
+ * Stamp once the anchor print time has passed and this ET day has no stamp.
+ * A freeze card is not required. Jobless claims and other non-print rows do not qualify.
+ */
 export function shouldAutoStampKnowledgeTime(input: {
   now: Date;
   events: CalendarEvent[];
-  freeze: Pick<FreezeCard, "freezeTimestamp">;
   knowledgeTime: string | null | undefined;
 }): { stamp: boolean; reason: string; event: CalendarEvent | null } {
   const event = knowledgeTimeAnchorEvent(input.now, input.events);
   if (!event) return { stamp: false, reason: "no print event today", event: null };
-  if (freezeCardEmpty(input.freeze)) return { stamp: false, reason: "no freeze", event };
   if (knowledgeTimeAlreadySetForEtDay(input.now, input.knowledgeTime)) {
     return { stamp: false, reason: "already stamped", event };
   }

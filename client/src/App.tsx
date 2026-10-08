@@ -26,6 +26,8 @@ import {
   marketSessionLine,
   riskBadgeTitle,
   SLEEVE_TAB_LABELS as TAB_LABELS,
+  snapshotNow,
+  stage3Line,
 } from "./essentials";
 import { AutoPaperChips } from "./AutoPaperChips";
 import { CashCountdown } from "./CashCountdown";
@@ -774,7 +776,13 @@ export default function App() {
               <div className="k">freeze stamp</div>
               <div className="mono">{freeze.freezeTimestamp ?? "—"}</div>
               <div className="k">knowledge_time</div>
-              <div className="mono">{state.knowledgeTime ?? "—"}</div>
+              <div className="mono" data-testid="knowledge-time-value">
+                {state.knowledgeTime ?? "—"}
+              </div>
+              <div className="k">Stage-3</div>
+              <div className="mono" data-testid="stage3-arm">
+                {stage3Line(snapshotNow(state), state.knowledgeTime)}
+              </div>
             </div>
             <div className="btns">
               <button
@@ -783,7 +791,6 @@ export default function App() {
               >
                 Save freeze {freezeDirty ? "*" : ""}
               </button>
-              <button onClick={() => post("/api/knowledge-time")}>Stamp knowledge time</button>
             </div>
             {CHECKLIST_LABELS.map(({ key, label }) => {
               const v = (state.checklist as Checklist)[key];

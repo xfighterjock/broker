@@ -3,7 +3,7 @@ import express from "express";
 import session from "express-session";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { seedEvents, zonedTimeToUtc } from "../shared/clock";
-import { emptyFreeze, type CalendarEvent } from "../shared/types";
+import type { CalendarEvent } from "../shared/types";
 import { buildApp } from "../server/src/app";
 import type { AppConfig } from "../server/src/config";
 import { GateEngine } from "../server/src/gate";
@@ -31,12 +31,9 @@ const OPS_TOKEN = "test-only-ops-token-not-a-secret";
 
 const events = seedEvents();
 const nfp = events.find((e) => e.type === "NFP")!;
+const cpi = events.find((e) => e.type === "CPI")!;
 const stmt = events.find((e) => e.type === "FOMC_STATEMENT")!;
 const pc = events.find((e) => e.type === "FOMC_PC")!;
-
-function freezeAt(iso: string) {
-  return { ...emptyFreeze(), freezeTimestamp: iso };
-}
 
 describe("knowledge_time auto-stamp rules", () => {
   it("FOMC uses STATEMENT time when STATEMENT and PC both exist", () => {
@@ -51,7 +48,6 @@ describe("knowledge_time auto-stamp rules", () => {
     const got = shouldAutoStampKnowledgeTime({
       now: before,
       events,
-      freeze: freezeAt("2026-09-16T14:00:00.000Z"),
       knowledgeTime: null,
     });
     expect(got.stamp).toBe(false);
@@ -59,40 +55,67 @@ describe("knowledge_time auto-stamp rules", () => {
     expect(got.event?.type).toBe("FOMC_STATEMENT");
   });
 
-  it("auto-stamps FOMC at STATEMENT time with a freeze, not at PC", () => {
+  it("auto-stamps FOMC at STATEMENT time, not at PC", () => {
     const atStmt = new Date(stmt.timeUtc);
     const got = shouldAutoStampKnowledgeTime({
       now: atStmt,
       events,
-      freeze: freezeAt("2026-09-16T16:00:00.000Z"),
       knowledgeTime: null,
     });
     expect(got.stamp).toBe(true);
     expect(got.event?.type).toBe("FOMC_STATEMENT");
   });
 
-  it("auto-stamps NFP at print time when a freeze exists", () => {
+  it("auto-stamps NFP at print time", () => {
     const atPrint = new Date(nfp.timeUtc);
     const got = shouldAutoStampKnowledgeTime({
       now: atPrint,
       events,
-      freeze: freezeAt("2026-09-04T11:00:00.000Z"),
       knowledgeTime: null,
     });
     expect(got.stamp).toBe(true);
     expect(got.event?.type).toBe("NFP");
   });
 
-  it("does not auto-stamp without a freeze", () => {
+  it("auto-stamps CPI at print time with no freeze card", () => {
+    const atPrint = new Date(cpi.timeUtc);
+    const got = shouldAutoStampKnowledgeTime({
+      now: atPrint,
+      events,
+      knowledgeTime: null,
+    });
+    expect(got.stamp).toBe(true);
+    expect(got.reason).toBe("auto");
+    expect(got.event?.type).toBe("CPI");
+  });
+
+  it("auto-stamps NFP at print time with no freeze card", () => {
     const atPrint = new Date(nfp.timeUtc);
     const got = shouldAutoStampKnowledgeTime({
       now: atPrint,
       events,
-      freeze: emptyFreeze(),
+      knowledgeTime: null,
+    });
+    expect(got.stamp).toBe(true);
+    expect(got.reason).toBe("auto");
+    expect(got.event?.type).toBe("NFP");
+  });
+
+  it("does not auto-stamp jobless claims or other non-print events", () => {
+    const claims: CalendarEvent = {
+      id: "claims-2026-09-03",
+      timeUtc: "2026-09-03T12:30:00.000Z",
+      type: "JOBLESS_CLAIMS",
+      flattenEt: "15:45",
+    };
+    const got = shouldAutoStampKnowledgeTime({
+      now: new Date(claims.timeUtc),
+      events: [claims],
       knowledgeTime: null,
     });
     expect(got.stamp).toBe(false);
-    expect(got.reason).toBe("no freeze");
+    expect(got.reason).toBe("no print event today");
+    expect(got.event).toBeNull();
   });
 
   it("does not auto-stamp twice the same ET day", () => {
@@ -102,7 +125,6 @@ describe("knowledge_time auto-stamp rules", () => {
     const got = shouldAutoStampKnowledgeTime({
       now: after,
       events,
-      freeze: freezeAt("2026-09-04T11:00:00.000Z"),
       knowledgeTime: first,
     });
     expect(got.stamp).toBe(false);
@@ -117,7 +139,6 @@ describe("knowledge_time auto-stamp rules", () => {
     const got = shouldAutoStampKnowledgeTime({
       now: after,
       events,
-      freeze: freezeAt("2026-09-04T11:00:00.000Z"),
       knowledgeTime: "2026-09-01T12:00:00.000Z",
     });
     expect(got.stamp).toBe(true);
@@ -127,7 +148,6 @@ describe("knowledge_time auto-stamp rules", () => {
     const got = shouldAutoStampKnowledgeTime({
       now: new Date("2026-09-19T15:00:00.000Z"),
       events,
-      freeze: freezeAt("2026-09-19T14:00:00.000Z"),
       knowledgeTime: null,
     });
     expect(got.stamp).toBe(false);
@@ -357,7 +377,7 @@ describe("knowledge_time HTTP auto-stamp + ops", () => {
     }
   });
 
-  it("does not auto-stamp at event time without a freeze", async () => {
+  it("auto-stamps at NFP time with no freeze card", async () => {
     const now = new Date(nfp.timeUtc);
     const dir = await seededUsers();
     const { app, engine } = makeApp(dir, { now: () => now });
@@ -365,9 +385,40 @@ describe("knowledge_time HTTP auto-stamp + ops", () => {
     try {
       const status = await fetch(`${srv.url}/api/status`, { headers: opsHeaders() });
       expect(status.status).toBe(200);
+      const snap = (await status.json()) as {
+        knowledgeTime?: string | null;
+        freeze?: { freezeTimestamp?: string | null };
+      };
+      expect(snap.freeze?.freezeTimestamp ?? null).toBeNull();
+      expect(snap.knowledgeTime).toBe(now.toISOString());
+      expect(engine.getLogs().some((l) => l.message.includes("knowledge_time auto-stamped"))).toBe(
+        true,
+      );
+
+      const again = await fetch(`${srv.url}/api/status`, { headers: opsHeaders() });
+      const second = (await again.json()) as { knowledgeTime?: string | null };
+      expect(second.knowledgeTime).toBe(snap.knowledgeTime);
+      expect(
+        engine.getLogs().filter((l) => l.message.includes("knowledge_time auto-stamped")),
+      ).toHaveLength(1);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it("auto-stamps at CPI time with no freeze card", async () => {
+    const now = new Date(cpi.timeUtc);
+    const dir = await seededUsers();
+    const { app, engine } = makeApp(dir, { now: () => now });
+    const srv = await listen(app);
+    try {
+      const status = await fetch(`${srv.url}/api/status`, { headers: opsHeaders() });
+      expect(status.status).toBe(200);
       const snap = (await status.json()) as { knowledgeTime?: string | null };
-      expect(snap.knowledgeTime).toBeNull();
-      expect(engine.getLogs().some((l) => /knowledge_time/.test(l.message))).toBe(false);
+      expect(snap.knowledgeTime).toBe(now.toISOString());
+      expect(engine.getLogs().some((l) => l.message.includes("knowledge_time auto-stamped"))).toBe(
+        true,
+      );
     } finally {
       await srv.close();
     }

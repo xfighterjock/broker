@@ -246,13 +246,6 @@ struct EssentialsView: View {
                 kind: armed ? "on" : "off"
             )
             .accessibilityIdentifier("stage3-arm")
-            Button("Stamp knowledge time") {
-                Task { await status.stampKnowledgeTime() }
-            }
-            .buttonStyle(.bordered)
-            .frame(maxWidth: .infinity)
-            .disabled(status.busy || snap == nil)
-            .accessibilityIdentifier("stamp-knowledge-time")
         }
     }
 

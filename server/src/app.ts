@@ -573,7 +573,6 @@ export function buildApp(deps: AppDeps): express.Express {
     const decision = shouldAutoStampKnowledgeTime({
       now: atTime,
       events: deps.getEvents(),
-      freeze: memory.freeze,
       knowledgeTime: memory.knowledgeTime,
     });
     if (!decision.stamp) return false;
