@@ -11,7 +11,7 @@ Paper and mock trading are unchanged. This path does not place E*TRADE or Tradov
 The workflow file is `.github/workflows/deploy.yml`. Two jobs, and the second starts only after the first succeeds:
 
 1. CI: `npm ci`, `npm run typecheck:server`, `npm run typecheck:client`, `npm test`. A failing test or typecheck does not deploy.
-2. Build on Node 20: `npm ci`, `npm run build -w @broker/server`, `npm run build -w @broker/client`.
+2. Build on Node 24: `npm ci`, `npm run build -w @broker/server`, `npm run build -w @broker/client`.
 3. Rsync the server bundle to `/opt/broker/dist/` (no delete flag): `dist/server.js`, `dist/server.js.map`, and `dist/package.json`.
 4. `rsync -a` of `client/dist/` to `/opt/broker/client/dist/` (no delete flag). `--no-owner --no-group` is set because the deploy user is not root; preserving owner makes rsync exit 23. Modes are 755 for directories and 644 for files so `eventgate` and nginx can read them.
 5. `sudo -n /usr/bin/systemctl restart event-gate`, then a 3 second pause.
@@ -181,7 +181,7 @@ Later pushes to `master` deploy on their own, including during the cash session 
 
 ## Manual Mac fallback
 
-Use this when Actions cannot run. It is the same script as the workflow. From a clean checkout on the Mac, with Node 20:
+Use this when Actions cannot run. It is the same script as the workflow. From a clean checkout on the Mac, with Node 24:
 
 ```bash
 npm ci
