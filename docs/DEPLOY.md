@@ -14,12 +14,13 @@ The workflow file is `.github/workflows/deploy.yml`. Two jobs, and the second st
 2. Build on Node 24: `npm ci`, `npm run build -w @broker/server`, `npm run build -w @broker/client`.
 3. Rsync the server bundle to `/opt/broker/dist/` (no delete flag): `dist/server.js`, `dist/server.js.map`, and `dist/package.json`.
 4. `rsync -a` of `client/dist/` to `/opt/broker/client/dist/` (no delete flag). `--no-owner --no-group` is set because the deploy user is not root; preserving owner makes rsync exit 23. Modes are 755 for directories and 644 for files so `eventgate` and nginx can read them.
-5. `sudo -n /usr/bin/systemctl restart event-gate`, then a 3 second pause.
-6. Fail the job unless `sudo -n /usr/bin/systemctl is-active event-gate` prints `active`, and unless `md5sum /opt/broker/dist/server.js` on the VPS matches the built file.
+5. Rsync `db/migrations/*.sql` to `/opt/broker/db/migrations/` before the restart. No `--delete`: SQL already on the box stays. Only `*.sql` is copied. `--no-owner --no-group --chmod=F644,D755` so the deploy user does not need root to set owner, group, or mode. Files are 644 and directories 755 so `eventgate` can read them. After the copy, the job runs `ls -1 /opt/broker/db/migrations` over SSH and fails unless every local migration filename is in that listing.
+6. `sudo -n /usr/bin/systemctl restart event-gate`, then a 3 second pause.
+7. Fail the job unless `sudo -n /usr/bin/systemctl is-active event-gate` prints `active`, and unless `md5sum /opt/broker/dist/server.js` on the VPS matches the built file.
 
 A second deploy waits. The concurrency group is `event-gate-vps-deploy` with `cancel-in-progress: false`, so two rsyncs never run at once.
 
-`workflow_dispatch` has an input, **Skip systemctl restart**. Checked, the job still rsyncs and still fails unless the unit is already active and the md5 matches. The process keeps the previous bundle until a later restart. Pushes to `master` always restart.
+`workflow_dispatch` has an input, **Skip systemctl restart**. Checked, the job still rsyncs the bundles and `db/migrations/*.sql`, and still fails unless the unit is already active and the md5 matches. The process keeps the previous bundle until a later restart, so SQL copied in that run is applied on the next boot. Pushes to `master` always restart.
 
 A deploy during the market cash session (weekdays 09:30–16:00 America/New_York) still runs. The log emits a warning with the ET clock. That window is the clock only. It is not the NYSE holiday or early-close calendar. Outside that window the log says so. Neither case fails the job.
 
@@ -27,9 +28,8 @@ If `DEPLOY_SSH_KEY` is unset, the deploy step prints a notice and exits 0. The w
 
 ## What this deploy does not do
 
-- It does not copy `dist/migrate.js`. The server build does emit that file (`server/build.mjs`). Nothing needs it on the VPS. systemd `event-gate` runs `node dist/server.js` with WorkingDirectory `/opt/broker`, and `server/src/index.ts` calls `runMigrations` on startup. Schema SQL is read from `/opt/broker/db/migrations` on the box, not from the bundle.
+- It does not copy `dist/migrate.js`. The server build does emit that file (`server/build.mjs`). Nothing needs it on the VPS. systemd `event-gate` runs `node dist/server.js` with WorkingDirectory `/opt/broker`, and `server/src/index.ts` calls `runMigrations` on startup. Schema SQL is the `*.sql` files rsynced to `/opt/broker/db/migrations` in step 5. A commit that adds a migration is on the box before the restart, and the next boot applies it. Files already in that directory are not deleted.
 - It does not `git pull`, does not `npm ci` on the VPS, and does not reload nginx. Static files are read from disk. `firebase-admin` is external to the bundle (`server/build.mjs`); other installed modules stay in `/opt/broker/node_modules` from the last on-box `npm ci`. When `package.json` dependencies change, run `npm ci` on the VPS (or `deploy/deploy.sh`) before you depend on the new bundle.
-- A commit that adds a SQL file under `db/migrations` does not upload that file. Pull or copy `db/migrations` onto the VPS so the restarted process can apply it. Until that directory is updated, boot applies only the SQL already on the box.
 - It does not change `.env`, `.env.etrade`, the systemd unit, or nginx.
 
 `dist/package.json` is copied. The repo root is `"type": "module"` and the bundle is CommonJS. Node loads `dist/server.js` as CommonJS only when `dist/package.json` says `"type": "commonjs"`. The server build writes that file. The rsync does not delete anything else already in `/opt/broker/dist/`.
@@ -82,9 +82,9 @@ On an sshd older than OpenSSH 7.2, which has no `restrict`, use this prefix inst
 no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty,no-user-rc
 ```
 
-### 3. Write access only on the two dist directories
+### 3. Write access on the dist directories and on db/migrations
 
-`deploy` must walk `/opt/broker` and `/opt/broker/client` and must write only `/opt/broker/dist` and `/opt/broker/client/dist`. It must not read `.env` or `.env.etrade`.
+`deploy` must walk `/opt/broker`, `/opt/broker/client`, and `/opt/broker/db`, and must write `/opt/broker/dist`, `/opt/broker/client/dist`, and `/opt/broker/db/migrations`. It must not read `.env` or `.env.etrade`.
 
 ```bash
 sudo apt-get update
@@ -92,6 +92,8 @@ sudo apt-get install -y acl rsync
 sudo install -d -o eventgate -g eventgate -m 755 /opt/broker/dist /opt/broker/client /opt/broker/client/dist
 sudo setfacl -m u:deploy:--x /opt /opt/broker /opt/broker/client
 sudo setfacl -m u:deploy:rwx /opt/broker/dist /opt/broker/client/dist
+sudo setfacl -R -m u:deploy:rwX /opt/broker/db/migrations
+sudo setfacl -R -d -m u:deploy:rwX /opt/broker/db/migrations
 sudo chown eventgate:eventgate /opt/broker/.env
 sudo chmod 600 /opt/broker/.env
 if [ -f /opt/broker/.env.etrade ]; then
@@ -100,14 +102,29 @@ if [ -f /opt/broker/.env.etrade ]; then
 fi
 ```
 
-`u:deploy:--x` lets `deploy` traverse those directories without listing them and without writing. Any other secret file under `/opt/broker` (Firebase service account JSON included) stays mode 600 and owned by `eventgate`, not `deploy`.
+`u:deploy:--x` lets `deploy` traverse those directories without listing them and without writing. The two `setfacl` lines on `/opt/broker/db/migrations` grant `deploy` read/write on the directory and on the SQL files already in it, and a default ACL so new files created there keep that access. `rwX` is execute only on directories. Any other secret file under `/opt/broker` (Firebase service account JSON included) stays mode 600 and owned by `eventgate`, not `deploy`.
+
+If `deploy` cannot traverse `/opt/broker/db` (the parent is not executable for that user), add execute on that directory only:
+
+```bash
+sudo setfacl -m u:deploy:--x /opt/broker/db
+```
+
+`rsync --chmod` sets mode 644 on each SQL file. That needs `deploy` to own the file. SQL already on the box is often owned by `eventgate`, and the mode change then fails even after the ACL grants write. Chown of those existing files may be needed. Group can stay `eventgate`. Leave mode 644 so the service account can still read them:
+
+```bash
+sudo chown deploy:eventgate /opt/broker/db/migrations/*.sql
+sudo chmod 644 /opt/broker/db/migrations/*.sql
+```
 
 Confirm:
 
 ```bash
 sudo -u deploy test -x /opt/broker && echo "traverse ok"
+sudo -u deploy test -x /opt/broker/db && echo "db traverse ok"
 sudo -u deploy test -w /opt/broker/dist && echo "server dist writable"
 sudo -u deploy test -w /opt/broker/client/dist && echo "client dist writable"
+sudo -u deploy test -w /opt/broker/db/migrations && echo "migrations writable"
 sudo -u deploy test -w /opt/broker && echo "ERROR: deploy can write /opt/broker" && exit 1
 sudo -u deploy test -r /opt/broker/.env && echo "ERROR: deploy can read .env" && exit 1
 echo "permissions ok"
@@ -201,4 +218,4 @@ bash deploy/gha-sync.sh
 
 Stock macOS `rsync` 2.6.9 is enough. The local hash uses `md5sum` when it exists and `md5 -q` otherwise. The VPS side of the hash is `md5sum` (coreutils).
 
-`deploy/deploy.sh` is the older on-box path, not what GHA runs. On the VPS it git-pulls (unless the tree is dirty or has no remote), `npm ci`, builds, `npm run migrate`, restarts the unit, and reloads nginx. Use it when you are already on the box and need a dependency install or a migration-file update. It is broader than the rsync path and it is not least-privilege SSH.
+`deploy/deploy.sh` is the older on-box path, not what GHA runs. On the VPS it git-pulls (unless the tree is dirty or has no remote), `npm ci`, builds, `npm run migrate`, restarts the unit, and reloads nginx. Use it when you are already on the box and need a dependency install. Schema SQL is already copied by `deploy/gha-sync.sh`. It is broader than the rsync path and it is not least-privilege SSH.

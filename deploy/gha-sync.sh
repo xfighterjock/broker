@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copy a built Event Gate tree to the VPS and restart systemd event-gate.
+# Copy a built Event Gate tree and db/migrations/*.sql to the VPS, then restart systemd event-gate.
 # Used by .github/workflows/deploy.yml and by the manual Mac fallback in docs/DEPLOY.md.
 # Host, user, port, key, and known_hosts come from the environment. Never hardcode them.
 set -euo pipefail
@@ -69,10 +69,19 @@ if ! grep -q '"type":"commonjs"' dist/package.json; then
   exit 1
 fi
 
+shopt -s nullglob
+migration_files=(db/migrations/*.sql)
+shopt -u nullglob
+if [ "${#migration_files[@]}" -eq 0 ]; then
+  echo "::error title=No migrations::db/migrations has no .sql files. Refusing to deploy a tree that would restart without this commit's schema SQL."
+  exit 1
+fi
+
 # Server rsync list is dist/server.js, dist/server.js.map, and dist/package.json.
 # The standalone migrate bundle is omitted: systemd runs dist/server.js, and that
-# process applies SQL from /opt/broker/db/migrations on startup. Nothing on the
-# unit invokes a separate migrate program.
+# process applies SQL from /opt/broker/db/migrations on startup. This script copies
+# db/migrations/*.sql there before the restart. Nothing on the unit invokes a
+# separate migrate program.
 if ! command -v ssh >/dev/null 2>&1 || ! command -v rsync >/dev/null 2>&1; then
   if command -v apt-get >/dev/null 2>&1; then
     sudo apt-get update
@@ -126,9 +135,9 @@ export DEPLOY_KNOWN_HOSTS_FILE="$known"
 
 remote="${DEPLOY_USER}@${DEPLOY_HOST}"
 
-echo "Checking remote dist directories"
-if ! "$tmp/sshwrap" "$remote" 'test -d /opt/broker/dist && test -w /opt/broker/dist && test -d /opt/broker/client/dist && test -w /opt/broker/client/dist'; then
-  echo "::error title=Remote directories not writable::/opt/broker/dist and /opt/broker/client/dist must exist and be writable by the deploy user. See docs/DEPLOY.md."
+echo "Checking remote dist and migrations directories"
+if ! "$tmp/sshwrap" "$remote" 'test -d /opt/broker/dist && test -w /opt/broker/dist && test -d /opt/broker/client/dist && test -w /opt/broker/client/dist && test -d /opt/broker/db/migrations && test -w /opt/broker/db/migrations'; then
+  echo "::error title=Remote directories not writable::/opt/broker/dist, /opt/broker/client/dist, and /opt/broker/db/migrations must exist and be writable by the deploy user. See docs/DEPLOY.md."
   exit 1
 fi
 
@@ -153,6 +162,34 @@ if ! rsync -a --no-owner --no-group -e "$tmp/sshwrap" \
   echo "::error title=Client rsync failed::Copy of client/dist/ to /opt/broker/client/dist/ failed."
   exit 1
 fi
+
+# No delete flag: SQL already on the box stays. Only *.sql. Owner and group are
+# not preserved, and modes are set without root (files 644, directories 755).
+echo "Rsync db/migrations/*.sql to /opt/broker/db/migrations/"
+if ! rsync -a --no-owner --no-group --chmod=F644,D755 -e "$tmp/sshwrap" \
+  "${migration_files[@]}" \
+  "${remote}:/opt/broker/db/migrations/"; then
+  echo "::error title=Migrations rsync failed::Copy of db/migrations/*.sql to /opt/broker/db/migrations/ failed."
+  exit 1
+fi
+
+echo "Verifying migration filenames on the VPS"
+if ! remote_names="$("$tmp/sshwrap" "$remote" ls -1 /opt/broker/db/migrations)"; then
+  echo "::error title=Migration verify failed::ssh ls of /opt/broker/db/migrations failed."
+  exit 1
+fi
+missing_names=()
+for f in "${migration_files[@]}"; do
+  base="${f##*/}"
+  if ! printf '%s\n' "$remote_names" | grep -Fxq -- "$base"; then
+    missing_names+=("$base")
+  fi
+done
+if [ "${#missing_names[@]}" -gt 0 ]; then
+  echo "::error title=Migration missing on VPS::After rsync, these files are not in /opt/broker/db/migrations: ${missing_names[*]}"
+  exit 1
+fi
+echo "migrations ok (${#migration_files[@]} files)"
 
 if [ "${SKIP_RESTART:-false}" = "true" ]; then
   echo "::notice title=Restart skipped::skip_restart is set. Files were copied. systemctl restart event-gate was not run. The running process keeps the previous bundle until the next restart."

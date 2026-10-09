@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Checks for the deploy script that do not open an SSH connection.
+# Checks for the deploy script. The copy exercise uses a fake ssh and rsync on PATH and does not open a connection.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -20,7 +20,39 @@ bash -n "$CASH"
 bash -n "$SYNC"
 
 fake="$(mktemp -d)"
-trap 'rm -rf "$fake"' EXIT
+artifact_backup=""
+extra_note=""
+bin=""
+vps=""
+cleanup() {
+  rm -rf "$fake"
+  if [ -n "$bin" ]; then
+    rm -rf "$bin"
+  fi
+  if [ -n "$vps" ]; then
+    rm -rf "$vps"
+  fi
+  if [ -n "$extra_note" ]; then
+    rm -f "$extra_note"
+  fi
+  if [ -n "$artifact_backup" ] && [ -d "$artifact_backup" ]; then
+    local rel
+    if [ -f "$artifact_backup/created" ]; then
+      while IFS= read -r rel; do
+        rm -f "$ROOT/$rel"
+      done < "$artifact_backup/created"
+    fi
+    if [ -f "$artifact_backup/existed" ]; then
+      while IFS= read -r rel; do
+        cp -a "$artifact_backup/$rel" "$ROOT/$rel"
+      done < "$artifact_backup/existed"
+    fi
+    rmdir "$ROOT/client/dist" "$ROOT/dist" 2>/dev/null || true
+    rm -rf "$artifact_backup"
+    artifact_backup=""
+  fi
+}
+trap cleanup EXIT
 cat > "$fake/date" << 'EOF'
 #!/usr/bin/env bash
 if [ -z "${FAKE_ET_STAMP:-}" ]; then
@@ -206,5 +238,251 @@ fi
 if ! grep -q 'skip_restart' "$WF"; then
   fail "workflow_dispatch must offer skip_restart"
 fi
+if ! grep -q 'node-version: "24"' "$WF"; then
+  fail "workflow must stay on Node 24"
+fi
+if ! grep -q 'actions/checkout@v7' "$WF" || ! grep -q 'actions/setup-node@v7' "$WF"; then
+  fail "workflow must keep the Node 24 actions"
+fi
+if ! grep -q 'db/migrations/\*\.sql' "$SYNC"; then
+  fail "sync must copy db/migrations/*.sql"
+fi
+if ! grep -q '/opt/broker/db/migrations/' "$SYNC"; then
+  fail "sync must target /opt/broker/db/migrations/"
+fi
+if ! grep -q -- '--chmod=F644,D755' "$SYNC"; then
+  fail "migration rsync must set mode with --chmod=F644,D755"
+fi
+if ! grep -q -- '--no-owner --no-group' "$SYNC"; then
+  fail "rsync must not preserve owner or group"
+fi
+if ! grep -q 'ls -1 /opt/broker/db/migrations' "$SYNC"; then
+  fail "sync must verify migration filenames with ls"
+fi
+if ! grep -q 'log_cash_session' "$SYNC"; then
+  fail "sync must keep the cash-session guard"
+fi
+if ! grep -q 'DEPLOY_SSH_KEY is unset' "$SYNC"; then
+  fail "unset DEPLOY_SSH_KEY must still skip"
+fi
+
+line_of() {
+  grep -n "$1" "$SYNC" | head -1 | cut -d: -f1
+}
+mig_rsync="$(line_of 'Rsync db/migrations')"
+mig_ls="$(line_of 'ls -1 /opt/broker/db/migrations')"
+restart="$(line_of 'sudo -n /usr/bin/systemctl restart event-gate')"
+[ -n "$mig_rsync" ] && [ -n "$mig_ls" ] && [ -n "$restart" ] || fail "missing migration or restart markers"
+[ "$mig_rsync" -lt "$mig_ls" ] || fail "ls verify must follow the migration rsync"
+[ "$mig_ls" -lt "$restart" ] || fail "migration verify must finish before systemctl restart"
+
+deploy_doc="$ROOT/docs/DEPLOY.md"
+design="$ROOT/docs/DESIGN.md"
+if grep -n 'does not upload' "$deploy_doc"; then
+  fail "DEPLOY.md must not say migrations are not uploaded"
+fi
+if ! grep -q 'setfacl -R -m u:deploy:rwX /opt/broker/db/migrations' "$deploy_doc"; then
+  fail "DEPLOY.md must document the migrations ACL"
+fi
+if ! grep -q 'setfacl -R -d -m u:deploy:rwX /opt/broker/db/migrations' "$deploy_doc"; then
+  fail "DEPLOY.md must document the default migrations ACL"
+fi
+if ! grep -q 'chown deploy:eventgate /opt/broker/db/migrations/\*\.sql' "$deploy_doc"; then
+  fail "DEPLOY.md must note that chown of existing migration files may be needed"
+fi
+if ! grep -q '/opt/broker/db/migrations/' "$design"; then
+  fail "DESIGN.md deploy line must name the migrations destination"
+fi
+if grep -n 'from the VPS checkout' "$design"; then
+  fail "DESIGN.md must not say boot applies migrations only from the VPS checkout"
+fi
+
+# Fake ssh/rsync: copy this repo's SQL, keep a pre-existing remote file, fail when a name is missing.
+prepare_artifacts() {
+  artifact_backup="$(mktemp -d)"
+  local rel
+  for rel in dist/server.js dist/server.js.map dist/package.json client/dist/index.html; do
+    mkdir -p "$artifact_backup/$(dirname "$rel")"
+    if [ -e "$ROOT/$rel" ]; then
+      cp -a "$ROOT/$rel" "$artifact_backup/$rel"
+      printf '%s\n' "$rel" >> "$artifact_backup/existed"
+    else
+      printf '%s\n' "$rel" >> "$artifact_backup/created"
+    fi
+  done
+  mkdir -p "$ROOT/dist" "$ROOT/client/dist"
+  printf 'server-bundle\n' > "$ROOT/dist/server.js"
+  printf '\n' > "$ROOT/dist/server.js.map"
+  printf '%s\n' '{"type":"commonjs"}' > "$ROOT/dist/package.json"
+  printf '<html></html>\n' > "$ROOT/client/dist/index.html"
+}
+
+extra_note="$ROOT/db/migrations/notes.txt"
+printf 'not sql\n' > "$extra_note"
+
+bin="$(mktemp -d)"
+cat > "$bin/ssh" << 'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+host=""
+cmd=()
+for arg in "$@"; do
+  if [ -n "$host" ]; then
+    cmd+=("$arg")
+    continue
+  fi
+  case "$arg" in
+    *@*) host="$arg" ;;
+  esac
+done
+if [ "${#cmd[@]}" -eq 0 ]; then
+  echo "ssh fake: no remote command" >&2
+  exit 1
+fi
+remote="${cmd[*]}"
+printf '%s\n' "$remote" >> "$FAKE_VPS/ssh.log"
+case "$remote" in
+  "sudo -n /usr/bin/systemctl restart event-gate")
+    exit 0
+    ;;
+  "sudo -n /usr/bin/systemctl is-active event-gate")
+    printf 'active\n'
+    exit 0
+    ;;
+  "systemctl status event-gate"*)
+    printf 'inactive\n'
+    exit 0
+    ;;
+esac
+fake_root="$FAKE_VPS/opt/broker"
+translated="${remote//\/opt\/broker/$fake_root}"
+bash -c "$translated"
+EOF
+cat > "$bin/rsync" << 'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+for arg in "$@"; do
+  if [ "$arg" = "--delete" ]; then
+    echo "refusing --delete" >&2
+    exit 1
+  fi
+done
+sources=()
+skip_next=0
+for arg in "$@"; do
+  if [ "$skip_next" -eq 1 ]; then
+    skip_next=0
+    continue
+  fi
+  case "$arg" in
+    -e|--rsh)
+      skip_next=1
+      continue
+      ;;
+    -*)
+      continue
+      ;;
+  esac
+  sources+=("$arg")
+done
+if [ "${#sources[@]}" -lt 2 ]; then
+  echo "rsync fake: expected sources and dest" >&2
+  exit 1
+fi
+last=$((${#sources[@]} - 1))
+dest="${sources[$last]}"
+sources=("${sources[@]:0:last}")
+printf '%s\n' "$*" >> "$FAKE_VPS/rsync.log"
+remote_path="${dest#*:}"
+local_dest="$FAKE_VPS$remote_path"
+mkdir -p "$local_dest"
+if [ "${FAKE_RSYNC_DROP_SQL:-0}" = "1" ] && [[ "$remote_path" == *"/db/migrations"* ]]; then
+  exit 0
+fi
+for src in "${sources[@]}"; do
+  if [ -d "$src" ]; then
+    cp -a "$src"/. "$local_dest/"
+  else
+    cp -a "$src" "$local_dest/"
+  fi
+done
+find "$local_dest" -type d -exec chmod 755 {} +
+find "$local_dest" -type f -exec chmod 644 {} +
+EOF
+chmod 755 "$bin/ssh" "$bin/rsync"
+
+prepare_artifacts
+vps="$(mktemp -d)"
+mkdir -p "$vps/opt/broker/dist" "$vps/opt/broker/client/dist" "$vps/opt/broker/db/migrations"
+printf 'keep\n' > "$vps/opt/broker/db/migrations/000_keep.sql"
+chmod 755 "$vps/opt/broker/dist" "$vps/opt/broker/client/dist" "$vps/opt/broker/db/migrations"
+
+run_fake() {
+  (
+    cd /tmp
+    unset DEPLOY_SSH_KEY DEPLOY_HOST DEPLOY_USER DEPLOY_KNOWN_HOSTS DEPLOY_PORT SKIP_RESTART FAKE_RSYNC_DROP_SQL
+    env PATH="$bin:$PATH" FAKE_VPS="$vps" "$@" bash "$SYNC"
+  )
+}
+
+out="$(run_fake \
+  DEPLOY_SSH_KEY="-----BEGIN OPENSSH PRIVATE KEY-----" \
+  DEPLOY_HOST="example.invalid" \
+  DEPLOY_USER="deploy" \
+  DEPLOY_KNOWN_HOSTS="example.invalid ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake" \
+  DEPLOY_PORT="22" \
+  2>&1)" || fail "fake deploy should exit 0"
+case "$out" in
+  *"migrations ok"*) ;;
+  *) fail "fake deploy should report migrations ok" ;;
+esac
+case "$out" in
+  *"event-gate is active"*) ;;
+  *) fail "fake deploy should report event-gate active" ;;
+esac
+sql_count=0
+for f in "$ROOT"/db/migrations/*.sql; do
+  base="$(basename "$f")"
+  [ -f "$vps/opt/broker/db/migrations/$base" ] || fail "fake VPS missing $base"
+  mode="$(stat -c %a "$vps/opt/broker/db/migrations/$base")"
+  [ "$mode" = "644" ] || fail "$base mode $mode, want 644"
+  sql_count=$((sql_count + 1))
+done
+[ "$sql_count" -ge 1 ] || fail "repo has no migration sql"
+[ -f "$vps/opt/broker/db/migrations/000_keep.sql" ] || fail "pre-existing SQL must stay on the VPS"
+[ ! -f "$vps/opt/broker/db/migrations/notes.txt" ] || fail "non-sql must not be copied"
+grep -q -- '--chmod=F644,D755' "$vps/rsync.log" || fail "migration rsync did not pass --chmod=F644,D755"
+grep -q -- '--no-owner --no-group' "$vps/rsync.log" || fail "rsync did not pass --no-owner --no-group"
+if grep -q -- '--delete' "$vps/rsync.log"; then
+  fail "rsync log contains --delete"
+fi
+ls_line="$(grep -n 'ls -1 /opt/broker/db/migrations' "$vps/ssh.log" | head -1 | cut -d: -f1)"
+restart_line="$(grep -n 'sudo -n /usr/bin/systemctl restart event-gate' "$vps/ssh.log" | head -1 | cut -d: -f1)"
+[ -n "$ls_line" ] && [ -n "$restart_line" ] || fail "ssh log missing ls or restart"
+[ "$ls_line" -lt "$restart_line" ] || fail "ssh ls must run before restart"
+
+rm -rf "$vps"
+vps="$(mktemp -d)"
+mkdir -p "$vps/opt/broker/dist" "$vps/opt/broker/client/dist" "$vps/opt/broker/db/migrations"
+chmod 755 "$vps/opt/broker/dist" "$vps/opt/broker/client/dist" "$vps/opt/broker/db/migrations"
+set +e
+out="$(run_fake \
+  FAKE_RSYNC_DROP_SQL="1" \
+  DEPLOY_SSH_KEY="-----BEGIN OPENSSH PRIVATE KEY-----" \
+  DEPLOY_HOST="example.invalid" \
+  DEPLOY_USER="deploy" \
+  DEPLOY_KNOWN_HOSTS="example.invalid ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake" \
+  DEPLOY_PORT="22" \
+  2>&1)"
+code=$?
+set -e
+[ "$code" -eq 1 ] || fail "missing remote SQL should exit 1, got $code"
+case "$out" in
+  *"Migration missing on VPS"*) ;;
+  *) fail "missing remote SQL should fail loudly" ;;
+esac
+case "$out" in
+  *"Restarting event-gate"*) fail "must not restart when a migration file is missing" ;;
+esac
 
 echo "deploy checks ok"
