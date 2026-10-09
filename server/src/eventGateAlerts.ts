@@ -1,4 +1,4 @@
-import { etParts, pad2 } from "../../shared/clock";
+import { etParts, isPrintEvent, pad2 } from "../../shared/clock";
 import { RISKOFF_CREDIT_LEG_SYMBOLS } from "../../shared/constants";
 import type {
   CalendarEvent,
@@ -70,10 +70,7 @@ export function nyDateKey(now = new Date()): string {
   return `${p.year}-${pad2(p.month)}-${pad2(p.day)}`;
 }
 
-export function isPrintEvent(ev: CalendarEvent): boolean {
-  const t = ev.type.toUpperCase();
-  return t === "NFP" || t === "CPI" || t.includes("FOMC");
-}
+export { isPrintEvent };
 
 export function isCreditLegSymbol(symbol: string): boolean {
   return CREDIT_LEG.has(symbol.trim().toUpperCase());

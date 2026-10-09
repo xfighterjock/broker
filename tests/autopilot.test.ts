@@ -550,6 +550,14 @@ describe("runAutopilot toggle", () => {
       gateMode: "idle",
       now: noon,
       knowledgeTime: zonedTimeToUtc(2026, 9, 2, 8, 35, 0).toISOString(),
+      events: [
+        {
+          id: "nfp-2026-09-02",
+          timeUtc: zonedTimeToUtc(2026, 9, 2, 8, 30, 0).toISOString(),
+          type: "NFP",
+          flattenEt: "15:45",
+        },
+      ],
       dayBars: mesBuyBars(),
       place: async (b) => {
         placed.push(`${b.sleeveId}:${b.symbol}`);

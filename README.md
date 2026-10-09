@@ -7,7 +7,7 @@ Trader: Richard. Timezone America/New_York.
 ## What it does
 1s gate tick when enabled: idle, PRE-ARM (T-15 to T-2), NO-STOP BAND (T-2 to T+2), SESSION FLATTEN (flatten ET +/- 5 min). Cancels Market/StopMarket/StopLimit/MIT on gated roots in those windows. Cancels qty over 1. Limits left alone unless oversize. Flatten gated names at session cap or daily loss ($500). FOMC in the type forces 15:30 flatten. Gated roots: MES MNQ ES NQ ZN ZF ZT ZB SR3 6E M6E. MockBroker default. TradovateDemoBroker stub pinned to demo.tradovateapi.com/v1; construction throws when the URL contains live.
 ## Seed events
-2026-09-04T12:30:00Z NFP flatten 15:45 ET. 2026-09-11T12:30:00Z CPI flatten 15:45 ET. 2026-09-16T18:00:00Z FOMC_STATEMENT flatten 15:30 ET. 2026-09-16T18:30:00Z FOMC_PC flatten 15:30 ET. Also inserted by db/migrations/001_init.sql.
+2026-09-04T12:30:00Z NFP flatten 15:45 ET. 2026-09-11T12:30:00Z CPI flatten 15:45 ET. 2026-09-16T18:00:00Z FOMC_STATEMENT flatten 15:30 ET. 2026-09-16T18:30:00Z FOMC_PC flatten 15:30 ET. Also inserted by db/migrations/001_init.sql. Later NFP, CPI, and FOMC statement + press conference rows through December 2027 are in shared/clock.ts seedEvents and db/migrations/005_calendar_through_2027.sql. Postgres `events` replaces the seed when any row exists.
 ## Design docs
 - [System design](docs/DESIGN.md) — architecture and sleeve methodologies
 - [Abbreviations](docs/ABBREVIATIONS.md) — tickers, futures roots, and product terms

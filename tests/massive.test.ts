@@ -271,6 +271,14 @@ describe("fetchDayMesFiveMinuteBars Massive vs Yahoo", () => {
       sleeveLossCapUsd: 500,
       sleeveRealizedPnlUsd: 0,
       knowledgeTime: zonedTimeToUtc(2026, 9, 2, 8, 35, 0).toISOString(),
+      events: [
+        {
+          id: "nfp-2026-09-02",
+          timeUtc: zonedTimeToUtc(2026, 9, 2, 8, 30, 0).toISOString(),
+          type: "NFP",
+          flattenEt: "15:45",
+        },
+      ],
     });
     expect(got.buy?.side).toBe("Buy");
     expect(got.buy?.symbol).toBe("MES=F");

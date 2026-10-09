@@ -11,6 +11,8 @@ import {
   knowledgeTimeAlreadySetForEtDay,
   knowledgeTimeAnchorEvent,
   knowledgeTimeLogLine,
+  knowledgeTimeManualAllowed,
+  knowledgeTimeStampIsFinal,
   shouldAutoStampKnowledgeTime,
 } from "../server/src/knowledgeTime";
 import { MockBroker } from "../server/src/mockBroker";
@@ -154,6 +156,30 @@ describe("knowledge_time auto-stamp rules", () => {
     expect(got.reason).toBe("no print event today");
   });
 
+  it("does not treat a pre-print stamp as final, so auto-stamp can still fire", () => {
+    const before = "2026-09-04T12:00:00.000Z";
+    const after = new Date(nfp.timeUtc);
+    expect(knowledgeTimeStampIsFinal(after, before, events)).toBe(false);
+    const got = shouldAutoStampKnowledgeTime({
+      now: after,
+      events,
+      knowledgeTime: before,
+    });
+    expect(got.stamp).toBe(true);
+    expect(got.reason).toBe("auto");
+  });
+
+  it("refuses a manual stamp on a non-print day and before the print", () => {
+    const claims = knowledgeTimeManualAllowed(new Date("2026-10-08T18:39:00.000Z"), events);
+    expect(claims.ok).toBe(false);
+    expect(claims.reason).toBe("knowledge_time not on a print day");
+    const early = knowledgeTimeManualAllowed(new Date(Date.parse(nfp.timeUtc) - 60_000), events);
+    expect(early.ok).toBe(false);
+    expect(early.reason).toBe("knowledge_time before print");
+    const atPrint = knowledgeTimeManualAllowed(new Date(nfp.timeUtc), events);
+    expect(atPrint.ok).toBe(true);
+  });
+
   it("logs distinguish auto / ops / manual", () => {
     const iso = "2026-09-16T18:00:00.000Z";
     expect(knowledgeTimeLogLine("auto", iso)).toBe(`knowledge_time auto-stamped ${iso}`);
@@ -189,6 +215,12 @@ describe("day MES still requires knowledge_time (PR #42 idle-RTH block)", () => 
 
   const noon = zonedTimeToUtc(2026, 9, 2, 11, 20, 0);
   const printDayKnowledge = zonedTimeToUtc(2026, 9, 2, 8, 35, 0).toISOString();
+  const sept2Print: CalendarEvent = {
+    id: "nfp-2026-09-02",
+    timeUtc: zonedTimeToUtc(2026, 9, 2, 8, 30, 0).toISOString(),
+    type: "NFP",
+    flattenEt: "15:45",
+  };
 
   it("blocks idle RTH MES without KT and allows the same signal after stamp", () => {
     const bars = longSignalBars();
@@ -213,8 +245,9 @@ describe("day MES still requires knowledge_time (PR #42 idle-RTH block)", () => 
       sleeveLossCapUsd: 500,
       sleeveRealizedPnlUsd: 0,
       knowledgeTime: printDayKnowledge,
+      events: [sept2Print],
     });
-    expect(dayStochArmed(noon, printDayKnowledge)).toBe(true);
+    expect(dayStochArmed(noon, printDayKnowledge, [sept2Print])).toBe(true);
     expect(allowed.buy?.symbol).toBe(DAY_STOCH_SYMBOL);
     expect(allowed.reason).toBe("buy");
   });
@@ -387,10 +420,14 @@ describe("knowledge_time HTTP auto-stamp + ops", () => {
       expect(status.status).toBe(200);
       const snap = (await status.json()) as {
         knowledgeTime?: string | null;
+        stage3Armed?: boolean;
+        calendarStale?: boolean;
         freeze?: { freezeTimestamp?: string | null };
       };
       expect(snap.freeze?.freezeTimestamp ?? null).toBeNull();
       expect(snap.knowledgeTime).toBe(now.toISOString());
+      expect(snap.stage3Armed).toBe(true);
+      expect(snap.calendarStale).toBe(false);
       expect(engine.getLogs().some((l) => l.message.includes("knowledge_time auto-stamped"))).toBe(
         true,
       );
@@ -477,6 +514,60 @@ describe("knowledge_time HTTP auto-stamp + ops", () => {
       expect(again.status).toBe(200);
       const second = (await again.json()) as { knowledgeTime?: string | null };
       expect(second.knowledgeTime).toBe(first.knowledgeTime);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it("sets calendarStale when no print falls in the next 35 days", async () => {
+    const now = new Date("2026-10-09T20:00:00.000Z");
+    const september = seedEvents().filter((e) => e.timeUtc < "2026-10-01");
+    const dir = await seededUsers();
+    const { app } = makeApp(dir, { now: () => now, events: september });
+    const srv = await listen(app);
+    try {
+      const status = await fetch(`${srv.url}/api/status`, { headers: opsHeaders() });
+      expect(status.status).toBe(200);
+      const snap = (await status.json()) as {
+        calendarStale?: boolean;
+        clock?: { nextEvent?: { id?: string } | null; mode?: string };
+      };
+      expect(snap.calendarStale).toBe(true);
+      expect(snap.clock?.nextEvent ?? null).toBeNull();
+      expect(snap.clock?.mode).toBe("idle");
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it("refuses POST /api/knowledge-time on a non-print ET day and does not stamp", async () => {
+    const now = new Date("2026-10-08T18:39:00.000Z");
+    const dir = await seededUsers();
+    const { app, engine } = makeApp(dir, { now: () => now });
+    const srv = await listen(app);
+    try {
+      const stamp = await fetch(`${srv.url}/api/knowledge-time`, {
+        method: "POST",
+        headers: { ...opsHeaders(), "Content-Type": "application/json" },
+        body: "{}",
+      });
+      expect(stamp.status).toBe(409);
+      const body = (await stamp.json()) as {
+        error?: string;
+        knowledgeTime?: string | null;
+        stage3Armed?: boolean;
+        calendarStale?: boolean;
+      };
+      expect(body.error).toBe("knowledge_time not on a print day");
+      expect(body.knowledgeTime ?? null).toBeNull();
+      expect(body.stage3Armed).toBe(false);
+      expect(body.calendarStale).toBe(false);
+      expect(
+        engine.getLogs().some((l) => l.message.includes("knowledge_time refused (ops)")),
+      ).toBe(true);
+      expect(
+        engine.getLogs().some((l) => l.message.includes("knowledge_time not on a print day")),
+      ).toBe(true);
     } finally {
       await srv.close();
     }

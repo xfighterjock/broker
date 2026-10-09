@@ -184,6 +184,10 @@ struct StatusSnapshot: Codable {
     let broker: BrokerSnapshot
     let sleeveBooks: [String: SleeveBook]?
     let knowledgeTime: String?
+    /// Server Stage-3 arm. iOS has no calendar rows; this flag is the arming rule.
+    let stage3Armed: Bool?
+    /// No future NFP/CPI/FOMC within 35 days.
+    let calendarStale: Bool?
 }
 
 struct ActivityLogEntry: Decodable, Identifiable, Equatable {

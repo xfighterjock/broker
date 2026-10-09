@@ -1,0 +1,60 @@
+-- NFP/CPI/FOMC rows after the September 2026 seed in 001_init.sql.
+-- NFP and CPI are 08:30 America/New_York (BLS Employment Situation and CPI
+-- schedules; 2027 day-of-month from the OMB Principal Federal Economic
+-- Indicators schedule, FY2027-PFEI.pdf). FOMC statement is 14:00 ET and the
+-- press conference is 14:30 ET on the second day (federalreserve.gov FOMC
+-- calendar and the 2025-09-05 schedule release). UTC shifts with DST.
+-- Production loads this table and ignores seedEvents() when any row exists.
+
+INSERT INTO events (event_time_utc, type, flatten_et) VALUES
+  ('2026-10-02T12:30:00Z', 'NFP', '15:45'),
+  ('2026-10-14T12:30:00Z', 'CPI', '15:45'),
+  ('2026-10-28T18:00:00Z', 'FOMC_STATEMENT', '15:30'),
+  ('2026-10-28T18:30:00Z', 'FOMC_PC', '15:30'),
+  ('2026-11-06T13:30:00Z', 'NFP', '15:45'),
+  ('2026-11-10T13:30:00Z', 'CPI', '15:45'),
+  ('2026-12-04T13:30:00Z', 'NFP', '15:45'),
+  ('2026-12-09T19:00:00Z', 'FOMC_STATEMENT', '15:30'),
+  ('2026-12-09T19:30:00Z', 'FOMC_PC', '15:30'),
+  ('2026-12-10T13:30:00Z', 'CPI', '15:45'),
+  ('2027-01-08T13:30:00Z', 'NFP', '15:45'),
+  ('2027-01-13T13:30:00Z', 'CPI', '15:45'),
+  ('2027-01-27T19:00:00Z', 'FOMC_STATEMENT', '15:30'),
+  ('2027-01-27T19:30:00Z', 'FOMC_PC', '15:30'),
+  ('2027-02-05T13:30:00Z', 'NFP', '15:45'),
+  ('2027-02-11T13:30:00Z', 'CPI', '15:45'),
+  ('2027-03-05T13:30:00Z', 'NFP', '15:45'),
+  ('2027-03-10T13:30:00Z', 'CPI', '15:45'),
+  ('2027-03-17T18:00:00Z', 'FOMC_STATEMENT', '15:30'),
+  ('2027-03-17T18:30:00Z', 'FOMC_PC', '15:30'),
+  ('2027-04-02T12:30:00Z', 'NFP', '15:45'),
+  ('2027-04-13T12:30:00Z', 'CPI', '15:45'),
+  ('2027-04-28T18:00:00Z', 'FOMC_STATEMENT', '15:30'),
+  ('2027-04-28T18:30:00Z', 'FOMC_PC', '15:30'),
+  ('2027-05-07T12:30:00Z', 'NFP', '15:45'),
+  ('2027-05-12T12:30:00Z', 'CPI', '15:45'),
+  ('2027-06-04T12:30:00Z', 'NFP', '15:45'),
+  ('2027-06-09T18:00:00Z', 'FOMC_STATEMENT', '15:30'),
+  ('2027-06-09T18:30:00Z', 'FOMC_PC', '15:30'),
+  ('2027-06-10T12:30:00Z', 'CPI', '15:45'),
+  ('2027-07-02T12:30:00Z', 'NFP', '15:45'),
+  ('2027-07-14T12:30:00Z', 'CPI', '15:45'),
+  ('2027-07-28T18:00:00Z', 'FOMC_STATEMENT', '15:30'),
+  ('2027-07-28T18:30:00Z', 'FOMC_PC', '15:30'),
+  ('2027-08-06T12:30:00Z', 'NFP', '15:45'),
+  ('2027-08-11T12:30:00Z', 'CPI', '15:45'),
+  ('2027-09-03T12:30:00Z', 'NFP', '15:45'),
+  ('2027-09-14T12:30:00Z', 'CPI', '15:45'),
+  ('2027-09-15T18:00:00Z', 'FOMC_STATEMENT', '15:30'),
+  ('2027-09-15T18:30:00Z', 'FOMC_PC', '15:30'),
+  ('2027-10-08T12:30:00Z', 'NFP', '15:45'),
+  ('2027-10-14T12:30:00Z', 'CPI', '15:45'),
+  ('2027-10-27T18:00:00Z', 'FOMC_STATEMENT', '15:30'),
+  ('2027-10-27T18:30:00Z', 'FOMC_PC', '15:30'),
+  ('2027-11-05T12:30:00Z', 'NFP', '15:45'),
+  ('2027-11-10T13:30:00Z', 'CPI', '15:45'),
+  ('2027-12-03T13:30:00Z', 'NFP', '15:45'),
+  ('2027-12-08T19:00:00Z', 'FOMC_STATEMENT', '15:30'),
+  ('2027-12-08T19:30:00Z', 'FOMC_PC', '15:30'),
+  ('2027-12-10T13:30:00Z', 'CPI', '15:45')
+ON CONFLICT (event_time_utc, type) DO NOTHING;

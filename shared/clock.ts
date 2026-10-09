@@ -239,7 +239,166 @@ export function isGatedSymbol(symbol: string): boolean {
   return extractRoot(symbol) !== null;
 }
 
+export function sameEtDay(a: Date, b: Date): boolean {
+  const pa = etParts(a);
+  const pb = etParts(b);
+  return pa.year === pb.year && pa.month === pb.month && pa.day === pb.day;
+}
+
+/** NFP, CPI, or any FOMC row. Jobless claims and other types are not prints. */
+export function isPrintEvent(ev: CalendarEvent): boolean {
+  const t = ev.type.toUpperCase();
+  return t === "NFP" || t === "CPI" || t.includes("FOMC");
+}
+
+/**
+ * Print used to arm knowledge_time on this America/New_York day.
+ * FOMC: STATEMENT time when both STATEMENT and PC exist; otherwise the FOMC row.
+ * NFP/CPI: the print time.
+ */
+export function knowledgeTimeAnchorEvent(
+  now: Date,
+  events: CalendarEvent[],
+): CalendarEvent | null {
+  const todays = events
+    .filter((ev) => isPrintEvent(ev) && Number.isFinite(Date.parse(ev.timeUtc)))
+    .filter((ev) => sameEtDay(now, new Date(ev.timeUtc)))
+    .slice()
+    .sort((a, b) => Date.parse(a.timeUtc) - Date.parse(b.timeUtc));
+  if (todays.length === 0) return null;
+  const fomc = todays.filter((ev) => ev.type.toUpperCase().includes("FOMC"));
+  if (fomc.length > 0) {
+    return fomc.find((ev) => ev.type.toUpperCase().includes("STATEMENT")) ?? fomc[0];
+  }
+  return todays[0];
+}
+
+export type Stage3Arm = {
+  armed: boolean;
+  reason: "armed" | "no knowledge_time" | "knowledge_time not on a print day" | "knowledge_time before print";
+};
+
+/**
+ * Stage-3 arm for a new MES stoch entry.
+ * The ET day must have an NFP/CPI/FOMC row, the stamp must fall on that day
+ * at or after the anchor print, and now must be at or after the stamp.
+ */
+export function stage3Arm(
+  now: Date,
+  knowledgeTime: string | null | undefined,
+  events: CalendarEvent[],
+): Stage3Arm {
+  if (!knowledgeTime) return { armed: false, reason: "no knowledge_time" };
+  const kt = Date.parse(knowledgeTime);
+  if (!Number.isFinite(kt)) return { armed: false, reason: "no knowledge_time" };
+  if (!sameEtDay(now, new Date(kt))) return { armed: false, reason: "no knowledge_time" };
+  const anchor = knowledgeTimeAnchorEvent(now, events);
+  if (!anchor) return { armed: false, reason: "knowledge_time not on a print day" };
+  const anchorMs = Date.parse(anchor.timeUtc);
+  if (!Number.isFinite(anchorMs) || kt < anchorMs) {
+    return { armed: false, reason: "knowledge_time before print" };
+  }
+  if (now.getTime() < kt) return { armed: false, reason: "no knowledge_time" };
+  return { armed: true, reason: "armed" };
+}
+
+/** No future NFP/CPI/FOMC inside this window → calendarStale on the status snapshot. */
+export const CALENDAR_STALE_WITHIN_MS = 35 * 24 * 60 * 60 * 1000;
+
+export function calendarIsStale(
+  now: Date,
+  events: CalendarEvent[],
+  withinMs = CALENDAR_STALE_WITHIN_MS,
+): boolean {
+  const nowMs = now.getTime();
+  const horizon = nowMs + withinMs;
+  for (const ev of events) {
+    if (!isPrintEvent(ev)) continue;
+    const t = Date.parse(ev.timeUtc);
+    if (Number.isFinite(t) && t > nowMs && t <= horizon) return false;
+  }
+  return true;
+}
+
+function seedInstant(
+  id: string,
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  type: string,
+  flattenEt: string,
+  label: string,
+): CalendarEvent {
+  return {
+    id,
+    timeUtc: zonedTimeToUtc(year, month, day, hour, minute, 0).toISOString().replace(".000Z", "Z"),
+    type,
+    flattenEt,
+    label,
+  };
+}
+
+/**
+ * Print calendar. September 2026 rows match migration 001.
+ * Later rows are 08:30 ET NFP/CPI (BLS schedules + OMB FY2027 PFEI) and
+ * 14:00/14:30 ET FOMC statement + press conference (federalreserve.gov).
+ * Wall times are America/New_York; UTC shifts with DST.
+ */
 export function seedEvents(): CalendarEvent[] {
+  const upcoming: Array<[string, number, number, number, number, number, string, string, string]> = [
+    ["nfp-2026-10-02", 2026, 10, 2, 8, 30, "NFP", "15:45", "September NFP"],
+    ["cpi-2026-10-14", 2026, 10, 14, 8, 30, "CPI", "15:45", "September CPI"],
+    ["fomc-statement-2026-10-28", 2026, 10, 28, 14, 0, "FOMC_STATEMENT", "15:30", "FOMC statement"],
+    ["fomc-pc-2026-10-28", 2026, 10, 28, 14, 30, "FOMC_PC", "15:30", "FOMC press conference"],
+    ["nfp-2026-11-06", 2026, 11, 6, 8, 30, "NFP", "15:45", "October NFP"],
+    ["cpi-2026-11-10", 2026, 11, 10, 8, 30, "CPI", "15:45", "October CPI"],
+    ["nfp-2026-12-04", 2026, 12, 4, 8, 30, "NFP", "15:45", "November NFP"],
+    ["fomc-statement-2026-12-09", 2026, 12, 9, 14, 0, "FOMC_STATEMENT", "15:30", "FOMC statement"],
+    ["fomc-pc-2026-12-09", 2026, 12, 9, 14, 30, "FOMC_PC", "15:30", "FOMC press conference"],
+    ["cpi-2026-12-10", 2026, 12, 10, 8, 30, "CPI", "15:45", "November CPI"],
+    ["nfp-2027-01-08", 2027, 1, 8, 8, 30, "NFP", "15:45", "December NFP"],
+    ["cpi-2027-01-13", 2027, 1, 13, 8, 30, "CPI", "15:45", "December CPI"],
+    ["fomc-statement-2027-01-27", 2027, 1, 27, 14, 0, "FOMC_STATEMENT", "15:30", "FOMC statement"],
+    ["fomc-pc-2027-01-27", 2027, 1, 27, 14, 30, "FOMC_PC", "15:30", "FOMC press conference"],
+    ["nfp-2027-02-05", 2027, 2, 5, 8, 30, "NFP", "15:45", "January NFP"],
+    ["cpi-2027-02-11", 2027, 2, 11, 8, 30, "CPI", "15:45", "January CPI"],
+    ["nfp-2027-03-05", 2027, 3, 5, 8, 30, "NFP", "15:45", "February NFP"],
+    ["cpi-2027-03-10", 2027, 3, 10, 8, 30, "CPI", "15:45", "February CPI"],
+    ["fomc-statement-2027-03-17", 2027, 3, 17, 14, 0, "FOMC_STATEMENT", "15:30", "FOMC statement"],
+    ["fomc-pc-2027-03-17", 2027, 3, 17, 14, 30, "FOMC_PC", "15:30", "FOMC press conference"],
+    ["nfp-2027-04-02", 2027, 4, 2, 8, 30, "NFP", "15:45", "March NFP"],
+    ["cpi-2027-04-13", 2027, 4, 13, 8, 30, "CPI", "15:45", "March CPI"],
+    ["fomc-statement-2027-04-28", 2027, 4, 28, 14, 0, "FOMC_STATEMENT", "15:30", "FOMC statement"],
+    ["fomc-pc-2027-04-28", 2027, 4, 28, 14, 30, "FOMC_PC", "15:30", "FOMC press conference"],
+    ["nfp-2027-05-07", 2027, 5, 7, 8, 30, "NFP", "15:45", "April NFP"],
+    ["cpi-2027-05-12", 2027, 5, 12, 8, 30, "CPI", "15:45", "April CPI"],
+    ["nfp-2027-06-04", 2027, 6, 4, 8, 30, "NFP", "15:45", "May NFP"],
+    ["fomc-statement-2027-06-09", 2027, 6, 9, 14, 0, "FOMC_STATEMENT", "15:30", "FOMC statement"],
+    ["fomc-pc-2027-06-09", 2027, 6, 9, 14, 30, "FOMC_PC", "15:30", "FOMC press conference"],
+    ["cpi-2027-06-10", 2027, 6, 10, 8, 30, "CPI", "15:45", "May CPI"],
+    ["nfp-2027-07-02", 2027, 7, 2, 8, 30, "NFP", "15:45", "June NFP"],
+    ["cpi-2027-07-14", 2027, 7, 14, 8, 30, "CPI", "15:45", "June CPI"],
+    ["fomc-statement-2027-07-28", 2027, 7, 28, 14, 0, "FOMC_STATEMENT", "15:30", "FOMC statement"],
+    ["fomc-pc-2027-07-28", 2027, 7, 28, 14, 30, "FOMC_PC", "15:30", "FOMC press conference"],
+    ["nfp-2027-08-06", 2027, 8, 6, 8, 30, "NFP", "15:45", "July NFP"],
+    ["cpi-2027-08-11", 2027, 8, 11, 8, 30, "CPI", "15:45", "July CPI"],
+    ["nfp-2027-09-03", 2027, 9, 3, 8, 30, "NFP", "15:45", "August NFP"],
+    ["cpi-2027-09-14", 2027, 9, 14, 8, 30, "CPI", "15:45", "August CPI"],
+    ["fomc-statement-2027-09-15", 2027, 9, 15, 14, 0, "FOMC_STATEMENT", "15:30", "FOMC statement"],
+    ["fomc-pc-2027-09-15", 2027, 9, 15, 14, 30, "FOMC_PC", "15:30", "FOMC press conference"],
+    ["nfp-2027-10-08", 2027, 10, 8, 8, 30, "NFP", "15:45", "September NFP"],
+    ["cpi-2027-10-14", 2027, 10, 14, 8, 30, "CPI", "15:45", "September CPI"],
+    ["fomc-statement-2027-10-27", 2027, 10, 27, 14, 0, "FOMC_STATEMENT", "15:30", "FOMC statement"],
+    ["fomc-pc-2027-10-27", 2027, 10, 27, 14, 30, "FOMC_PC", "15:30", "FOMC press conference"],
+    ["nfp-2027-11-05", 2027, 11, 5, 8, 30, "NFP", "15:45", "October NFP"],
+    ["cpi-2027-11-10", 2027, 11, 10, 8, 30, "CPI", "15:45", "October CPI"],
+    ["nfp-2027-12-03", 2027, 12, 3, 8, 30, "NFP", "15:45", "November NFP"],
+    ["fomc-statement-2027-12-08", 2027, 12, 8, 14, 0, "FOMC_STATEMENT", "15:30", "FOMC statement"],
+    ["fomc-pc-2027-12-08", 2027, 12, 8, 14, 30, "FOMC_PC", "15:30", "FOMC press conference"],
+    ["cpi-2027-12-10", 2027, 12, 10, 8, 30, "CPI", "15:45", "November CPI"],
+  ];
   return [
     {
       id: "nfp-2026-09-04",
@@ -269,5 +428,6 @@ export function seedEvents(): CalendarEvent[] {
       flattenEt: "15:30",
       label: "FOMC press conference",
     },
+    ...upcoming.map((row) => seedInstant(...row)),
   ];
 }

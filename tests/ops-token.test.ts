@@ -43,10 +43,11 @@ async function seededUsers(): Promise<MemoryUserDirectory> {
 function makeApp(
   dir: MemoryUserDirectory,
   cfg: AppConfig = testCfg(),
-  opts: { engineEnabled?: boolean } = {},
+  opts: { engineEnabled?: boolean; now?: () => Date } = {},
 ) {
   const broker = new MockBroker();
-  const engine = new GateEngine(broker, () => new Date(), () => seedEvents(), {
+  const getNow = opts.now ?? (() => new Date());
+  const engine = new GateEngine(broker, getNow, () => seedEvents(), {
     enabled: opts.engineEnabled ?? false,
     dailyLossUsd: 500,
   });
@@ -65,6 +66,7 @@ function makeApp(
     liveRefused: false,
     stubNote: null,
     users: dir,
+    now: getNow,
   });
   const root = express();
   root.set("trust proxy", 1);
@@ -385,7 +387,8 @@ describe("EVENT_GATE_OPS_TOKEN HTTPS ops scope", () => {
 
   it("lets the ops bearer POST /api/knowledge-time", async () => {
     const dir = await seededUsers();
-    const { app } = makeApp(dir);
+    const now = new Date("2026-09-04T12:30:00.000Z");
+    const { app } = makeApp(dir, testCfg(), { now: () => now });
     const srv = await listen(app);
     try {
       const stamp = await fetch(`${srv.url}/api/knowledge-time`, {

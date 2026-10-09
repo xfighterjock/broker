@@ -22,6 +22,7 @@ import {
 import type {
   OptionExpiry,
   OptionLeg,
+  CalendarEvent,
   GateMode,
   Position,
   ScanRow,
@@ -958,6 +959,8 @@ export type AutopilotCtx = {
   dayBars?: MinuteBar[];
   /** ISO knowledge_time after the print. Day MES stoch entries stay flat without it. */
   knowledgeTime?: string | null;
+  /** NFP/CPI/FOMC calendar. Stage-3 does not arm without a print on this ET day. */
+  events?: CalendarEvent[];
   /**
    * Risk-off sleeve book from the same session-mark path as GET /api/status
    * sleeveBooks.riskoff (dailyPnlUsd / totalPnlUsd). When set, the paper loss
@@ -1003,6 +1006,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
       sleeveLossCapUsd: ctx.getSleeves().day.lossCapUsd,
       sleeveRealizedPnlUsd: ctx.getSleeves().day.paper.realizedPnlUsd,
       knowledgeTime: ctx.knowledgeTime ?? null,
+      events: ctx.events ?? [],
     });
     for (const s of day.sells) {
       const r = await ctx.close(s);

@@ -6,6 +6,7 @@ import {
   defaultSleeves,
   emptyChecklist,
   emptyFreeze,
+  type CalendarEvent,
   type Position,
   type SleeveBook,
   type SleeveId,
@@ -82,6 +83,8 @@ function snapshot(over: Partial<StatusSnapshot> = {}): StatusSnapshot {
     events: [],
     freeze: emptyFreeze(),
     knowledgeTime: null,
+    stage3Armed: false,
+    calendarStale: false,
     checklist: emptyChecklist(),
     sessionLog: [],
     actionLog: [],
@@ -326,10 +329,18 @@ describe("Stage-3 read-only display", () => {
     expect(stage3Armed(now, "2026-09-01T18:00:00.000Z")).toBe(false);
   });
 
-  it("reads armed (auto) when knowledge_time is set for this ET day", () => {
+  it("reads armed (auto) only when the stamp is on a print day at or after the anchor", () => {
     const kt = "2026-09-01T12:30:00.000Z";
-    expect(stage3Armed(now, kt)).toBe(true);
-    expect(stage3Line(now, kt)).toBe("Stage-3 armed (auto)");
+    const print: CalendarEvent = {
+      id: "nfp-2026-09-01",
+      timeUtc: "2026-09-01T12:30:00.000Z",
+      type: "NFP",
+      flattenEt: "15:45",
+    };
+    expect(stage3Armed(now, kt)).toBe(false);
+    expect(stage3Line(now, kt)).toBe("Stage-3 not armed");
+    expect(stage3Armed(now, kt, [print])).toBe(true);
+    expect(stage3Line(now, kt, [print])).toBe("Stage-3 armed (auto)");
     expect(snapshotNow(snapshot({ knowledgeTime: kt })).toISOString()).toBe(now.toISOString());
   });
 

@@ -555,6 +555,14 @@ export interface StatusSnapshot {
   events: CalendarEvent[];
   freeze: FreezeCard;
   knowledgeTime: string | null;
+  /**
+   * Stage-3 may open a new MES stoch lot: this ET day has an NFP/CPI/FOMC row,
+   * the stamp is on that day at or after the anchor print, and now >= stamp.
+   * iOS has no event list and reads this flag. Web recomputes the same rule from `events`.
+   */
+  stage3Armed: boolean;
+  /** True when no future NFP/CPI/FOMC falls within the next 35 days. */
+  calendarStale: boolean;
   checklist: Checklist;
   /**
    * Always empty on GET `/api/status` (status payload must stay small for iOS).

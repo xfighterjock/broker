@@ -1,6 +1,10 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  calendarIsStale,
   computeClock,
+  etParts,
   flattenEtFor,
   flattenInstantUtc,
   formatCountdown,
@@ -94,5 +98,48 @@ describe("helpers", () => {
   it("converts ET wall time to UTC in September DST", () => {
     const d = zonedTimeToUtc(2026, 9, 4, 8, 30, 0);
     expect(d.toISOString()).toBe("2026-09-04T12:30:00.000Z");
+  });
+});
+
+describe("print calendar through 2027", () => {
+  it("keeps the September 2026 instants and the verified later prints", () => {
+    const byId = Object.fromEntries(seedEvents().map((e) => [e.id, e.timeUtc]));
+    expect(byId["nfp-2026-09-04"]).toBe("2026-09-04T12:30:00Z");
+    expect(byId["cpi-2026-10-14"]).toBe("2026-10-14T12:30:00Z");
+    expect(byId["fomc-statement-2026-10-28"]).toBe("2026-10-28T18:00:00Z");
+    expect(byId["nfp-2026-11-06"]).toBe("2026-11-06T13:30:00Z");
+    expect(byId["fomc-statement-2027-03-17"]).toBe("2027-03-17T18:00:00Z");
+    expect(byId["nfp-2027-11-05"]).toBe("2027-11-05T12:30:00Z");
+    expect(byId["cpi-2027-11-10"]).toBe("2027-11-10T13:30:00Z");
+    expect(byId["cpi-2027-12-10"]).toBe("2027-12-10T13:30:00Z");
+  });
+
+  it("puts every seed print on an ET weekday", () => {
+    for (const ev of seedEvents()) {
+      const w = etParts(new Date(ev.timeUtc)).weekday;
+      expect(w === "Sat" || w === "Sun", ev.id).toBe(false);
+    }
+  });
+
+  it("flags a September-only calendar stale on 2026-10-09 and the extended seed fresh", () => {
+    const oct9 = new Date("2026-10-09T20:00:00.000Z");
+    const september = seedEvents().filter((e) => e.timeUtc < "2026-10-01");
+    expect(calendarIsStale(oct9, september)).toBe(true);
+    expect(calendarIsStale(oct9, seedEvents())).toBe(false);
+    const clock = computeClock(oct9, seedEvents());
+    expect(clock.nextEvent?.id).toBe("cpi-2026-10-14");
+    expect(clock.mode).toBe("idle");
+    expect(calendarIsStale(new Date("2027-03-31T16:00:00.000Z"), seedEvents())).toBe(false);
+    expect(calendarIsStale(new Date("2027-12-11T16:00:00.000Z"), seedEvents())).toBe(true);
+  });
+
+  it("migration 005 inserts every seed print that 001 does not", () => {
+    const init = readFileSync(resolve("db/migrations/001_init.sql"), "utf8");
+    const next = readFileSync(resolve("db/migrations/005_calendar_through_2027.sql"), "utf8");
+    const hay = `${init}\n${next}`;
+    for (const ev of seedEvents()) {
+      const stamp = ev.timeUtc.replace(".000Z", "Z");
+      expect(hay.includes(`'${stamp}', '${ev.type}'`), ev.id).toBe(true);
+    }
   });
 });

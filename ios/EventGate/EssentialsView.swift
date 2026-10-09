@@ -228,7 +228,7 @@ struct EssentialsView: View {
     private var knowledgeTimeBlock: some View {
         let kt = snap?.knowledgeTime
         let now = EssentialsFormat.snapshotNow(snap)
-        let armed = EssentialsFormat.dayStochArmed(now: now, knowledgeTime: kt)
+        let armed = snap?.stage3Armed ?? EssentialsFormat.dayStochArmed(now: now, knowledgeTime: kt)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
                 Text("knowledge_time")
@@ -242,10 +242,16 @@ struct EssentialsView: View {
                     .accessibilityIdentifier("knowledge-time-value")
             }
             badge(
-                EssentialsFormat.stage3Line(now: now, knowledgeTime: kt),
+                EssentialsFormat.stage3Line(now: now, knowledgeTime: kt, stage3Armed: snap?.stage3Armed),
                 kind: armed ? "on" : "off"
             )
             .accessibilityIdentifier("stage3-arm")
+            if snap?.calendarStale == true {
+                Text("Calendar stale: no NFP/CPI/FOMC in the next 35 days")
+                    .font(.footnote)
+                    .foregroundStyle(Color(red: 0.89, green: 0.62, blue: 0.29))
+                    .accessibilityIdentifier("calendar-stale")
+            }
         }
     }
 
