@@ -5,6 +5,7 @@ import {
   OPTIONS_DTE_EXIT,
   OPTIONS_DTE_TARGET_MAX,
   OPTIONS_DTE_TARGET_MIN,
+  OPTIONS_MULTIPLIER,
   RISKOFF_CREDIT_LEG_EXPIRY_CANDIDATES,
   RISKOFF_CREDIT_LEG_MAX_AUTO_QTY,
   RISKOFF_CREDIT_LEG_MAX_ROUNDTRIP_SLIPPAGE_FRAC,
@@ -40,6 +41,7 @@ import {
   decideRiskoffDuration,
   openRiskoffDurationPositions,
   overlayHoldsDurationName,
+  riskoffDurationAllowed,
 } from "./riskoffDuration";
 import {
   decideRiskoffCashSweep,
@@ -58,6 +60,7 @@ import {
 import {
   daysToExpiry,
   isVerticalPosition,
+  sizeDebitContracts,
   valuationNow,
   verticalEntryWindowOpen,
   verticalStopCooling,
@@ -1342,6 +1345,12 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
           ctx.log(`auto paper vertical skip ${intent.symbol}: refuses calls`);
           continue;
         }
+        const needed = putDebitUsd(
+          pair,
+          qty,
+          riskoffSleeveEquityUsd(ctx.getSleeves().riskoff, ctx.getPositions()),
+        );
+        if (needed !== null) await sellRiskoffSweepToFund(ctx, needed, sold);
         const v: AutoVertical = {
           sleeveId: "riskoff",
           symbol: intent.symbol,
@@ -1387,7 +1396,38 @@ function riskoffBilLast(ctx: AutopilotCtx): number | null {
   return null;
 }
 
-/** Sell sweep BIL before a put or duration buy when sleeve cash is short. */
+/**
+ * Dollar debit autopilot is about to pay. Null when the pair has no usable
+ * bid/ask — the entry still runs; a missing estimate does not skip it.
+ * Credit legs pass their capped qty. Equity puts use the same contract sizer
+ * as the paper vertical.
+ */
+function putDebitUsd(
+  pair: { long: OptionLeg; short: OptionLeg },
+  qty: number | undefined,
+  equityUsd: number,
+): number | null {
+  const longAsk = pair.long.ask;
+  const shortBid = pair.short.bid;
+  if (longAsk === null || shortBid === null) return null;
+  if (!Number.isFinite(longAsk) || !Number.isFinite(shortBid)) return null;
+  const net = longAsk - shortBid;
+  if (!(net > 0)) return null;
+  let contracts = qty;
+  if (contracts === undefined) {
+    const sized = sizeDebitContracts(net, equityUsd);
+    if (!sized.ok) return null;
+    contracts = sized.qty;
+  }
+  if (!(contracts > 0)) return null;
+  return net * OPTIONS_MULTIPLIER * contracts;
+}
+
+/**
+ * Sell sweep BIL before a put or duration buy when sleeve cash is short.
+ * A missing BIL quote uses the sweep lot's average price. If that is missing
+ * too, return without selling and without blocking the entry.
+ */
 async function sellRiskoffSweepToFund(
   ctx: AutopilotCtx,
   neededUsd: number,
@@ -1431,13 +1471,22 @@ async function rebalanceRiskoffCashSweep(
   sold: AutoSell[],
 ): Promise<void> {
   const bil = ctx.riskoffEtfReturns?.BIL;
+  const spyAbove200 = regimeCheck(ctx.riskChecks, "spyAbove200");
+  const riskOn = ctx.riskOn === true;
   const decision = decideRiskoffCashSweep({
-    riskOn: ctx.riskOn === true,
+    riskOn,
     positions: ctx.getPositions(),
     sleeve: ctx.getSleeves().riskoff,
     quotes: ctx.riskoffEtfQuotes ?? [],
     bilBarsOk: bil !== null && bil !== undefined && Number.isFinite(bil),
     now: ctx.now,
+    spyAbove200,
+    putsAllowed: riskoffEquityPutsAllowed(riskOn, spyAbove200),
+    durationAllowed: riskoffDurationAllowed(
+      riskOn,
+      spyAbove200,
+      knownBool(ctx.riskChecks?.dollarVeto),
+    ),
   });
   for (const s of decision.sells) {
     const r = await ctx.close(s);

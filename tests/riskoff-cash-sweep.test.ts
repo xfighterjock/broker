@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_SLEEVE_EQUITY_USD,
   MAX_AUTO_RISKOFF_VERTICALS,
@@ -10,10 +10,13 @@ import {
   RISKOFF_ETF_RESIZE_NOTIONAL_FRAC,
   RISKOFF_ETF_SYMBOLS,
 } from "../shared/constants";
-import type { Position, SleeveCard, VerticalMeta, WorkingOrder } from "../shared/types";
+import type { OptionLeg, Position, SleeveCard, VerticalMeta, WorkingOrder } from "../shared/types";
 import { defaultSleeves, emptyPaperStats } from "../shared/types";
 import { applyCashCredit, detectStopHits } from "../server/src/paper";
 import { MockBroker } from "../server/src/mockBroker";
+import { riskoffEquityPutsAllowed, runAutopilot } from "../server/src/autopilot";
+import { riskoffDurationAllowed } from "../server/src/riskoffDuration";
+import { setPaperNow } from "../server/src/vertical";
 import { parseMassiveCashDividends } from "../server/src/massive";
 import {
   decideRiskoffEtf,
@@ -26,6 +29,7 @@ import {
   decideRiskoffCashSweep,
   resetRiskoffCashSweepClock,
   riskoffPutReserveUsd,
+  riskoffReserveLegReleased,
   riskoffSweepReserve,
   sweepSharesToFund,
 } from "../server/src/riskoffCashSweep";
@@ -81,25 +85,43 @@ beforeEach(() => {
   resetRiskoffDistributionCredits();
 });
 
+afterEach(() => {
+  setPaperNow(null);
+});
+
+function gates(spyAbove200: boolean | null | undefined, dollarVeto: boolean | null = false) {
+  return {
+    spyAbove200,
+    putsAllowed: riskoffEquityPutsAllowed(false, spyAbove200),
+    durationAllowed: riskoffDurationAllowed(false, spyAbove200, dollarVeto),
+  };
+}
+
 describe("risk-off idle-cash BIL sweep", () => {
-  it("reserves put cap and duration in HYG-only (60% overlay)", () => {
+  it("SPY above 200 releases the put and duration reserve and sweeps all idle cash", () => {
     const equity = DEFAULT_SLEEVE_EQUITY_USD;
     const overlay = equity * RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED;
-    const putBudget = MAX_AUTO_RISKOFF_VERTICALS * OPTIONS_DEBIT_CAP_FRAC * equity;
-    const durationBudget = equity * RISKOFF_DURATION_NOTIONAL_FRAC;
+    const above = gates(true);
+    expect(above.putsAllowed).toBe(false);
+    expect(above.durationAllowed).toBe(false);
+    expect(riskoffReserveLegReleased(true, above.putsAllowed)).toBe(true);
+    expect(riskoffReserveLegReleased(true, above.durationAllowed)).toBe(true);
     const reserve = riskoffSweepReserve({
       equityUsd: equity,
       nonSweepMarketValueUsd: overlay,
       openPutDebitUsd: 0,
       durationMarketValueUsd: 0,
+      releasePutReserve: true,
+      releaseDurationReserve: true,
     });
-    expect(reserve.putReserveUsd).toBe(putBudget);
-    expect(reserve.durationReserveUsd).toBe(durationBudget);
-    expect(reserve.reserveUsd).toBe(26_000);
-    expect(reserve.targetUsd).toBe(14_000);
+    expect(reserve.putReserveUsd).toBe(0);
+    expect(reserve.durationReserveUsd).toBe(0);
+    expect(reserve.reserveUsd).toBe(0);
+    expect(reserve.targetUsd).toBe(40_000);
 
     const decision = decideRiskoffCashSweep({
       riskOn: false,
+      ...above,
       positions: [long("FTLS", overlay / 100, 100)],
       sleeve: sleeve(),
       quotes: [
@@ -110,13 +132,52 @@ describe("risk-off idle-cash BIL sweep", () => {
       now: CLOSE,
       lastSweepYmd: null,
     });
-    expect(decision.reserveUsd).toBe(26_000);
-    expect(decision.targetUsd).toBe(14_000);
+    expect(decision.reserveUsd).toBe(0);
+    expect(decision.targetUsd).toBe(40_000);
     expect(decision.buy?.cashSweep).toBe(true);
     expect(decision.buy?.symbol).toBe("BIL");
-    expect(decision.buy?.qty).toBe(140);
+    expect(decision.buy?.qty).toBe(400);
     expect(decision.sells).toEqual([]);
     expect(decision.reason).toBe("buy cash sweep");
+  });
+
+  it("keeps a leg's reserve when that gate still allows it with SPY above 200", () => {
+    const equity = DEFAULT_SLEEVE_EQUITY_USD;
+    const overlay = equity * RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED;
+    const putBudget = MAX_AUTO_RISKOFF_VERTICALS * OPTIONS_DEBIT_CAP_FRAC * equity;
+    expect(riskoffReserveLegReleased(true, true)).toBe(false);
+    expect(riskoffReserveLegReleased(true, false)).toBe(true);
+    const reserve = riskoffSweepReserve({
+      equityUsd: equity,
+      nonSweepMarketValueUsd: overlay,
+      openPutDebitUsd: 0,
+      durationMarketValueUsd: 0,
+      releasePutReserve: riskoffReserveLegReleased(true, true),
+      releaseDurationReserve: riskoffReserveLegReleased(true, false),
+    });
+    expect(reserve.putReserveUsd).toBe(putBudget);
+    expect(reserve.durationReserveUsd).toBe(0);
+    expect(reserve.reserveUsd).toBe(putBudget);
+    expect(reserve.targetUsd).toBe(34_000);
+
+    const decision = decideRiskoffCashSweep({
+      riskOn: false,
+      spyAbove200: true,
+      putsAllowed: true,
+      durationAllowed: false,
+      positions: [long("FTLS", overlay / 100, 100)],
+      sleeve: sleeve(),
+      quotes: [
+        { symbol: "FTLS", last: 100 },
+        { symbol: "BIL", last: 100 },
+      ],
+      bilBarsOk: true,
+      now: CLOSE,
+      lastSweepYmd: null,
+    });
+    expect(decision.reserveUsd).toBe(6_000);
+    expect(decision.targetUsd).toBe(34_000);
+    expect(decision.buy?.qty).toBe(340);
   });
 
   it("reserves the put budget when SPY is below 200 (40% overlay + duration + puts)", () => {
@@ -154,8 +215,30 @@ describe("risk-off idle-cash BIL sweep", () => {
     expect(withPuts.reserveUsd).toBe(4_000);
     expect(withPuts.targetUsd).toBe(34_000);
 
+    const below = gates(false);
+    expect(below.putsAllowed).toBe(true);
+    expect(below.durationAllowed).toBe(true);
+    expect(riskoffReserveLegReleased(false, false)).toBe(false);
+    const vetoStillReserved = decideRiskoffCashSweep({
+      riskOn: false,
+      ...gates(false, true),
+      positions: [long("UUP", overlay / 100, 100)],
+      sleeve: sleeve(),
+      quotes: [
+        { symbol: "UUP", last: 100 },
+        { symbol: "BIL", last: 100 },
+      ],
+      bilBarsOk: true,
+      now: CLOSE,
+      lastSweepYmd: null,
+    });
+    expect(gates(false, true).durationAllowed).toBe(false);
+    expect(vetoStillReserved.reserveUsd).toBe(26_000);
+    expect(vetoStillReserved.targetUsd).toBe(34_000);
+
     const decision = decideRiskoffCashSweep({
       riskOn: false,
+      ...below,
       positions: [
         long("UUP", overlay / 100, 100),
         long("TLT", duration / 100, 100, { gatedDuration: true }),
@@ -175,6 +258,34 @@ describe("risk-off idle-cash BIL sweep", () => {
     expect(decision.reserveUsd).toBe(4_000);
     expect(decision.buy?.qty).toBe(340);
     expect(decision.buy?.cashSweep).toBe(true);
+  });
+
+  it("unknown SPY 200 fails closed to today's reserve", () => {
+    const equity = DEFAULT_SLEEVE_EQUITY_USD;
+    const overlay = equity * RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED;
+    for (const spyAbove200 of [null, undefined] as const) {
+      const unknown = gates(spyAbove200);
+      expect(unknown.putsAllowed).toBe(false);
+      expect(unknown.durationAllowed).toBe(false);
+      expect(riskoffReserveLegReleased(spyAbove200, unknown.putsAllowed)).toBe(false);
+      expect(riskoffReserveLegReleased(spyAbove200, unknown.durationAllowed)).toBe(false);
+      const decision = decideRiskoffCashSweep({
+        riskOn: false,
+        ...unknown,
+        positions: [long("FTLS", overlay / 100, 100)],
+        sleeve: sleeve(),
+        quotes: [
+          { symbol: "FTLS", last: 100 },
+          { symbol: "BIL", last: 100 },
+        ],
+        bilBarsOk: true,
+        now: CLOSE,
+        lastSweepYmd: null,
+      });
+      expect(decision.reserveUsd).toBe(26_000);
+      expect(decision.targetUsd).toBe(14_000);
+      expect(decision.buy?.qty).toBe(140);
+    }
   });
 
   it("sells sweep BIL first to fund a put debit", () => {
@@ -298,6 +409,7 @@ describe("risk-off idle-cash BIL sweep", () => {
   it("does not churn inside the resize band and does not treat sweep BIL as the overlay", () => {
     const dead = decideRiskoffCashSweep({
       riskOn: false,
+      ...gates(false),
       positions: [long("FTLS", 600, 100), long("BIL", 150, 100, { cashSweep: true })],
       sleeve: sleeve(),
       quotes: [
@@ -310,7 +422,30 @@ describe("risk-off idle-cash BIL sweep", () => {
     });
     expect(dead.buy).toBeNull();
     expect(dead.sells).toEqual([]);
+    expect(dead.reserveUsd).toBe(26_000);
+    expect(dead.targetUsd).toBe(14_000);
     expect(Math.abs(15_000 - 14_000)).toBeLessThan(
+      DEFAULT_SLEEVE_EQUITY_USD * RISKOFF_ETF_RESIZE_NOTIONAL_FRAC,
+    );
+
+    const releasedBand = decideRiskoffCashSweep({
+      riskOn: false,
+      ...gates(true),
+      positions: [long("FTLS", 600, 100), long("BIL", 395, 100, { cashSweep: true })],
+      sleeve: sleeve(),
+      quotes: [
+        { symbol: "FTLS", last: 100 },
+        { symbol: "BIL", last: 100 },
+      ],
+      bilBarsOk: true,
+      now: CLOSE,
+      lastSweepYmd: null,
+    });
+    expect(releasedBand.reserveUsd).toBe(0);
+    expect(releasedBand.targetUsd).toBe(40_000);
+    expect(releasedBand.buy).toBeNull();
+    expect(releasedBand.sells).toEqual([]);
+    expect(Math.abs(39_500 - 40_000)).toBeLessThan(
       DEFAULT_SLEEVE_EQUITY_USD * RISKOFF_ETF_RESIZE_NOTIONAL_FRAC,
     );
 
@@ -395,7 +530,232 @@ describe("risk-off idle-cash BIL sweep", () => {
     );
     expect(hits.map((h) => h.position.id)).toEqual([overlay.id]);
   });
+
+  it("autopilot sweeps idle cash when SPY is above 200 and keeps the reserve otherwise", async () => {
+    const returns = emptyRiskoffEtfReturns();
+    returns.BIL = 0.01;
+    async function sweepQty(spyAbove200: boolean | null): Promise<number[]> {
+      resetRiskoffCashSweepClock();
+      resetRiskoffEtfMissingBarsMisses();
+      const placed: number[] = [];
+      await runAutopilot({
+        enabled: true,
+        sleeveAuto: {
+          day: false,
+          momentum: false,
+          ownership: false,
+          options: false,
+          riskoff: true,
+        },
+        getPositions: () => [long("FTLS", 600, 100)],
+        getSleeves: () => defaultSleeves(),
+        momentumRows: [],
+        featureRows: [],
+        scanReady: true,
+        riskOn: false,
+        riskChecks: { spyAbove200, hygAbove200: false, dollarVeto: false },
+        riskoffEtfReturns: returns,
+        riskoffEtfQuotes: [
+          { symbol: "FTLS", last: 100 },
+          { symbol: "BIL", last: 100 },
+        ],
+        now: CLOSE,
+        place: async (b) => {
+          if (b.cashSweep) placed.push(b.qty);
+          return { ok: true };
+        },
+        close: async () => ({ ok: true }),
+        log: () => {},
+      });
+      return placed;
+    }
+    expect(await sweepQty(true)).toEqual([400]);
+    expect(await sweepQty(false)).toEqual([140]);
+    expect(await sweepQty(null)).toEqual([140]);
+  });
+
+  it("a SPY break funds 3 put debits and duration by selling sweep BIL first", async () => {
+    setPaperNow(new Date("2026-09-03T13:50:00.000Z"));
+    const expiry = [
+      { year: 2026, month: 10, day: 9, expiry: "2026-10-09", expiryType: "MONTHLY" as const },
+    ];
+    const chain = (u: string, atm: number): OptionLeg[] => [
+      leg(u, atm, 0.41, 0.42),
+      leg(u, atm - 0.5, 0.19, 0.2),
+    ];
+    const positions: Position[] = [
+      long("FTLS", 400, 100),
+      long("BIL", 600, 100, { cashSweep: true }),
+    ];
+    const events: string[] = [];
+    const result = await runBreakFunding({
+      positions,
+      bilQuoted: true,
+      chain,
+      expiry,
+      events,
+    });
+    expect(events).toEqual([
+      "fund:1",
+      "put:HYG",
+      "fund:1",
+      "put:LQD",
+      "fund:1",
+      "put:JNK",
+      "fund:200",
+      "buy:TLT",
+    ]);
+    expect(result.verticals.map((v) => v.symbol)).toEqual(["HYG", "LQD", "JNK"]);
+    expect(result.bought.map((b) => b.symbol)).toEqual(["TLT"]);
+    expect(result.bought[0].gatedDuration).toBe(true);
+    expect(positions.find((p) => p.cashSweep)?.qty).toBe(600 - 1 - 1 - 1 - 200);
+  });
+
+  it("a missing BIL quote falls back to the sweep average and still opens the entries", async () => {
+    setPaperNow(new Date("2026-09-03T13:50:00.000Z"));
+    const expiry = [
+      { year: 2026, month: 10, day: 9, expiry: "2026-10-09", expiryType: "MONTHLY" as const },
+    ];
+    const chain = (u: string, atm: number): OptionLeg[] => [
+      leg(u, atm, 0.41, 0.42),
+      leg(u, atm - 0.5, 0.19, 0.2),
+    ];
+    const positions: Position[] = [
+      long("FTLS", 400, 100),
+      long("BIL", 600, 100, { cashSweep: true }),
+    ];
+    const events: string[] = [];
+    const result = await runBreakFunding({
+      positions,
+      bilQuoted: false,
+      chain,
+      expiry,
+      events,
+    });
+    expect(events[0]).toBe("fund:1");
+    expect(events.filter((e) => e.startsWith("put:"))).toEqual(["put:HYG", "put:LQD", "put:JNK"]);
+    expect(events[events.length - 1]).toBe("buy:TLT");
+    expect(result.verticals).toHaveLength(3);
+    expect(result.bought.map((b) => b.symbol)).toEqual(["TLT"]);
+
+    const unpriced: Position[] = [
+      long("FTLS", 400, 100),
+      long("BIL", 600, 0, { cashSweep: true }),
+    ];
+    const skipped: string[] = [];
+    const logs: string[] = [];
+    const still = await runBreakFunding({
+      positions: unpriced,
+      bilQuoted: false,
+      chain,
+      expiry,
+      events: skipped,
+      logs,
+    });
+    expect(skipped.filter((e) => e.startsWith("fund:"))).toEqual([]);
+    expect(still.verticals.map((v) => v.symbol)).toEqual(["HYG", "LQD", "JNK"]);
+    expect(still.bought.map((b) => b.symbol)).toEqual(["TLT"]);
+    expect(logs.some((l) => /skip/i.test(l) && /cash|BIL/i.test(l))).toBe(false);
+  });
 });
+
+function leg(underlying: string, strike: number, bid: number, ask: number): OptionLeg {
+  return {
+    underlying,
+    osiKey: `O:${underlying}261009P${String(Math.round(strike * 1000)).padStart(8, "0")}`,
+    displaySymbol: `${underlying} P ${strike}`,
+    right: "P",
+    strike,
+    expiry: "2026-10-09",
+    bid,
+    ask,
+    last: (bid + ask) / 2,
+    bidSize: 500,
+    askSize: 500,
+    openInterest: 500,
+    delta: -0.4,
+    gamma: 0.01,
+    theta: -0.02,
+    vega: 0.1,
+    iv: 0.2,
+  };
+}
+
+async function runBreakFunding(input: {
+  positions: Position[];
+  bilQuoted: boolean;
+  chain: (symbol: string, atm: number) => OptionLeg[];
+  expiry: Array<{ year: number; month: number; day: number; expiry: string; expiryType: "MONTHLY" }>;
+  events: string[];
+  logs?: string[];
+}) {
+  const quotes = [
+    { symbol: "FTLS", last: 100 },
+    { symbol: "TLT", last: 100 },
+    { symbol: "HYG", last: 79 },
+    { symbol: "LQD", last: 108 },
+    { symbol: "JNK", last: 76 },
+    ...(input.bilQuoted ? [{ symbol: "BIL", last: 100 }] : []),
+  ];
+  return runAutopilot({
+    enabled: true,
+    sleeveAuto: {
+      day: false,
+      momentum: false,
+      ownership: false,
+      options: false,
+      riskoff: true,
+    },
+    getPositions: () => input.positions,
+    getSleeves: () => defaultSleeves(),
+    momentumRows: [],
+    featureRows: [],
+    scanReady: true,
+    riskOn: false,
+    riskChecks: {
+      spyAbove200: false,
+      hygAbove200: false,
+      lqdAbove200: false,
+      jnkAbove200: false,
+      dollarVeto: false,
+    },
+    riskoffQuotes: quotes,
+    riskoffEtfQuotes: quotes,
+    now: MIDDAY,
+    place: async (b) => {
+      input.events.push(`buy:${b.symbol}`);
+      return { ok: true };
+    },
+    close: async (s) => {
+      if (s.cashSweep && s.reason === "sell cash sweep to fund entry") {
+        input.events.push(`fund:${s.qty ?? 0}`);
+        const sweep = input.positions.find((p) => p.cashSweep);
+        if (sweep && s.qty) sweep.qty -= s.qty;
+      } else {
+        input.events.push(`close:${s.symbol}`);
+      }
+      return { ok: true };
+    },
+    placeVertical: async (v) => {
+      input.events.push(`put:${v.symbol}`);
+      const debit = 0.23;
+      const qty = v.qty ?? 1;
+      input.positions.push(putDebit(debit));
+      const booked = input.positions[input.positions.length - 1];
+      booked.qty = qty;
+      booked.symbol = `${v.symbol}-put`;
+      return { ok: true };
+    },
+    fetchExpiries: async () => input.expiry,
+    fetchChain: async (symbol: string) => {
+      if (symbol === "HYG") return input.chain("HYG", 79);
+      if (symbol === "LQD") return input.chain("LQD", 108);
+      if (symbol === "JNK") return input.chain("JNK", 76);
+      return input.chain(symbol, 100);
+    },
+    log: (line) => input.logs?.push(line),
+  });
+}
 
 describe("risk-off ETF cash distributions", () => {
   it("parses Massive cash dividends and drops rows that are not a positive USD cash amount", () => {

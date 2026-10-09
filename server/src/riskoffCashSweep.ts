@@ -33,7 +33,11 @@ export type RiskoffCashSweepDecision = {
   reason: string;
   sells: RiskoffCashSweepSell[];
   buy: RiskoffCashSweepBuy | null;
-  /** Cash kept back for unused put-debit cap plus unfunded duration. */
+  /**
+   * Cash kept back for unused put-debit cap plus unfunded duration.
+   * Zero while RISK OFF, SPY is confirmed above its 200dma, and those legs
+   * are actually blocked. Unknown SPY 200 keeps today's reserve.
+   */
   reserveUsd: number;
   /** Idle cash the sweep would hold after the reserve. */
   targetUsd: number;
@@ -106,9 +110,9 @@ export function riskoffPutReserveUsd(equityUsd: number, openPutDebitUsd: number)
 
 /**
  * Gated duration budget (20% of the $100k book, same basis as the duration buy)
- * minus duration already held. Kept even while SPY is above 200 so a break
- * can fund TLT/IEF without selling the sweep first. The 60%→40% overlay cut
- * is a separate sale; this reserve does not depend on it.
+ * minus duration already held. This is the full budget. The sweep releases it
+ * only when SPY is confirmed above its 200dma and the duration gate is closed.
+ * The 60%→40% overlay cut is a separate sale; this reserve does not depend on it.
  */
 export function riskoffDurationReserveUsd(durationMarketValueUsd: number): number {
   const budget = DEFAULT_SLEEVE_EQUITY_USD * RISKOFF_DURATION_NOTIONAL_FRAC;
@@ -130,19 +134,42 @@ export type RiskoffSweepReserve = {
   targetUsd: number;
 };
 
+/**
+ * Release one reserve leg into the sweep.
+ * SPY confirmed above 200 and the leg's gate closed → release.
+ * SPY confirmed below 200 → keep today's reserve (the leg is armed).
+ * Missing or null SPY 200 is not above and not below → keep the reserve.
+ * A gate that still allows the leg while SPY is above 200 keeps that reserve.
+ */
+export function riskoffReserveLegReleased(
+  spyAbove200: boolean | null | undefined,
+  legAllowed: boolean,
+): boolean {
+  if (spyAbove200 !== true) return false;
+  return legAllowed !== true;
+}
+
 /** Idle cash above the put reserve and the unfunded duration book. */
 export function riskoffSweepReserve(input: {
   equityUsd: number;
   nonSweepMarketValueUsd: number;
   openPutDebitUsd: number;
   durationMarketValueUsd: number;
+  /** True when new puts are known blocked and SPY is confirmed above 200. */
+  releasePutReserve?: boolean;
+  /** True when gated duration is known blocked and SPY is confirmed above 200. */
+  releaseDurationReserve?: boolean;
 }): RiskoffSweepReserve {
   const equityUsd = Number.isFinite(input.equityUsd) ? input.equityUsd : 0;
   const nonSweep = Number.isFinite(input.nonSweepMarketValueUsd)
     ? Math.max(0, input.nonSweepMarketValueUsd)
     : 0;
-  const putReserveUsd = riskoffPutReserveUsd(equityUsd, input.openPutDebitUsd);
-  const durationReserveUsd = riskoffDurationReserveUsd(input.durationMarketValueUsd);
+  const putReserveUsd = input.releasePutReserve
+    ? 0
+    : riskoffPutReserveUsd(equityUsd, input.openPutDebitUsd);
+  const durationReserveUsd = input.releaseDurationReserve
+    ? 0
+    : riskoffDurationReserveUsd(input.durationMarketValueUsd);
   const reserveUsd = putReserveUsd + durationReserveUsd;
   const targetUsd = Math.max(0, equityUsd - nonSweep - reserveUsd);
   return {
@@ -259,6 +286,16 @@ export function decideRiskoffCashSweep(input: {
   quotes: Array<{ symbol: string; last: number }>;
   /** Finite BIL daily bars (a finite BIL return from the overlay fetch). */
   bilBarsOk: boolean;
+  /**
+   * Tri-state SPY 200dma. True releases a reserve leg only when that leg's
+   * gate is closed. False keeps today's reserve. Null or omitted fails closed
+   * to today's reserve (missing bars are not above and not below).
+   */
+  spyAbove200?: boolean | null;
+  /** Live put gate (riskoffEquityPutsAllowed). Used only when SPY is above 200. */
+  putsAllowed?: boolean;
+  /** Live duration gate (riskoffDurationAllowed). Used only when SPY is above 200. */
+  durationAllowed?: boolean;
   now?: Date | null;
   /** Previous sweep session. Omit to use process memory. Null means not yet. */
   lastSweepYmd?: string | null;
@@ -307,6 +344,11 @@ export function decideRiskoffCashSweep(input: {
     nonSweepMarketValueUsd: marks.nonSweep,
     openPutDebitUsd: marks.putDebit,
     durationMarketValueUsd: marks.duration,
+    releasePutReserve: riskoffReserveLegReleased(input.spyAbove200, input.putsAllowed === true),
+    releaseDurationReserve: riskoffReserveLegReleased(
+      input.spyAbove200,
+      input.durationAllowed === true,
+    ),
   });
   const heldQty = open.reduce((s, p) => s + p.qty, 0);
   const targetQty = Math.floor(reserve.targetUsd / bilLast);
