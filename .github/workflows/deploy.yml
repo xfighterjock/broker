@@ -1,4 +1,5 @@
 # Build, test, and deploy Event Gate to the VPS.
+# deploy/gha-sync.sh rsyncs the server bundle, client/dist, and db/migrations/*.sql, then restarts event-gate.
 # Secrets (repository Actions secrets, never committed):
 #   DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY, DEPLOY_KNOWN_HOSTS
 #   DEPLOY_PORT (optional; omit to use 22)
@@ -82,7 +83,7 @@ jobs:
       - name: Build client
         run: npm run build -w @broker/client
 
-      - name: Rsync and restart
+      - name: Rsync artifacts and migrations, then restart
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}

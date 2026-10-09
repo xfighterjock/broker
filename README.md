@@ -27,7 +27,7 @@ Requires Node 24. Copy .env.example to .env. Install with npm, then: npm test ; 
 ## VPS deploy
 No Docker. nginx + postgres + redis already on the box. Default path /opt/broker (DEPLOY_PATH override). First time on the box: deploy/setup.sh (creates db/user, redis check, copies nginx and systemd, prompts for GATE_PASSWORD, build, migrate, enable event-gate.service).
 
-Ongoing deploys are GitHub Actions on every push to master, and on workflow_dispatch. See docs/DEPLOY.md. The runner installs, runs tests and typechecks, builds `@broker/server` and `@broker/client`, rsyncs the server bundle and `client/dist/` to the VPS, restarts `event-gate`, and checks `systemctl is-active` plus the remote md5 of `dist/server.js`. Host, user, port, and the SSH key are Actions secrets. If `DEPLOY_SSH_KEY` is unset the deploy is skipped with a notice and the workflow stays green.
+Ongoing deploys are GitHub Actions on every push to master, and on workflow_dispatch. See docs/DEPLOY.md. The runner installs, runs tests and typechecks, builds `@broker/server` and `@broker/client`, rsyncs the server bundle, `client/dist/`, and `db/migrations/*.sql` to the VPS, restarts `event-gate`, and checks `systemctl is-active` plus the remote md5 of `dist/server.js`. Host, user, port, and the SSH key are Actions secrets. If `DEPLOY_SSH_KEY` is unset the deploy is skipped with a notice and the workflow stays green.
 
 Fallback if Actions cannot run: the same rsync from a Mac checkout (`deploy/gha-sync.sh`, documented in docs/DEPLOY.md). `deploy/deploy.sh` remains the on-box path (git pull unless dirty/no remote, npm ci, builds, migrate, restart unit, nginx test+reload). TLS comments live in deploy/nginx/event-gate.conf. server_name is event-gate.local or _.
 
