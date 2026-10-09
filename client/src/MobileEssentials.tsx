@@ -155,11 +155,16 @@ export function MobileEssentials({
             </span>
           </div>
           <span
-            className={`badge ${stage3Armed(snapshotNow(state), state.knowledgeTime) ? "on" : "off"}`}
+            className={`badge ${stage3Armed(snapshotNow(state), state.knowledgeTime, state.events) ? "on" : "off"}`}
             data-testid="stage3-arm"
           >
-            {stage3Line(snapshotNow(state), state.knowledgeTime)}
+            {stage3Line(snapshotNow(state), state.knowledgeTime, state.events)}
           </span>
+          {state.calendarStale ? (
+            <div className="hint" data-testid="calendar-stale">
+              Calendar stale: no NFP/CPI/FOMC in the next 35 days
+            </div>
+          ) : null}
         </div>
         <button type="button" className="essentials-flatten danger" onClick={flatten}>
           Flatten

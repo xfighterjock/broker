@@ -30,7 +30,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **AUTH_MODE** — Auth front door. Production `users` (users table + cookie/bearer). Local default `cookie` (GATE_PASSWORD). `nginx` is remapped to `users` in production. GET /api/public/risk is exempt in-app too.
 
-**AUTO PAPER** — Autopilot. Independent enable per sleeve (`autoPaperBySleeve`: day, momentum, options, ownership, riskoff). Snapshot `autoPaper` is true if ANY sleeve is on (badge / old clients). POST /api/paper/auto `{ enabled }` sets all; `{ sleeveId, enabled }` sets one. Redis `paper:auto` is JSON; legacy `0`/`1` migrates on first boot. Default all on when the key is missing. Never CSP/CC/naked. GATE still binds day. Day MES stoch also needs knowledge_time for that ET print day (Stage-3); idle RTH without the stamp does not enter.
+**AUTO PAPER** — Autopilot. Independent enable per sleeve (`autoPaperBySleeve`: day, momentum, options, ownership, riskoff). Snapshot `autoPaper` is true if ANY sleeve is on (badge / old clients). POST /api/paper/auto `{ enabled }` sets all; `{ sleeveId, enabled }` sets one. Redis `paper:auto` is JSON; legacy `0`/`1` migrates on first boot. Default all on when the key is missing. Never CSP/CC/naked. GATE still binds day. Day MES stoch also needs Stage-3: an NFP/CPI/FOMC ET day, knowledge_time on that day at or after the anchor, and now at or after the stamp. A non-print or pre-print stamp does not enter. Idle RTH without the stamp does not enter.
 
 **bearer** — Opaque session token from POST /api/auth/login. Stored as sha256 in Postgres `user_sessions` (`SESSION_TTL_MS` 30 days). iOS keeps the raw token in the Keychain and sends `Authorization: Bearer`. SPA uses cookie `eg.sid` instead.
 
@@ -42,6 +42,8 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **cash sweep** — Risk-off sleeve idle-cash T-bill lot. Paper / MockBroker only. At the same once-per-NY-session cash close as the 63d overlay, sleeve cash that is not the overlay, not the unfunded gated-duration budget (20% of the $100k book), and not the unused put-debit reserve (MAX_AUTO_RISKOFF_VERTICALS × OPTIONS_DEBIT_CAP_FRAC of sleeve equity) is bought as BIL. Tagged `cashSweep`, separate from any overlay BIL leg. Positions tables append a " sweep" suffix after the symbol. Resize uses RISKOFF_ETF_RESIZE_NOTIONAL_FRAC (8% of book) so a small mark does not churn. Missing BIL quote: no order. Missing BIL daily bars at that close, with a quote: flatten the sweep and do not re-enter until the next session. A put debit or gated-duration buy that needs cash sells this lot first (no min-hold, no churn brake, not 200-filtered). RISK ON flattens it with the overlay. No E*TRADE or Tradovate order.
 
+**calendarStale** — GET `/api/status` flag. True when no future NFP, CPI, or FOMC row falls within 35 days (`CALENDAR_STALE_WITHIN_MS`). The process logs `calendar stale` once per stale stretch. Web and iOS show `Calendar stale: no NFP/CPI/FOMC in the next 35 days`. A September-only `events` table (the old seed) is stale after those prints. Not a GateMode and not an arm by itself.
+
 **CC** — Covered call. Manual overlay on the options sleeve, tagged to an ownership or SPCX thesis. Not sold by autopilot. Never naked.
 
 **CI** — Continuous integration. On every push to master, GitHub Actions runs `npm test` and the server and client typechecks before a VPS deploy. The deploy job does not start unless those pass. See docs/DEPLOY.md.
@@ -50,7 +52,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **CME** — CME Group. Home of the gated futures roots (MES, ES, NQ, Treasuries, FX, SR3).
 
-**CPI** — Consumer Price Index print. Seed calendar event; freeze card; flatten 15:45 ET. Day-sleeve event clock only.
+**CPI** — Consumer Price Index print. Calendar event; freeze card; flatten 15:45 ET. Day-sleeve event clock only. 08:30 America/New_York. Dates through December 2027 are in `seedEvents()` and migration `005_calendar_through_2027.sql` (BLS CPI schedule; 2027 day-of-month also on the OMB FY2027 principal-indicator schedule).
 
 **CSP** — Cash-secured put. Manual overlay on the options sleeve. Reserves strike x 100 x qty. Never naked. Not sold by autopilot.
 
@@ -92,7 +94,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **Flatten** — Close gated day-sleeve names (POST /api/flatten) or a sleeve position (POST /api/paper/close, needs a delayed last). Print-day veto with GATE OFF. Does not flatten other sleeves from the event clock. Not a sleeve reset — that is POST /api/paper/reset.
 
-**FOMC** — Federal Open Market Committee. Seed events FOMC_STATEMENT and FOMC_PC; flatten 15:30 ET when type contains FOMC.
+**FOMC** — Federal Open Market Committee. Calendar rows FOMC_STATEMENT (14:00 ET) and FOMC_PC (14:30 ET) on the second meeting day; flatten 15:30 ET when type contains FOMC. Dates through December 2027 are from federalreserve.gov/monetarypolicy/fomccalendars.htm and the September 5, 2025 schedule release (statement 2:00 p.m. ET, press conference 2:30 p.m. ET). January 2028 is listed by the Fed but not seeded.
 
 **FOMC_PC** — FOMC press conference calendar type.
 
@@ -134,7 +136,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **KMLM** — KFA Mount Lucas Managed Futures Index Strategy ETF. Managed-futures / CTA-family candidate on the risk-off 63d RS overlay (RISKOFF_ETF_CTA_FAMILY with DBMF). Same 63d-vs-BIL and own-200 gates as the other overlay names, plus the 21-session beat-BIL confirmation (missing 21d bars skip KMLM). Not an RS overlay qualifier in HYG-only RISK OFF (RISKOFF_ETF_HYG_ONLY_INELIGIBLE), even if 63d beats BIL, KMLM is above its own 200dma, and the 21d confirm beats BIL. When SPY is below 200 (or HYG-only is not active) KMLM stays eligible under the ordinary CTA gates: 63d beat-BIL, own-200, 21d confirm, never-dual-CTA, never-pair-PDBC. Remains in RISKOFF_ETF_CTA_FAMILY, RISKOFF_ETF_SYMBOLS, and the quote strip. DBMF is in that HYG-only drop the same way. Paper / MockBroker only.
 
-**knowledge_time** — Timestamp after the print used on the freeze checklist (knowledge_time after print). Also the day-sleeve Stage-3 arm: new MES stoch entries only when this stamp is set, `now` is at or after it, and both share the same America/New_York calendar day. Ordinary idle RTH without a same-day stamp does not open MES. PRE-ARM, NO-STOP BAND, and SESSION FLATTEN still veto new entries. Existing lots keep stop / VWAP-exit / 15:45 flatten / sleeve loss cap. Auto-stamp is the primary path: on an NFP, CPI, or FOMC America/New_York day, at or after the anchor print time, the status snapshot and the autopilot tick stamp if that ET day is still unstamped, whether or not a freeze card exists. FOMC uses STATEMENT time when both STATEMENT and PC exist; otherwise the FOMC row. NFP and CPI use the print time. Jobless claims and other non-print rows do not stamp. POST `/api/knowledge-time` remains a backstop for a user session (manual) or EVENT_GATE_OPS_TOKEN (ops). Desktop, web `/m`, and iOS do not show a stamp button; they display the stamp and `Stage-3 armed (auto)` / `Stage-3 not armed`. Same-ET-day stamp is idempotent. Logs: `knowledge_time manual`, `knowledge_time ops-stamped`, `knowledge_time auto-stamped`.
+**knowledge_time** — Timestamp after the print used on the freeze checklist (knowledge_time after print). Also the day-sleeve Stage-3 arm: new MES stoch entries only when this stamp is set, `now` is at or after it, both share the same America/New_York calendar day, that day has an NFP, CPI, or FOMC row, and the stamp is at or after the anchor print. A stamp on a non-print day (jobless claims, a blank day) does not arm (`knowledge_time not on a print day`). A stamp before the anchor does not arm (`knowledge_time before print`). Ordinary idle RTH without a same-day stamp does not open MES. PRE-ARM, NO-STOP BAND, and SESSION FLATTEN still veto new entries. Existing lots keep stop / VWAP-exit / 15:45 flatten / sleeve loss cap. Auto-stamp is the primary path: on an NFP, CPI, or FOMC America/New_York day, at or after the anchor print time, the status snapshot and the autopilot tick stamp if that ET day has no at-or-after-anchor stamp, whether or not a freeze card exists. A pre-print stamp does not block that write. FOMC uses STATEMENT time when both STATEMENT and PC exist; otherwise the FOMC row. NFP and CPI use the print time. Jobless claims and other non-print rows do not stamp. POST `/api/knowledge-time` remains a backstop for a user session (manual) or EVENT_GATE_OPS_TOKEN (ops). On a non-print ET day, or before the anchor, it returns 409, stores nothing, and logs `knowledge_time refused (manual|ops): …`. Desktop, web `/m`, and iOS do not show a stamp button; they display the stamp and `Stage-3 armed (auto)` / `Stage-3 not armed`. Web uses the same print-day rule from `events`. iOS has no event list and reads `stage3Armed` on the snapshot. A stamp already at or after the anchor that ET day is idempotent. Logs: `knowledge_time manual`, `knowledge_time ops-stamped`, `knowledge_time auto-stamped`, `knowledge_time refused`.
 
 **Limit** — Limit order type. Gate leaves limits alone unless oversize.
 
@@ -160,7 +162,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **MTM** — Mark to market. Vertical and overlay unrealized P/L use chain marks, not invented prices.
 
-**NFP** — Nonfarm payrolls print. Seed calendar event; freeze card; flatten 15:45 ET. Day-sleeve event clock only.
+**NFP** — Nonfarm payrolls (Employment Situation) print. Calendar event; freeze card; flatten 15:45 ET. Day-sleeve event clock only. 08:30 America/New_York. Dates through December 2027 are in `seedEvents()` and migration `005_calendar_through_2027.sql` (BLS Employment Situation schedule; 2027 day-of-month also on the OMB FY2027 principal-indicator schedule).
 
 **nginx** — TLS reverse proxy in front of 127.0.0.1:3001. No htpasswd on /api or the SPA; app auth is the users table. GET /api/public/risk stays unauthenticated.
 
@@ -188,7 +190,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **PIN** — E*TRADE verifier after Authorize. Typed in Event Gate (desktop banner under the header, web `/m`, or the iOS essentials banner). Needed after midnight ET, and when renew returns HTTP 401 (`etradeAuth` `needs_pin`). Never stored in git or chat.
 
-**Postgres** — Database for calendar events, freeze snapshots, `users` + `user_sessions`, iOS FCM device tokens, push-alert dedupe, and the activity journal (`gate_log`, plus `session_logs`). Activity rows older than 90 days are deleted.
+**Postgres** — Database for calendar events, freeze snapshots, `users` + `user_sessions`, iOS FCM device tokens, push-alert dedupe, and the activity journal (`gate_log`, plus `session_logs`). Activity rows older than 90 days are deleted. Production calendar is the `events` table: if it has any rows, those replace `seedEvents()`. Migration `001_init.sql` inserted only September 2026, which is why the live book went idle after those prints. Migration `005_calendar_through_2027.sql` adds the later NFP, CPI, and FOMC rows.
 
 **PRE-ARM** — Gate mode T-15m to T-2m. Cancels Market / StopMarket / StopLimit / MIT on gated roots.
 
@@ -276,7 +278,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **SYMBOL_DESCRIPTIONS** — Shared map in `shared/symbolDescriptions.ts` of Event Gate ticker → short full name (methodology ETFs/futures roots from this glossary: SPY, QQQ, HYG, GLD, GDX, PDBC, UUP, BIL, TLT, IEF, FLOT, XLU, XLP, DBMF, KMLM, CLSE, USMV, QUAL, FTLS, BTAL, LQD, JNK, SJB, ACWI, IWM, and gated roots MES/MNQ/ES/NQ/ZN/ZF/ZT/ZB/SR3/6E/M6E). Web paper UI sets HTML `title` (and an accessibility label) on primary symbol labels: quote strips, sleeve instrument chips, positions, orders, blotter, overlay names, options underlyings, and gated-root chips. Dated futures (`MESU6`) and Yahoo `=F` resolve to the root; option packages resolve to the underlying. Unknown symbols show the bare ticker with no tooltip. Display only. Does not change MockBroker orders. iOS essentials does not list individual tickers, so it has no VoiceOver symbol description.
 
-**Stage-3** — Post-print window on an NFP/CPI/FOMC day after knowledge_time is stamped for that America/New_York day (auto-stamp at or after the anchor print, with or without a freeze card, or the POST `/api/knowledge-time` backstop). Day-sleeve MES stoch may open only then, and only while GATE is idle. PRE-ARM, NO-STOP BAND, and SESSION FLATTEN still veto new entries. Desktop, web `/m`, and iOS show a read-only line: `Stage-3 armed (auto)` or `Stage-3 not armed`. No stamp button.
+**Stage-3** — Post-print window on an NFP/CPI/FOMC day after knowledge_time is stamped for that America/New_York day at or after the anchor print (auto-stamp at or after the anchor, with or without a freeze card, or the POST `/api/knowledge-time` backstop). A same-day stamp on a non-print day, or a stamp from before the print, is not Stage-3. Day-sleeve MES stoch may open only then, and only while GATE is idle. PRE-ARM, NO-STOP BAND, and SESSION FLATTEN still veto new entries. Exits (stop, VWAP exit, 15:45 flatten, loss cap) do not require the arm. Desktop, web `/m`, and iOS show a read-only line: `Stage-3 armed (auto)` or `Stage-3 not armed`. Web applies `stage3Arm` to `events`. iOS reads snapshot `stage3Armed` because it does not decode the calendar. No stamp button. Snapshot field `stage3Armed` is the same rule.
 
 **StopLimit** — Stop-limit order type. Cancelled as market-or-stop on gated roots in PRE-ARM and NO-STOP BAND.
 

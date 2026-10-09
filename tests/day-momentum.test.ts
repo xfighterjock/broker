@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { zonedTimeToUtc } from "../shared/clock";
-import type { Position } from "../shared/types";
+import { seedEvents, zonedTimeToUtc } from "../shared/clock";
+import type { CalendarEvent, Position } from "../shared/types";
 import {
   DAY_STOCH_SYMBOL,
   dayStochArmed,
@@ -114,16 +114,25 @@ function flatVwapBars(n: number, px: number): MinuteBar[] {
 }
 
 const printDayKnowledge = zonedTimeToUtc(2026, 9, 2, 8, 35, 0).toISOString();
+/** Sept 2 is not on the seed calendar. This row makes the fixture a print day at 08:30 ET. */
+const sept2Print: CalendarEvent = {
+  id: "nfp-2026-09-02",
+  timeUtc: zonedTimeToUtc(2026, 9, 2, 8, 30, 0).toISOString(),
+  type: "NFP",
+  flattenEt: "15:45",
+  label: "test print",
+};
 
 describe("dayStochArmed", () => {
   const noon = zonedTimeToUtc(2026, 9, 2, 11, 20, 0);
 
   it("is false without knowledge_time and true after a same-ET-day stamp", () => {
-    expect(dayStochArmed(noon, null)).toBe(false);
-    expect(dayStochArmed(noon, undefined)).toBe(false);
-    expect(dayStochArmed(noon, printDayKnowledge)).toBe(true);
-    expect(dayStochArmed(noon, zonedTimeToUtc(2026, 9, 1, 10, 0, 0).toISOString())).toBe(false);
-    expect(dayStochArmed(noon, zonedTimeToUtc(2026, 9, 2, 12, 0, 0).toISOString())).toBe(false);
+    expect(dayStochArmed(noon, null, [sept2Print])).toBe(false);
+    expect(dayStochArmed(noon, undefined, [sept2Print])).toBe(false);
+    expect(dayStochArmed(noon, printDayKnowledge, [sept2Print])).toBe(true);
+    expect(dayStochArmed(noon, printDayKnowledge)).toBe(false);
+    expect(dayStochArmed(noon, zonedTimeToUtc(2026, 9, 1, 10, 0, 0).toISOString(), [sept2Print])).toBe(false);
+    expect(dayStochArmed(noon, zonedTimeToUtc(2026, 9, 2, 12, 0, 0).toISOString(), [sept2Print])).toBe(false);
   });
 });
 
@@ -153,6 +162,7 @@ describe("decideDayMomentum", () => {
       sleeveLossCapUsd: 500,
       sleeveRealizedPnlUsd: 0,
       knowledgeTime: printDayKnowledge,
+      events: [sept2Print],
     });
     expect(got.buy).toBeNull();
     expect(got.reason).toMatch(/PRE-ARM/);
@@ -167,6 +177,7 @@ describe("decideDayMomentum", () => {
       sleeveLossCapUsd: 500,
       sleeveRealizedPnlUsd: 0,
       knowledgeTime: printDayKnowledge,
+      events: [sept2Print],
     });
     expect(got.buy).toBeNull();
     expect(got.reason).toMatch(/NO-STOP BAND/);
@@ -209,6 +220,7 @@ describe("decideDayMomentum", () => {
       sleeveLossCapUsd: 500,
       sleeveRealizedPnlUsd: 0,
       knowledgeTime: printDayKnowledge,
+      events: [sept2Print],
     });
     expect(got.buy?.sleeveId).toBe("day");
     expect(got.buy?.symbol).toBe(DAY_STOCH_SYMBOL);
@@ -275,5 +287,71 @@ describe("decideDayMomentum", () => {
     expect(bars).toHaveLength(2);
     expect(bars[1].close).toBe(2.5);
     expect(bars[1].ts).toBe(1_300_000);
+  });
+
+  it("does not arm a claims-day stamp and still flattens an open lot", () => {
+    const claimsNow = new Date("2026-10-08T18:39:00.000Z");
+    const claimsStamp = "2026-10-08T08:42:58.639Z";
+    expect(dayStochArmed(claimsNow, claimsStamp, seedEvents())).toBe(false);
+    const blocked = decideDayMomentum({
+      now: claimsNow,
+      gateMode: "idle",
+      bars: longSignalBars(),
+      positions: [],
+      sleeveLossCapUsd: 500,
+      sleeveRealizedPnlUsd: 0,
+      knowledgeTime: claimsStamp,
+      events: seedEvents(),
+    });
+    expect(blocked.buy).toBeNull();
+    expect(blocked.reason).toBe("knowledge_time not on a print day");
+
+    const flatNow = zonedTimeToUtc(2026, 10, 8, 15, 50, 0);
+    const flat = decideDayMomentum({
+      now: flatNow,
+      gateMode: "idle",
+      bars: series(20, 81),
+      positions: [pos("Short")],
+      sleeveLossCapUsd: 500,
+      sleeveRealizedPnlUsd: 0,
+      knowledgeTime: claimsStamp,
+      events: seedEvents(),
+    });
+    expect(flat.sells[0]?.reason).toMatch(/15:45/);
+    expect(flat.buy).toBeNull();
+  });
+
+  it("does not arm a pre-print stamp and does arm a post-print stamp on NFP day", () => {
+    const events = seedEvents();
+    const after = new Date("2026-09-04T16:00:00.000Z");
+    const beforeStamp = "2026-09-04T12:00:00.000Z";
+    const afterStamp = "2026-09-04T12:35:00.000Z";
+    expect(dayStochArmed(after, beforeStamp, events)).toBe(false);
+    const early = decideDayMomentum({
+      now: after,
+      gateMode: "idle",
+      bars: longSignalBars(),
+      positions: [],
+      sleeveLossCapUsd: 500,
+      sleeveRealizedPnlUsd: 0,
+      knowledgeTime: beforeStamp,
+      events,
+    });
+    expect(early.buy).toBeNull();
+    expect(early.reason).toBe("knowledge_time before print");
+
+    expect(dayStochArmed(after, afterStamp, events)).toBe(true);
+    const late = decideDayMomentum({
+      now: after,
+      gateMode: "idle",
+      bars: longSignalBars(),
+      positions: [],
+      sleeveLossCapUsd: 500,
+      sleeveRealizedPnlUsd: 0,
+      knowledgeTime: afterStamp,
+      events,
+    });
+    expect(late.buy?.symbol).toBe(DAY_STOCH_SYMBOL);
+    expect(late.reason).toBe("buy");
   });
 });

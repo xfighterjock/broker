@@ -235,7 +235,8 @@ enum EssentialsFormat {
         return pa.year == pb.year && pa.month == pb.month && pa.day == pb.day
     }
 
-    /// Matches server `dayStochArmed`: same-ET-day stamp and now at/after it.
+    /// Fallback when a snapshot omits `stage3Armed` (old server). Same-ET-day stamp only.
+    /// A current server sends `stage3Armed`, which also requires an NFP/CPI/FOMC day.
     static func dayStochArmed(now: Date, knowledgeTime: String?) -> Bool {
         guard let knowledgeTime, let kt = parseIso(knowledgeTime) else { return false }
         if now < kt { return false }
@@ -252,8 +253,9 @@ enum EssentialsFormat {
         return formatActivityTs(iso)
     }
 
-    static func stage3Line(now: Date, knowledgeTime: String?) -> String {
-        if dayStochArmed(now: now, knowledgeTime: knowledgeTime) {
+    static func stage3Line(now: Date, knowledgeTime: String?, stage3Armed serverFlag: Bool? = nil) -> String {
+        let armed = serverFlag ?? dayStochArmed(now: now, knowledgeTime: knowledgeTime)
+        if armed {
             return "Stage-3 armed (auto)"
         }
         return "Stage-3 not armed"

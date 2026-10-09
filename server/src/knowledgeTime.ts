@@ -1,6 +1,7 @@
-import { sameEtDay } from "./dayMomentum";
-import { isPrintEvent } from "./eventGateAlerts";
+import { knowledgeTimeAnchorEvent, sameEtDay } from "../../shared/clock";
 import type { CalendarEvent } from "../../shared/types";
+
+export { knowledgeTimeAnchorEvent };
 
 export type KnowledgeTimeStampSource = "manual" | "ops" | "auto";
 
@@ -16,30 +17,45 @@ export function knowledgeTimeAlreadySetForEtDay(
 }
 
 /**
- * Print used to arm knowledge_time on this America/New_York day.
- * FOMC: STATEMENT time when both STATEMENT and PC exist; otherwise the FOMC row.
- * NFP/CPI: the print time.
+ * A same-ET-day stamp at or after the anchor print. A pre-print stamp, or a
+ * stamp on a day with no NFP/CPI/FOMC row, does not block a later stamp.
  */
-export function knowledgeTimeAnchorEvent(
+export function knowledgeTimeStampIsFinal(
   now: Date,
+  knowledgeTime: string | null | undefined,
   events: CalendarEvent[],
-): CalendarEvent | null {
-  const todays = events
-    .filter((ev) => isPrintEvent(ev) && Number.isFinite(Date.parse(ev.timeUtc)))
-    .filter((ev) => sameEtDay(now, new Date(ev.timeUtc)))
-    .slice()
-    .sort((a, b) => Date.parse(a.timeUtc) - Date.parse(b.timeUtc));
-  if (todays.length === 0) return null;
-  const fomc = todays.filter((ev) => ev.type.toUpperCase().includes("FOMC"));
-  if (fomc.length > 0) {
-    return fomc.find((ev) => ev.type.toUpperCase().includes("STATEMENT")) ?? fomc[0];
-  }
-  return todays[0];
+): boolean {
+  if (!knowledgeTimeAlreadySetForEtDay(now, knowledgeTime) || !knowledgeTime) return false;
+  const anchor = knowledgeTimeAnchorEvent(now, events);
+  if (!anchor) return false;
+  const kt = Date.parse(knowledgeTime);
+  const t = Date.parse(anchor.timeUtc);
+  return Number.isFinite(kt) && Number.isFinite(t) && kt >= t;
 }
 
 /**
- * Stamp once the anchor print time has passed and this ET day has no stamp.
- * A freeze card is not required. Jobless claims and other non-print rows do not qualify.
+ * Manual/ops POST may record a stamp only on a print day at or after the anchor.
+ * A non-print day (claims, blank day) or a pre-print stamp is refused so it
+ * cannot arm Stage-3 or block the auto-stamp.
+ */
+export function knowledgeTimeManualAllowed(
+  now: Date,
+  events: CalendarEvent[],
+): { ok: boolean; reason: string } {
+  const event = knowledgeTimeAnchorEvent(now, events);
+  if (!event) return { ok: false, reason: "knowledge_time not on a print day" };
+  const t = Date.parse(event.timeUtc);
+  if (!Number.isFinite(t) || now.getTime() < t) {
+    return { ok: false, reason: "knowledge_time before print" };
+  }
+  return { ok: true, reason: "ok" };
+}
+
+/**
+ * Stamp once the anchor print time has passed and this ET day has no
+ * at-or-after-anchor stamp. A freeze card is not required. Jobless claims
+ * and other non-print rows do not qualify. A leftover pre-print stamp does
+ * not count as already stamped.
  */
 export function shouldAutoStampKnowledgeTime(input: {
   now: Date;
@@ -48,7 +64,7 @@ export function shouldAutoStampKnowledgeTime(input: {
 }): { stamp: boolean; reason: string; event: CalendarEvent | null } {
   const event = knowledgeTimeAnchorEvent(input.now, input.events);
   if (!event) return { stamp: false, reason: "no print event today", event: null };
-  if (knowledgeTimeAlreadySetForEtDay(input.now, input.knowledgeTime)) {
+  if (knowledgeTimeStampIsFinal(input.now, input.knowledgeTime, input.events)) {
     return { stamp: false, reason: "already stamped", event };
   }
   const t = Date.parse(event.timeUtc);
@@ -62,4 +78,8 @@ export function knowledgeTimeLogLine(source: KnowledgeTimeStampSource, iso: stri
   if (source === "auto") return `knowledge_time auto-stamped ${iso}`;
   if (source === "ops") return `knowledge_time ops-stamped ${iso}`;
   return `knowledge_time manual ${iso}`;
+}
+
+export function knowledgeTimeRefusedLine(source: KnowledgeTimeStampSource, reason: string): string {
+  return `knowledge_time refused (${source}): ${reason}`;
 }

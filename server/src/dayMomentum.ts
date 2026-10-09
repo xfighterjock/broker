@@ -1,5 +1,5 @@
-import { etParts } from "../../shared/clock";
-import type { GateMode, Position, Side } from "../../shared/types";
+import { etParts, stage3Arm } from "../../shared/clock";
+import type { CalendarEvent, GateMode, Position, Side } from "../../shared/types";
 
 export const DAY_STOCH_SYMBOL = "MES=F";
 export const DAY_STOCH_PERIOD = 14;
@@ -67,22 +67,26 @@ export function gateBlocksDayEntries(mode: GateMode): boolean {
   return mode !== "idle";
 }
 
-export function sameEtDay(a: Date, b: Date): boolean {
-  const pa = etParts(a);
-  const pb = etParts(b);
-  return pa.year === pb.year && pa.month === pb.month && pa.day === pb.day;
+/**
+ * Post-print / Stage-3 arm for a new MES stoch entry.
+ * The ET day must have an NFP/CPI/FOMC row, the stamp must be on that day
+ * at or after the anchor print, and now must be at or after the stamp.
+ * A claims-day or pre-print stamp does not arm. Exits do not call this.
+ */
+export function dayStochArmed(
+  now: Date,
+  knowledgeTime: string | null | undefined,
+  events: CalendarEvent[] = [],
+): boolean {
+  return stage3Arm(now, knowledgeTime, events).armed;
 }
 
-/**
- * Post-print / Stage-3 arm: knowledge_time is set for this ET print day and now is at/after it.
- * Ordinary idle RTH with no (or stale) stamp does not open new MES stoch lots.
- */
-export function dayStochArmed(now: Date, knowledgeTime: string | null | undefined): boolean {
-  if (!knowledgeTime) return false;
-  const kt = Date.parse(knowledgeTime);
-  if (!Number.isFinite(kt)) return false;
-  if (now.getTime() < kt) return false;
-  return sameEtDay(now, new Date(kt));
+export function dayStochArmReason(
+  now: Date,
+  knowledgeTime: string | null | undefined,
+  events: CalendarEvent[] = [],
+): string {
+  return stage3Arm(now, knowledgeTime, events).reason;
 }
 
 export function vwapLostSustained(
@@ -238,6 +242,8 @@ export function decideDayMomentum(input: {
   sleeveRealizedPnlUsd: number;
   /** ISO stamp after the print. Required for new MES stoch entries; ignored for exits. */
   knowledgeTime?: string | null;
+  /** Calendar used to require an NFP/CPI/FOMC day and an at-or-after-anchor stamp. */
+  events?: CalendarEvent[];
 }): { buy: DayBuy | null; sells: DaySell[]; reason: string } {
   const empty = { buy: null as DayBuy | null, sells: [] as DaySell[] };
   const open = openDayMes(input.positions);
@@ -276,8 +282,9 @@ export function decideDayMomentum(input: {
 
   if (!weekday) return { ...empty, reason: "weekend" };
   if (gateBlocksDayEntries(input.gateMode)) return { ...empty, reason: `gate ${input.gateMode}` };
-  if (!dayStochArmed(input.now, input.knowledgeTime)) {
-    return { ...empty, reason: "no knowledge_time" };
+  const armReason = dayStochArmReason(input.now, input.knowledgeTime, input.events ?? []);
+  if (armReason !== "armed") {
+    return { ...empty, reason: armReason };
   }
   if (mins < DAY_ENTRY_START_MIN || mins >= DAY_ENTRY_CUTOFF_MIN) return { ...empty, reason: "outside RTH entry window" };
   if (input.sleeveRealizedPnlUsd <= -input.sleeveLossCapUsd) return { ...empty, reason: "sleeve loss cap" };

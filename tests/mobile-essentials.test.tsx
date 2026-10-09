@@ -65,6 +65,8 @@ function snapshot(over: Partial<StatusSnapshot> = {}): StatusSnapshot {
     events: [],
     freeze: emptyFreeze(),
     knowledgeTime: null,
+    stage3Armed: false,
+    calendarStale: false,
     checklist: emptyChecklist(),
     sessionLog: [],
     actionLog: [],
@@ -355,7 +357,17 @@ describe("MobileEssentials", () => {
 
     const armed = render(
       <MobileEssentials
-        state={snapshot({ knowledgeTime: "2026-09-01T12:30:00.000Z" })}
+        state={snapshot({
+          knowledgeTime: "2026-09-01T12:30:00.000Z",
+          events: [
+            {
+              id: "nfp-2026-09-01",
+              timeUtc: "2026-09-01T12:30:00.000Z",
+              type: "NFP",
+              flattenEt: "15:45",
+            },
+          ],
+        })}
         onToggleGate={() => {}}
         onToggleAutoPaper={() => {}}
         onToggleAutoSleeve={() => {}}

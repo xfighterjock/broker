@@ -13,7 +13,7 @@ import {
   TRADER,
   TZ,
 } from "../../shared/constants";
-import { computeClock } from "../../shared/clock";
+import { calendarIsStale, computeClock, stage3Arm } from "../../shared/clock";
 import { computeMarketSession } from "../../shared/marketSession";
 import {
   anyAutoPaperOn,
@@ -195,13 +195,28 @@ import {
   attachNotificationService,
 } from "./notifications";
 import {
-  knowledgeTimeAlreadySetForEtDay,
   knowledgeTimeLogLine,
+  knowledgeTimeManualAllowed,
+  knowledgeTimeRefusedLine,
+  knowledgeTimeStampIsFinal,
   shouldAutoStampKnowledgeTime,
   type KnowledgeTimeStampSource,
 } from "./knowledgeTime";
 
 let autoPaperTimer: ReturnType<typeof setInterval> | null = null;
+let calendarStaleLogged = false;
+
+function noteCalendarStale(stale: boolean, now: Date): void {
+  if (!stale) {
+    calendarStaleLogged = false;
+    return;
+  }
+  if (calendarStaleLogged) return;
+  calendarStaleLogged = true;
+  console.warn(
+    `[EventGate] calendar stale: no NFP/CPI/FOMC in the next 35 days as of ${now.toISOString()}`,
+  );
+}
 
 export function stopAutoPaperLoop(): void {
   if (autoPaperTimer) {
@@ -549,7 +564,7 @@ export function buildApp(deps: AppDeps): express.Express {
     at?: Date,
   ): Promise<{ stamped: boolean; knowledgeTime: string | null }> {
     const atTime = at ?? clockNow();
-    if (knowledgeTimeAlreadySetForEtDay(atTime, memory.knowledgeTime)) {
+    if (knowledgeTimeStampIsFinal(atTime, memory.knowledgeTime, deps.getEvents())) {
       return { stamped: false, knowledgeTime: memory.knowledgeTime };
     }
     const iso = atTime.toISOString();
@@ -1476,7 +1491,8 @@ export function buildApp(deps: AppDeps): express.Express {
       await ensureSleeves();
       await ensureVerticalStopCooldown();
       await hydrateFreeze();
-      await maybeAutoStampKnowledgeTime();
+      const tickNow = clockNow();
+      await maybeAutoStampKnowledgeTime(tickNow);
       if (!anyAutoPaperOn(memory.autoPaperBySleeve)) return;
       const mockErr = assertMockOnly();
       if (mockErr) {
@@ -1533,9 +1549,10 @@ export function buildApp(deps: AppDeps): express.Express {
         riskoffEtfRealizedVol20: riskoffEtfOverlay?.realizedVol20 ?? null,
         riskoffEtfQuotes,
         verticalStopCooldown: memory.verticalStopCooldown,
-        now: new Date(),
-        gateMode: computeClock(new Date(), deps.getEvents()).mode,
+        now: tickNow,
+        gateMode: computeClock(tickNow, deps.getEvents()).mode,
         knowledgeTime: memory.knowledgeTime,
+        events: deps.getEvents(),
         dayBars: await fetchDayMesFiveMinuteBars().catch(() => []),
         riskoffSleeveBook: sleeveBooks.riskoff,
         placeVertical: async (v: AutoVertical) => {
@@ -1660,6 +1677,9 @@ export function buildApp(deps: AppDeps): express.Express {
     await maybeAutoStampKnowledgeTime(now);
     const freeze = memory.freeze;
     const knowledgeTime = memory.knowledgeTime;
+    const stage3Armed = stage3Arm(now, knowledgeTime, events).armed;
+    const calendarStale = calendarIsStale(now, events);
+    noteCalendarStale(calendarStale, now);
     const sleeveBooks = await sleeveBooksWithSession();
     void considerClockAlerts(clock, freeze);
     void considerSleeveLossWarn(memory.sleeves, sleeveBooks, now);
@@ -1671,6 +1691,8 @@ export function buildApp(deps: AppDeps): express.Express {
       events,
       freeze,
       knowledgeTime,
+      stage3Armed,
+      calendarStale,
       checklist: memory.checklist,
       sessionLog: [],
       actionLog: [],
@@ -1946,7 +1968,18 @@ export function buildApp(deps: AppDeps): express.Express {
 
   app.post("/api/knowledge-time", async (req, res) => {
     const source: KnowledgeTimeStampSource = req.eventGateOps ? "ops" : "manual";
-    await applyKnowledgeTimeStamp(source);
+    const now = clockNow();
+    const allowed = knowledgeTimeManualAllowed(now, deps.getEvents());
+    if (!allowed.ok) {
+      const line = knowledgeTimeRefusedLine(source, allowed.reason);
+      sessionNote("knowledge_time", line);
+      deps.engine.log(line);
+      console.warn(`[EventGate] ${line}`);
+      await publishStatus();
+      res.status(409).json({ error: allowed.reason, ...(await snapshot()) });
+      return;
+    }
+    await applyKnowledgeTimeStamp(source, now);
     await publishStatus();
     res.json(await snapshot());
   });

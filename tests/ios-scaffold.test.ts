@@ -112,6 +112,12 @@ describe("iOS Event Gate scaffold", () => {
       "knowledgeTime",
     );
     expect(readFileSync(resolve("ios/EventGate/Models.swift"), "utf8")).toContain(
+      "stage3Armed",
+    );
+    expect(readFileSync(resolve("ios/EventGate/EssentialsView.swift"), "utf8")).toContain(
+      "stage3Armed",
+    );
+    expect(readFileSync(resolve("ios/EventGate/Models.swift"), "utf8")).toContain(
       "marketSession",
     );
     expect(format).toContain("US cash market closed");

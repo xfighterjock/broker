@@ -781,8 +781,13 @@ export default function App() {
               </div>
               <div className="k">Stage-3</div>
               <div className="mono" data-testid="stage3-arm">
-                {stage3Line(snapshotNow(state), state.knowledgeTime)}
+                {stage3Line(snapshotNow(state), state.knowledgeTime, state.events)}
               </div>
+              {state.calendarStale ? (
+                <div className="hint" data-testid="calendar-stale">
+                  Calendar stale: no NFP/CPI/FOMC in the next 35 days
+                </div>
+              ) : null}
             </div>
             <div className="btns">
               <button
