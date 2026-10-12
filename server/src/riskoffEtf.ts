@@ -9,6 +9,7 @@ import {
   RISKOFF_ETF_GOLD_FAMILY,
   RISKOFF_ETF_HYG_ONLY_21D_CONFIRM,
   RISKOFF_ETF_HYG_ONLY_INELIGIBLE,
+  RISKOFF_ETF_SPY_UNDER_200_INELIGIBLE,
   RISKOFF_ETF_LOOKBACK_DAYS,
   RISKOFF_ETF_REALIZED_VOL_SESSIONS,
   RISKOFF_ETF_MIN_HOLD_SESSIONS,
@@ -195,6 +196,13 @@ export function isRiskoffEtfHygOnly21dConfirm(symbol: string): boolean {
 /** TLT, IEF, XLU, PDBC, KMLM, GDX, DBMF, XLP, GLD. RS-ineligible in HYG-only only. KMLM and DBMF stay CTA. GLD and GDX stay gold-family. XLP is not 21d-confirmed and stays on ordinary beat-BIL and own-200 when SPY is below 200. When SPY is below 200 GLD stays eligible under ordinary 63d beat-BIL, own-200, and never-dual-gold. Not a duration-book change. */
 export function isRiskoffEtfHygOnlyIneligible(symbol: string): boolean {
   return (RISKOFF_ETF_HYG_ONLY_INELIGIBLE as readonly string[]).includes(symbol.trim().toUpperCase());
+}
+
+/** BTAL. RS-ineligible only when SPY is known below its 200dma. Stays eligible in HYG-only. Not a family change. */
+export function isRiskoffEtfSpyUnder200Ineligible(symbol: string): boolean {
+  return (RISKOFF_ETF_SPY_UNDER_200_INELIGIBLE as readonly string[]).includes(
+    symbol.trim().toUpperCase(),
+  );
 }
 
 /** PDBC only. Commodity beta, not a CTA and not 21d-gated. HYG-only RS-ineligible. */
@@ -734,6 +742,31 @@ export function riskoffEtfHygOnlyRsEligible(symbol: string, hygOnly: boolean): b
 }
 
 /**
+ * Fuller RISK OFF: the book is RISK OFF and SPY is known below its 200dma
+ * (spyAbove200 === false). A null or omitted spyAbove200 is not this regime.
+ * Same confirmed check as riskoffEquityPutsAllowed. decideRiskoffEtf passes
+ * the resolved regime, so a raw null with no latch is the HYG-only pair
+ * (this stays false) and a latched confirmed below keeps it on.
+ */
+export function riskoffSpyUnder200RiskOff(
+  riskOn: boolean,
+  spyAbove200?: boolean | null,
+): boolean {
+  return riskOn === false && spyAbove200 === false;
+}
+
+/**
+ * SPY-under-200 RS eligibility. BTAL is not an overlay qualifier in that
+ * regime, even if 63d beats BIL and own-200 is true. Off otherwise,
+ * including HYG-only RISK OFF and when spyAbove200 is null or omitted.
+ * Does not change families, the HYG-only ineligible list, or the duration book.
+ */
+export function riskoffEtfSpyUnder200RsEligible(symbol: string, spyUnder200: boolean): boolean {
+  if (!spyUnder200) return true;
+  return !isRiskoffEtfSpyUnder200Ineligible(symbol);
+}
+
+/**
  * Beat-BIL names; when above200 is passed, also require known-above-own-200.
  * When returns21 is passed (including null), CTA-family names must also beat
  * BIL on that 21d map. Omit returns21 to leave the CTA 21d gate off.
@@ -741,12 +774,16 @@ export function riskoffEtfHygOnlyRsEligible(symbol: string, hygOnly: boolean): b
  * names must beat BIL on that same map (a missing map fails them closed),
  * and RISKOFF_ETF_HYG_ONLY_INELIGIBLE names are dropped. Default false leaves
  * gold, the equity confirm set, and that drop off.
+ * When spyUnder200 is true, RISKOFF_ETF_SPY_UNDER_200_INELIGIBLE (BTAL) is
+ * dropped even if 63d beats BIL and own-200 is true. Default false leaves
+ * that drop off, including HYG-only and an unknown SPY 200.
  */
 export function riskoffEtfQualifiers(
   returns: RiskoffEtfReturns,
   above200?: Partial<Record<RiskoffEtfSymbol, boolean | null>> | null,
   returns21?: RiskoffEtfReturns | null,
   hygOnly = false,
+  spyUnder200 = false,
 ): RiskoffEtfCandidate[] {
   const bil = returns[RISKOFF_ETF_CASH_SYMBOL] as number;
   const beatBil = RISKOFF_ETF_CANDIDATES.filter((s) => (returns[s] as number) > bil);
@@ -754,10 +791,11 @@ export function riskoffEtfQualifiers(
     above200 === undefined || !RISKOFF_ETF_REQUIRE_ABOVE_200
       ? beatBil
       : beatBil.filter((s) => above200?.[s] === true);
-  if (returns21 === undefined && !hygOnly) return trend;
+  if (returns21 === undefined && !hygOnly && !spyUnder200) return trend;
   return trend.filter(
     (s) =>
       riskoffEtfHygOnlyRsEligible(s, hygOnly) &&
+      riskoffEtfSpyUnder200RsEligible(s, spyUnder200) &&
       (returns21 === undefined || riskoffEtfCtaConfirms21d(s, returns21)) &&
       riskoffEtfGoldConfirms21d(s, returns21, hygOnly) &&
       riskoffEtfHygOnlyEquityConfirms21d(s, returns21, hygOnly),
@@ -841,10 +879,11 @@ export function pickRiskoffEtfSleeve(
   above200?: Partial<Record<RiskoffEtfSymbol, boolean | null>> | null,
   returns21?: RiskoffEtfReturns | null,
   hygOnly = false,
+  spyUnder200 = false,
 ): RiskoffEtfSymbol[] | null {
   if (!riskoffEtfReturnsReady(returns)) return null;
   const heldNames = heldCandidateNames(held);
-  const qualifiers = riskoffEtfQualifiers(returns, above200, returns21, hygOnly);
+  const qualifiers = riskoffEtfQualifiers(returns, above200, returns21, hygOnly, spyUnder200);
   if (qualifiers.length === 0) return [RISKOFF_ETF_CASH_SYMBOL];
   const first = pickFromPool(qualifiers, returns, heldNames);
   if (!first) return [RISKOFF_ETF_CASH_SYMBOL];
@@ -865,8 +904,9 @@ export function pickRiskoffEtfWinner(
   above200?: Partial<Record<RiskoffEtfSymbol, boolean | null>> | null,
   returns21?: RiskoffEtfReturns | null,
   hygOnly = false,
+  spyUnder200 = false,
 ): RiskoffEtfSymbol | null {
-  const sleeve = pickRiskoffEtfSleeve(returns, held, above200, returns21, hygOnly);
+  const sleeve = pickRiskoffEtfSleeve(returns, held, above200, returns21, hygOnly, spyUnder200);
   return sleeve?.[0] ?? null;
 }
 
@@ -1015,8 +1055,9 @@ function commitEntrySessions(
  * hold. A missing stamp is recorded as `asOf` (this rebalance), so a
  * restart does not immediately RS-rotate a name that is already on the book.
  * Caller drops names that no longer clear beat-BIL / own-200 / CTA 21d,
- * the HYG-only gold 21d check, the HYG-only equity 21d check, or the
- * HYG-only TLT/IEF/XLU/PDBC/KMLM/GDX/DBMF/XLP/GLD drop. GDX and GLD stay in the gold family.
+ * the HYG-only gold 21d check, the HYG-only equity 21d check, the
+ * HYG-only TLT/IEF/XLU/PDBC/KMLM/GDX/DBMF/XLP/GLD drop, or the
+ * SPY-under-200 BTAL drop. GDX and GLD stay in the gold family.
  * DBMF is in that drop and stays in the CTA family.
  * XLP is in that drop and is not 21d-confirmed.
  */
@@ -1349,6 +1390,11 @@ export function decideRiskoffEtf(input: {
    * DBMF is in that drop and stays in the CTA family.
    * XLP is in that drop and is not 21d-confirmed. When SPY is below 200
    * XLP stays eligible under ordinary beat-BIL and own-200.
+   * The same resolved false also drops BTAL
+   * (RISKOFF_ETF_SPY_UNDER_200_INELIGIBLE) even if 63d beats BIL and BTAL
+   * is above its own 200dma. A null or omitted value is not that drop.
+   * BTAL stays eligible in HYG-only. A held BTAL that fails the drop is
+   * not min-hold protected and rotates at this cash-close rebalance.
    */
   spyAbove200?: boolean | null;
   /**
@@ -1421,8 +1467,23 @@ export function decideRiskoffEtf(input: {
   const above200 = input.above200 ?? emptyRiskoffEtfAbove200();
   const returns21 = input.returns21 ?? emptyRiskoffEtfReturns();
   const hygOnly = riskoffHygOnlyRiskOff(input.riskOn, regimeSpy, regimeHyg);
-  const rsSleeve = pickRiskoffEtfSleeve(input.returns, heldNames, undefined, returns21, hygOnly);
-  let sleeve = pickRiskoffEtfSleeve(input.returns, heldNames, above200, returns21, hygOnly);
+  const spyUnder200 = riskoffSpyUnder200RiskOff(input.riskOn, regimeSpy);
+  const rsSleeve = pickRiskoffEtfSleeve(
+    input.returns,
+    heldNames,
+    undefined,
+    returns21,
+    hygOnly,
+    spyUnder200,
+  );
+  let sleeve = pickRiskoffEtfSleeve(
+    input.returns,
+    heldNames,
+    above200,
+    returns21,
+    hygOnly,
+    spyUnder200,
+  );
   if (sleeve === null || rsSleeve === null) {
     return decideMissingBars(open, priorMisses);
   }
@@ -1445,7 +1506,9 @@ export function decideRiskoffEtf(input: {
   let protectedNames: RiskoffEtfSymbol[] = [];
   if (input.now && asOf) {
     entries = entryMapFromInput(input.entrySessions);
-    const stillQualified = new Set(riskoffEtfQualifiers(input.returns, above200, returns21, hygOnly));
+    const stillQualified = new Set(
+      riskoffEtfQualifiers(input.returns, above200, returns21, hygOnly, spyUnder200),
+    );
     protectedNames = protectedOverlayNames(heldNames, asOf, entries).filter((name) =>
       stillQualified.has(name),
     );
