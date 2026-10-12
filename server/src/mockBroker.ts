@@ -133,9 +133,11 @@ export class MockBroker implements BrokerClient {
       overlay: input.overlay,
       gatedDuration: input.gatedDuration,
       cashSweep: input.cashSweep === true ? true : undefined,
+      cpiLateFade: input.cpiLateFade === true ? true : undefined,
     };
     if (input.dayPnl != null && Number.isFinite(input.dayPnl)) pos.dayPnl = input.dayPnl;
     if (pos.cashSweep !== true) delete pos.cashSweep;
+    if (pos.cpiLateFade !== true) delete pos.cpiLateFade;
     const incomingSweep = input.cashSweep === true;
     this.positions = this.positions.filter((p) => {
       if (p.symbol.toUpperCase() !== input.symbol.toUpperCase()) return true;

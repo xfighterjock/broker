@@ -30,7 +30,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **AUTH_MODE** — Auth front door. Production `users` (users table + cookie/bearer). Local default `cookie` (GATE_PASSWORD). `nginx` is remapped to `users` in production. GET /api/public/risk is exempt in-app too.
 
-**AUTO PAPER** — Autopilot. Independent enable per sleeve (`autoPaperBySleeve`: day, momentum, options, ownership, riskoff). Snapshot `autoPaper` is true if ANY sleeve is on (badge / old clients). POST /api/paper/auto `{ enabled }` sets all; `{ sleeveId, enabled }` sets one. Redis `paper:auto` is JSON; legacy `0`/`1` migrates on first boot. Default all on when the key is missing. Never CSP/CC/naked. GATE still binds day. Day MES stoch also needs Stage-3: an NFP/CPI/FOMC ET day, knowledge_time on that day at or after the anchor, and now at or after the stamp. A non-print or pre-print stamp does not enter. Idle RTH without the stamp does not enter.
+**AUTO PAPER** — Autopilot. Independent enable per sleeve (`autoPaperBySleeve`: day, momentum, options, ownership, riskoff). Snapshot `autoPaper` is true if ANY sleeve is on (badge / old clients). POST /api/paper/auto `{ enabled }` sets all; `{ sleeveId, enabled }` sets one. Redis `paper:auto` is JSON; legacy `0`/`1` migrates on first boot. Default all on when the key is missing. Never CSP/CC/naked. GATE still binds day. Day MES stoch also needs Stage-3: an NFP/CPI/FOMC ET day, knowledge_time on that day at or after the anchor, and now at or after the stamp. A non-print or pre-print stamp does not enter. Idle RTH without the stamp does not enter. On a CPI day, day AUTO also runs `cpiLateFade` when `CPI_LATE_FADE_ENABLED` is true.
 
 **bearer** — Opaque session token from POST /api/auth/login. Stored as sha256 in Postgres `user_sessions` (`SESSION_TTL_MS` 30 days). iOS keeps the raw token in the Keychain and sends `Authorization: Bearer`. SPA uses cookie `eg.sid` instead.
 
@@ -52,7 +52,11 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **CME** — CME Group. Home of the gated futures roots (MES, ES, NQ, Treasuries, FX, SR3).
 
-**CPI** — Consumer Price Index print. Calendar event; freeze card; flatten 15:45 ET. Day-sleeve event clock only. 08:30 America/New_York. Dates through December 2027 are in `seedEvents()` and migration `005_calendar_through_2027.sql` (BLS CPI schedule; 2027 day-of-month also on the OMB FY2027 principal-indicator schedule).
+**CPI** — Consumer Price Index print. Calendar event; freeze card; flatten 15:45 ET. Day-sleeve event clock only. 08:30 America/New_York. Dates through December 2027 are in `seedEvents()` and migration `005_calendar_through_2027.sql` (BLS CPI schedule; 2027 day-of-month also on the OMB FY2027 principal-indicator schedule). The `cpiLateFade` paper leg reads these same CPI rows (Postgres `events` when present, otherwise `seedEvents()`). It does not hardcode dates. October 2026 CPI is `cpi-2026-10-14` (2026-10-14T12:30:00Z). NFP and FOMC rows are not CPI.
+
+**CPI_LATE_FADE_ENABLED** — Flag in `shared/constants.ts`, default true. When true and day AUTO PAPER is on, the day sleeve may open the `cpiLateFade` paper lot. Set false to stop new entries. An open lot still flattens at the cash close. MockBroker only.
+
+**cpiLateFade** — Day-sleeve paper strategy id for the CPI-day late-session fade. CPI calendar rows only. Signal is the sign of the day sleeve's MES 5-minute move from the prior weekday 16:00 ET close (15:55 bar close) to 10:30 ET (10:25 bar close). At 15:30 ET, 1 MES opposite that sign. Missing, stale, or a zero move does not trade. Protective stop 0.4% adverse from the mock fill. Flatten at or after 15:59 ET. Position tag `cpiLateFade`; blotter notes start with `cpiLateFade`. Skips when the stochastic MES lot is already open. The 15:45 session flatten does not take this lot. Stage-3, GATE idle, qty 1, and the day-sleeve loss cap still bind new entries. RISK ON/OFF does not. Paper / MockBroker only.
 
 **CSP** — Cash-secured put. Manual overlay on the options sleeve. Reserves strike x 100 x qty. Never naked. Not sold by autopilot.
 

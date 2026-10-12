@@ -84,6 +84,7 @@ import {
 import { GateEngine } from "./gate";
 import { MockBroker } from "./mockBroker";
 import type { RedisClient } from "./redis";
+import { cpiLateFadeStopPrice, isOpenCpiLateFade } from "./cpiLateFade";
 import { fetchDelayedQuotes, fetchDayMesFiveMinuteBars, mapTicker, symbolsForSleeve } from "./quotes";
 import { attachScanReady, getScan, getScanFeaturesCache, rankMomentum } from "./scan";
 import {
@@ -1284,6 +1285,11 @@ export function buildApp(deps: AppDeps): express.Express {
     const quote = matchedQuote(quotes, parsed.symbol);
     const last = quote?.last ?? null;
     if (last === null) return { ok: false, error: "no delayed last" };
+    if (parsed.cpiLateFade === true) {
+      const stop = cpiLateFadeStopPrice(parsed.side, last);
+      if (!Number.isFinite(stop)) return { ok: false, error: "cpiLateFade stop requires a delayed last" };
+      parsed = { ...parsed, qty: 1, stopPrice: stop };
+    }
     await ensureSleeves();
     const clock = computeClock(new Date(), deps.getEvents());
     const v = validatePaperOrder(parsed, {
@@ -1325,6 +1331,7 @@ export function buildApp(deps: AppDeps): express.Express {
       sleeveId: parsed.sleeveId,
       gatedDuration: parsed.gatedDuration === true,
       cashSweep: wantSweep,
+      cpiLateFade: parsed.cpiLateFade === true,
     });
     const stop = wantSweep
       ? null
@@ -1493,7 +1500,8 @@ export function buildApp(deps: AppDeps): express.Express {
       await hydrateFreeze();
       const tickNow = clockNow();
       await maybeAutoStampKnowledgeTime(tickNow);
-      if (!anyAutoPaperOn(memory.autoPaperBySleeve)) return;
+      const fadeLotOpen = deps.broker.getPositionsSync().some(isOpenCpiLateFade);
+      if (!anyAutoPaperOn(memory.autoPaperBySleeve) && !fadeLotOpen) return;
       const mockErr = assertMockOnly();
       if (mockErr) {
         deps.engine.log(`auto paper idle: ${mockErr}`);
@@ -1599,6 +1607,7 @@ export function buildApp(deps: AppDeps): express.Express {
               qty: 1,
               stopPrice: buy.stopPrice,
               thesis: buy.thesis,
+              cpiLateFade: buy.cpiLateFade === true,
             });
           }
           if (buy.sleeveId === "riskoff") {

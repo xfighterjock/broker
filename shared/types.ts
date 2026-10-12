@@ -183,6 +183,12 @@ export interface Position {
    * overlay's own BIL leg so selection, hysteresis, and holds ignore it.
    */
   cashSweep?: boolean;
+  /**
+   * Day-sleeve CPI late-session fade (`cpiLateFade`). Not the MES stochastic
+   * lot: the stoch leg does not manage it, and the 15:45 session flatten
+   * does not take it. Blotter notes use the same strategy id.
+   */
+  cpiLateFade?: boolean;
 }
 
 export interface FreezeCard {
@@ -331,9 +337,11 @@ export function defaultSleeves(): Record<SleeveId, SleeveCard> {
       thesis:
         "NFP / CPI / FOMC event gate plus MES 5m stochastic 14,3,3 momentum (VWAP filter). Flatten into the print.",
       macroDrivers: "Payrolls, CPI, FOMC statement/presser vs freeze card.",
-      microDrivers: "MES 5m slow stochastic 14,3,3; longs above session VWAP, shorts below; GATE windows; 15:45 flatten.",
+      microDrivers:
+        "MES 5m slow stochastic 14,3,3; longs above session VWAP, shorts below; GATE windows; 15:45 flatten. CPI-day cpiLateFade (CPI_LATE_FADE_ENABLED): fade the prior-close→10:30 MES move at 15:30, flat at the cash close.",
       instruments: "MES / ZN / M6E / SR3",
-      structure: "Event clock + MES stochastic paper. Qty 1. MockBroker only.",
+      structure:
+        "Event clock + MES stochastic paper, plus a separate CPI-day cpiLateFade MES lot. Qty 1. MockBroker only.",
       killRules:
         "flatten 15:45 ET / 15:30 FOMC or -$500; GATE OFF / Flatten sleeve",
       status: "paper",

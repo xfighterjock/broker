@@ -225,6 +225,7 @@ export function stopForShort(close: number, signalHigh: number): number {
 
 function openDayMes(positions: Position[]): Position | null {
   for (const p of positions) {
+    if (p.cpiLateFade === true) continue;
     if (p.sleeveId !== "day" || p.side === "Flat" || p.qty <= 0) continue;
     if (p.vertical || p.overlay) continue;
     const s = p.symbol.toUpperCase();
