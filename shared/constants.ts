@@ -7,6 +7,13 @@ export const FLATTEN_WINDOW_MS = 5 * 60 * 1000;
 export const MAX_QTY = 1;
 export const DEFAULT_DAILY_LOSS_USD = 500;
 
+/**
+ * Paper CPI-day late-session fade (`cpiLateFade`) on the day sleeve.
+ * Default on. Set false to stop new entries. An open lot still flattens
+ * at the cash close. MockBroker only. Does not touch live broker paths.
+ */
+export const CPI_LATE_FADE_ENABLED = true;
+
 export const GATED_ROOTS = [
   "MES",
   "MNQ",

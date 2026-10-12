@@ -104,20 +104,39 @@ export function planGateTick(input: GateTickInput): GateTickResult {
   const hitClose = clock.inSessionFlatten;
   const already = flattenFiredKey === dayKey;
 
+  // cpiLateFade holds through the 15:45 CPI session flatten and exits at the
+  // cash close. Daily-loss, oversize, and manual Flatten still take the lot.
+  const fadeSymbols = new Set<string>();
+  for (const p of gatedPos) {
+    if (p.cpiLateFade === true) fadeSymbols.add(p.symbol.toUpperCase());
+  }
+
   if ((hitLoss || hitClose) && !already) {
     flattenFiredKey = dayKey;
     const reason = hitLoss
       ? `daily loss ${input.dayPnl.toFixed(0)} (limit ${input.dailyLossUsd})`
       : `session flatten ${clock.flattenEt} ET`;
     const symbols = new Set<string>();
-    for (const p of gatedPos) symbols.add(p.symbol);
-    for (const o of gatedLive) symbols.add(o.symbol);
+    for (const p of gatedPos) {
+      if (hitClose && !hitLoss && p.cpiLateFade === true) continue;
+      symbols.add(p.symbol);
+    }
+    for (const o of gatedLive) {
+      if (hitClose && !hitLoss && fadeSymbols.has(o.symbol.toUpperCase())) continue;
+      symbols.add(o.symbol);
+    }
     if (symbols.size === 0) {
       actions.push({ kind: "log", message: `flatten (${reason}): nothing open` });
     } else {
       for (const symbol of symbols) {
         actions.push({ kind: "flatten", symbol, reason });
       }
+    }
+  } else if (hitLoss && already) {
+    const reason = `daily loss ${input.dayPnl.toFixed(0)} (limit ${input.dailyLossUsd})`;
+    for (const p of gatedPos) {
+      if (p.cpiLateFade !== true) continue;
+      actions.push({ kind: "flatten", symbol: p.symbol, reason });
     }
   }
 

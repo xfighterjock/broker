@@ -47,6 +47,8 @@ export type PaperOrderBody = {
   gatedDuration?: boolean;
   /** Risk-off idle-cash BIL sweep. Not the overlay BIL leg. */
   cashSweep?: boolean;
+  /** Day-sleeve CPI late-session fade. Tags the mock lot and blotter thesis. */
+  cpiLateFade?: boolean;
 };
 
 export type PaperCloseBody = {

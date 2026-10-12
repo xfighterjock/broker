@@ -25,6 +25,8 @@ export interface InjectPositionInput {
   gatedDuration?: boolean;
   /** Risk-off idle-cash BIL sweep. Not the 63d overlay BIL leg. */
   cashSweep?: boolean;
+  /** Day-sleeve CPI late-session fade lot. Not the MES stochastic lot. */
+  cpiLateFade?: boolean;
 }
 
 export interface BrokerClient {

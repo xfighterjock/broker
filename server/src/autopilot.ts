@@ -66,6 +66,8 @@ import {
   verticalEntryWindowOpen,
   verticalStopCooling,
 } from "./vertical";
+import { CPI_LATE_FADE_ENABLED } from "../../shared/constants";
+import { decideCpiLateFade, isOpenCpiLateFade } from "./cpiLateFade";
 import { decideDayMomentum, type MinuteBar } from "./dayMomentum";
 
 export const MAX_AUTO_MOMENTUM = 5;
@@ -85,6 +87,8 @@ export type AutoBuy = {
   gatedDuration?: boolean;
   /** Risk-off idle-cash BIL sweep. Not the overlay BIL leg. */
   cashSweep?: boolean;
+  /** Day-sleeve CPI late-session fade. Distinct blotter thesis and mock lot. */
+  cpiLateFade?: boolean;
 };
 
 export type AutoSell = {
@@ -995,20 +999,57 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
   const bought: AutoBuy[] = [];
   const sold: AutoSell[] = [];
   const verticals: AutoVertical[] = [];
-  if (!ctx.enabled) return { bought, sold, verticals };
+  const fadeLotOpen = ctx.getPositions().some(isOpenCpiLateFade);
+  if (!ctx.enabled && !fadeLotOpen) return { bought, sold, verticals };
 
-  if (sleeveAutoOn(ctx, "day") && ctx.dayBars && ctx.gateMode) {
-    const day = decideDayMomentum({
-      now: ctx.now ?? new Date(),
+  if (ctx.dayBars && ctx.gateMode) {
+    const now = ctx.now ?? new Date();
+    const dayLossCap = ctx.getSleeves().day.lossCapUsd;
+    const dayRealized = ctx.getSleeves().day.paper.realizedPnlUsd;
+    if (ctx.enabled && sleeveAutoOn(ctx, "day")) {
+      const day = decideDayMomentum({
+        now,
+        gateMode: ctx.gateMode,
+        bars: ctx.dayBars,
+        positions: ctx.getPositions(),
+        sleeveLossCapUsd: dayLossCap,
+        sleeveRealizedPnlUsd: dayRealized,
+        knowledgeTime: ctx.knowledgeTime ?? null,
+        events: ctx.events ?? [],
+      });
+      for (const s of day.sells) {
+        const r = await ctx.close(s);
+        if (r.ok) {
+          ctx.log(`auto paper close ${s.sleeveId} ${s.symbol} ${s.reason} (MockBroker, not Tradovate, not live)`);
+          sold.push(s);
+        } else {
+          ctx.log(`auto paper close skip ${s.symbol}: ${r.error}`);
+        }
+      }
+      if (day.buy && ctx.getPositions().some(isOpenCpiLateFade)) {
+        ctx.log(`auto paper skip ${day.buy.symbol}: cpiLateFade holds MES`);
+      } else if (day.buy) {
+        const r = await ctx.place(day.buy);
+        if (r.ok) {
+          ctx.log(`auto paper ${day.buy.side} ${day.buy.sleeveId} ${day.buy.qty} ${day.buy.symbol} stop ${day.buy.stopPrice} ${day.buy.thesis} (MockBroker, not Tradovate, not live)`);
+          bought.push(day.buy);
+        } else {
+          ctx.log(`auto paper skip ${day.buy.symbol}: ${r.error}`);
+        }
+      }
+    }
+    const fade = decideCpiLateFade({
+      now,
       gateMode: ctx.gateMode,
       bars: ctx.dayBars,
       positions: ctx.getPositions(),
-      sleeveLossCapUsd: ctx.getSleeves().day.lossCapUsd,
-      sleeveRealizedPnlUsd: ctx.getSleeves().day.paper.realizedPnlUsd,
+      sleeveLossCapUsd: dayLossCap,
+      sleeveRealizedPnlUsd: dayRealized,
       knowledgeTime: ctx.knowledgeTime ?? null,
       events: ctx.events ?? [],
+      enabled: ctx.enabled && sleeveAutoOn(ctx, "day") && CPI_LATE_FADE_ENABLED,
     });
-    for (const s of day.sells) {
+    for (const s of fade.sells) {
       const r = await ctx.close(s);
       if (r.ok) {
         ctx.log(`auto paper close ${s.sleeveId} ${s.symbol} ${s.reason} (MockBroker, not Tradovate, not live)`);
@@ -1017,16 +1058,20 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
         ctx.log(`auto paper close skip ${s.symbol}: ${r.error}`);
       }
     }
-    if (day.buy) {
-      const r = await ctx.place(day.buy);
+    if (fade.buy) {
+      const r = await ctx.place({ ...fade.buy, cpiLateFade: true });
       if (r.ok) {
-        ctx.log(`auto paper ${day.buy.side} ${day.buy.sleeveId} ${day.buy.qty} ${day.buy.symbol} stop ${day.buy.stopPrice} ${day.buy.thesis} (MockBroker, not Tradovate, not live)`);
-        bought.push(day.buy);
+        ctx.log(
+          `auto paper ${fade.buy.side} ${fade.buy.sleeveId} ${fade.buy.qty} ${fade.buy.symbol} stop ${fade.buy.stopPrice} ${fade.buy.thesis} (MockBroker, not Tradovate, not live)`,
+        );
+        bought.push({ ...fade.buy, cpiLateFade: true });
       } else {
-        ctx.log(`auto paper skip ${day.buy.symbol}: ${r.error}`);
+        ctx.log(`auto paper skip ${fade.buy.symbol}: ${r.error}`);
       }
     }
   }
+
+  if (!ctx.enabled) return { bought, sold, verticals };
 
   const riskOn = ctx.riskOn === true;
   if (riskOn) resetOiSkipStreak();
