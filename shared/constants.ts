@@ -230,6 +230,11 @@ export type RiskoffQuoteSymbol = (typeof RISKOFF_QUOTE_STRIP)[number];
  * below 200 it stays eligible under beat-BIL and own-200.
  * FLOT and BTAL are not
  * RISKOFF_ETF_COMMODITY_BETA and have no new family. Do not add FLRN.
+ * When RISK OFF and SPY is known below its 200dma (spyAbove200 === false),
+ * BTAL is not an RS qualifier (RISKOFF_ETF_SPY_UNDER_200_INELIGIBLE) even
+ * if 63d beats BIL and own-200 is true. A null or unknown spyAbove200 is
+ * not below and does not apply that drop. In HYG-only RISK OFF BTAL stays
+ * eligible under beat-BIL and own-200.
  * PDBC is broad commodity beta (RISKOFF_ETF_COMMODITY_BETA). Where it remains
  * eligible it is mutually exclusive with the CTA family for the #2 diversifier
  * only.
@@ -368,6 +373,26 @@ export type RiskoffEtfHygOnly21dSymbol = (typeof RISKOFF_ETF_HYG_ONLY_21D_CONFIR
  */
 export const RISKOFF_ETF_HYG_ONLY_INELIGIBLE = ["TLT", "IEF", "XLU", "PDBC", "KMLM", "GDX", "DBMF", "XLP", "GLD"] as const;
 export type RiskoffEtfHygOnlyIneligibleSymbol = (typeof RISKOFF_ETF_HYG_ONLY_INELIGIBLE)[number];
+/**
+ * RS overlay names that are not qualifiers when RISK OFF and SPY is known
+ * below its 200dma (spyAbove200 === false). Mirror of
+ * RISKOFF_ETF_HYG_ONLY_INELIGIBLE, which applies only in HYG-only. BTAL
+ * fails this gate even when 63d beats BIL and it is above its own 200dma.
+ * The next remaining qualifier fills the slot; none left → BIL. A held
+ * BTAL is not min-hold protected once it fails this gate, so the cash-close
+ * rebalance rotates it the same way a HYG-only-ineligible name leaves.
+ * Midday bars do not rotate it. A null or omitted spyAbove200 is not below
+ * and does not apply this drop (same confirmed check as
+ * riskoffEquityPutsAllowed). decideRiskoffEtf uses the resolved regime: a
+ * raw null with no latch is the HYG-only pair, so this stays off, and a
+ * latched confirmed below keeps it on. BTAL stays fully eligible in
+ * HYG-only RISK OFF. Does not change RISKOFF_ETF_HYG_ONLY_INELIGIBLE,
+ * families, weights, notional, puts, duration, or the cash sweep.
+ * Paper / MockBroker only.
+ */
+export const RISKOFF_ETF_SPY_UNDER_200_INELIGIBLE = ["BTAL"] as const;
+export type RiskoffEtfSpyUnder200IneligibleSymbol =
+  (typeof RISKOFF_ETF_SPY_UNDER_200_INELIGIBLE)[number];
 /**
  * Broad commodity beta on the 63d RS overlay, mutually exclusive with
  * RISKOFF_ETF_CTA_FAMILY for the #2 diversifier only — same spirit as
