@@ -16,10 +16,11 @@ import {
 
 /**
  * CPI-day late-session fade (paper hypothesis, strategy id `cpiLateFade`).
- * Reference is the fade MES 5-minute series (Massive Futures front-month,
- * five calendar days, newest-first; Yahoo MES=F `range=5d` fallback), merged
- * with the day series. The stochastic leg keeps Yahoo `range=1d` / Massive
- * two-day oldest-first and does not see this merge. Prior cash close is the
+ * Reference is the fade MES 5-minute series (Massive Futures front-month as of
+ * the ET date, five calendar days, newest-first; Yahoo MES=F `range=5d`
+ * fallback), merged with the day series. The stochastic leg reads only the
+ * current ET day's bars, so the wider Yahoo window does not change its VWAP.
+ * Prior cash close is the
  * previous NYSE session's 15:55 ET bar close (window start; that bar ends at
  * 16:00). Weekends and full NYSE holidays are not that session. The 10:30 ET
  * price is the 10:25 ET bar close. Missing, stale, or a zero move is no trade.

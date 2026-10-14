@@ -146,6 +146,54 @@ describe("Massive futures product / front-month", () => {
     expect(pickFrontMonthContract(rows)?.ticker).toBe("MESU6");
   });
 
+  it("rolls off expired MESU6 to MESZ6 as of 2026-10-14", () => {
+    const rows = parseMassiveFuturesContracts({
+      results: [
+        {
+          ticker: "MESU6",
+          product_code: "MES",
+          active: true,
+          type: "single",
+          days_to_maturity: 2,
+          last_trade_date: "2026-09-18",
+          settlement_date: "2026-09-18",
+        },
+        {
+          ticker: "MESZ6",
+          product_code: "MES",
+          active: true,
+          type: "single",
+          days_to_maturity: 65,
+          last_trade_date: "2026-12-18",
+          settlement_date: "2026-12-18",
+        },
+        {
+          ticker: "MESH7",
+          product_code: "MES",
+          active: true,
+          type: "single",
+          days_to_maturity: 156,
+          last_trade_date: "2027-03-19",
+        },
+        {
+          ticker: "MESU6-MESZ6",
+          product_code: "MES",
+          active: true,
+          type: "combo",
+          days_to_maturity: 1,
+        },
+      ],
+    });
+    expect(pickFrontMonthContract(rows, "2026-10-14")?.ticker).toBe("MESZ6");
+    const negative = parseMassiveFuturesContracts({
+      results: [
+        { ticker: "MESU6", product_code: "MES", active: true, type: "single", days_to_maturity: -26 },
+        { ticker: "MESZ6", product_code: "MES", active: true, type: "single", days_to_maturity: 65 },
+      ],
+    });
+    expect(pickFrontMonthContract(negative, "2026-10-14")?.ticker).toBe("MESZ6");
+  });
+
   it("parses futures 5m aggs window_start nanoseconds and does not invent OHLC", () => {
     const ts = Date.UTC(2026, 8, 2, 13, 30, 0);
     const bars = parseMassiveFuturesAggs(
@@ -294,7 +342,7 @@ function ohlc(ts: number, close: number) {
 }
 
 describe("cpiLateFade bar window vs the stochastic series", () => {
-  it("reproduces Yahoo range=1d missing the prior close and loads it on range=5d", async () => {
+  it("Yahoo fallback uses range=5d so the prior 16:00 ET bar is present", async () => {
     clearMassiveTestKey();
     const prior = zonedTimeToUtc(2026, 10, 13, 15, 55, 0).getTime();
     const todayOnly = [
@@ -302,29 +350,77 @@ describe("cpiLateFade bar window vs the stochastic series", () => {
       ohlc(zonedTimeToUtc(2026, 10, 14, 10, 25, 0).getTime(), 110),
       ohlc(zonedTimeToUtc(2026, 10, 14, 15, 25, 0).getTime(), 111),
     ];
+    const now = zonedTimeToUtc(2026, 10, 14, 15, 30, 0);
+    const oneDay = cpiLateFadeSignal(now, todayOnly);
+    expect(oneDay.ok).toBe(false);
+    if (!oneDay.ok) expect(oneDay.reason).toBe("missing MES 5m prior close");
+
     stubMarketFetch({
       yahooBarsByRange: {
-        "1d": todayOnly,
         "5d": [ohlc(prior, 100), ...todayOnly],
       },
     });
-    const now = zonedTimeToUtc(2026, 10, 14, 15, 30, 0);
     const day = await fetchDayMesFiveMinuteBars();
-    const missing = cpiLateFadeSignal(now, day);
-    expect(missing.ok).toBe(false);
-    if (!missing.ok) expect(missing.reason).toBe("missing MES 5m prior close");
-
     const fade = await fetchCpiLateFadeMesFiveMinuteBars();
-    const got = cpiLateFadeSignal(now, fade);
-    expect(got.ok).toBe(true);
-    if (got.ok) {
-      expect(got.priorClose).toBe(100);
-      expect(got.moveSign).toBe(1);
+    for (const series of [day, fade]) {
+      const got = cpiLateFadeSignal(now, series);
+      expect(got.ok).toBe(true);
+      if (got.ok) {
+        expect(got.priorClose).toBe(100);
+        expect(got.moveSign).toBe(1);
+      }
     }
     const urls = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.map((c) => String(c[0]));
-    expect(urls.some((u) => u.includes("/v8/finance/chart/") && u.includes("range=1d"))).toBe(true);
-    expect(urls.some((u) => u.includes("/v8/finance/chart/") && u.includes("range=5d"))).toBe(true);
+    expect(urls.filter((u) => u.includes("/v8/finance/chart/")).every((u) => u.includes("range=5d"))).toBe(true);
+    expect(urls.some((u) => u.includes("range=1d"))).toBe(false);
     expect(urls.some((u) => u.includes("/futures/v1/aggs/"))).toBe(false);
+  });
+
+  it("asks Massive for the ET-date front month and does not keep expired MESU6", async () => {
+    setMassiveTestKey();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(zonedTimeToUtc(2026, 10, 14, 15, 30, 0));
+    stubMarketFetch({
+      futuresContracts: {
+        status: "OK",
+        results: [
+          {
+            ticker: "MESU6",
+            product_code: "MES",
+            active: true,
+            type: "single",
+            days_to_maturity: -26,
+            last_trade_date: "2026-09-18",
+            settlement_date: "2026-09-18",
+          },
+          {
+            ticker: "MESZ6",
+            product_code: "MES",
+            active: true,
+            type: "single",
+            days_to_maturity: 65,
+            last_trade_date: "2026-12-18",
+            settlement_date: "2026-12-18",
+          },
+        ],
+      },
+      futuresAggs: fiveMinuteBars(4, 5800),
+    });
+    const bars = await fetchDayMesFiveMinuteBars();
+    expect(bars.length).toBeGreaterThan(0);
+    const urls = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.map((c) => String(c[0]));
+    const contracts = urls.find((u) => u.includes("/futures/v1/contracts"));
+    expect(contracts).toBeTruthy();
+    const q = new URL(contracts!);
+    expect(q.searchParams.get("product_code")).toBe("MES");
+    expect(q.searchParams.get("date")).toBe("2026-10-14");
+    expect(q.searchParams.get("active")).toBe("true");
+    expect(q.searchParams.get("type")).toBe("single");
+    expect(q.searchParams.get("last_trade_date.gte")).toBe("2026-10-14");
+    expect(q.searchParams.get("sort")).toBe("days_to_maturity.asc");
+    const aggs = urls.find((u) => u.includes("/futures/v1/aggs/"));
+    expect(aggs).toContain("MESZ6");
+    expect(urls.some((u) => u.includes("/v8/finance/chart/"))).toBe(false);
   });
 
   it("keeps Massive day aggs at 2d oldest-first and covers the prior session on the fade query", async () => {

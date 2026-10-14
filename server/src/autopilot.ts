@@ -73,7 +73,7 @@ import {
   mergeCpiLateFadeBars,
   noteCpiLateFadeSkip,
 } from "./cpiLateFade";
-import { decideDayMomentum, type MinuteBar } from "./dayMomentum";
+import { barsOnEtDay, decideDayMomentum, type MinuteBar } from "./dayMomentum";
 
 export const MAX_AUTO_MOMENTUM = 5;
 export const MAX_AUTO_OWNERSHIP = 5;
@@ -1020,7 +1020,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
       const day = decideDayMomentum({
         now,
         gateMode: ctx.gateMode,
-        bars: ctx.dayBars,
+        bars: barsOnEtDay(ctx.dayBars, now),
         positions: ctx.getPositions(),
         sleeveLossCapUsd: dayLossCap,
         sleeveRealizedPnlUsd: dayRealized,

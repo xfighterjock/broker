@@ -642,7 +642,7 @@ describe("runAutopilot toggle", () => {
           flattenEt: "15:45",
         },
       ],
-      dayBars: mesBuyBars(),
+      dayBars: [fatPrior, ...mesBuyBars()],
       cpiLateFadeBars: [fatPrior],
       place: async (b) => {
         placed.push(b);

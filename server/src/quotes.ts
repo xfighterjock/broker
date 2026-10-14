@@ -243,13 +243,14 @@ export async function fetchDelayedQuotes(symbols: string[]): Promise<DelayedQuot
   return mapPool(unique, QUOTE_FETCH_CONCURRENCY, (sym) => fetchOne(sym, now));
 }
 
-/** Stochastic Yahoo 5m window. Starts near midnight ET and omits the prior cash close. */
-export const DAY_MES_YAHOO_RANGE = "1d";
 /**
- * Fade Yahoo 5m window. Five calendar days still includes the prior cash
- * close after a weekend or a one-day NYSE holiday.
+ * Yahoo 5m fallback for the day sleeve and the fade. Five calendar days
+ * includes the prior 16:00 ET close (15:55 bar) after a weekend or a one-day
+ * NYSE holiday. `range=1d` starts near midnight ET and omits that bar.
+ * The stochastic decision uses only the current ET day's bars from this series.
  */
-export const CPI_LATE_FADE_YAHOO_RANGE = "5d";
+export const DAY_MES_YAHOO_RANGE = "5d";
+export const CPI_LATE_FADE_YAHOO_RANGE = DAY_MES_YAHOO_RANGE;
 /**
  * Fade Massive aggs lookback in calendar days. Newest-first, same limit as
  * the day series, so today's bars stay and the prior close is in range.
@@ -284,9 +285,10 @@ export async function fetchYahooFiveMinuteBars(
 const DAY_MES_BARS_CACHE = "day:MES";
 
 /**
- * Day-sleeve MES 5m for the stochastic leg. Massive Futures front-month aggs
- * (two days, oldest-first) when the key works; Yahoo MES=F `range=1d` otherwise.
- * The CPI fade does not use this series alone — see `fetchCpiLateFadeMesFiveMinuteBars`.
+ * Day-sleeve MES 5m. Massive Futures front-month aggs (two days, oldest-first)
+ * when the key works; Yahoo MES=F `range=5d` otherwise, so the prior 16:00 ET
+ * bar is in the series. The stochastic leg reads only the current ET day.
+ * The CPI fade also merges `fetchCpiLateFadeMesFiveMinuteBars`.
  */
 export async function fetchDayMesFiveMinuteBars(): Promise<MinuteBar[]> {
   const now = Date.now();
@@ -315,7 +317,9 @@ const FADE_MES_BARS_CACHE = "fade:MES";
 /**
  * MES 5m bars for `cpiLateFade`. Includes the prior regular-session close.
  * Massive uses a five-day newest-first window so `limit=1000` does not drop
- * today. Yahoo fallback is `range=5d`. The stochastic fetch is unchanged.
+ * today. Yahoo fallback is `range=5d`, the same window as the day series.
+ * The stochastic Massive query stays two days, oldest-first; the decision
+ * reads only the current ET day's bars.
  */
 export async function fetchCpiLateFadeMesFiveMinuteBars(): Promise<MinuteBar[]> {
   const now = Date.now();
