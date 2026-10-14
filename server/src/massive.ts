@@ -623,32 +623,52 @@ export type MassiveFuturesBarsResult = {
   error?: string;
 };
 
+export type MassiveFuturesBarsQuery = {
+  /**
+   * Calendar days before now for `window_start.gte`. Default 2 keeps the
+   * day-sleeve stochastic query (oldest-first). The fade passes a longer
+   * lookback so the prior cash close survives a weekend or a holiday.
+   */
+  lookbackDays?: number;
+  /**
+   * Default `asc` (stochastic). The fade uses `desc` so `limit=1000` keeps
+   * the newest bars — today's session and the prior close — instead of the
+   * oldest bars in a multi-day window.
+   */
+  sort?: "asc" | "desc";
+};
+
 export async function fetchMassiveFuturesFiveMinuteBars(
   productCode = "MES",
+  query?: MassiveFuturesBarsQuery,
 ): Promise<MassiveFuturesBarsResult> {
   const key = massiveApiKey();
   if (!key) return { bars: [], error: MASSIVE_KEY_MISSING };
   const code = productCode.trim().toUpperCase();
   const front = await resolveMassiveFrontMonth(code);
   if (!front) return { bars: [], error: `no Massive front-month for ${code}` };
+  const lookbackDays = query?.lookbackDays ?? 2;
+  const sort = query?.sort ?? "asc";
+  const cacheKey =
+    lookbackDays === 2 && sort === "asc" ? front.ticker : `${front.ticker}|${lookbackDays}|${sort}`;
   const now = Date.now();
-  const hit = futuresAggCache.get(front.ticker);
+  const hit = futuresAggCache.get(cacheKey);
   if (hit && now - hit.at < MASSIVE_CACHE_MS) {
     return hit.value?.length
       ? { bars: hit.value, ticker: front.ticker }
       : { bars: [], ticker: front.ticker, error: "empty Massive futures aggs" };
   }
-  const from = new Date(now - 2 * 86_400_000);
+  const from = new Date(now - lookbackDays * 86_400_000);
   const url =
     `${MASSIVE_BASE}/futures/v1/aggs/${encodeURIComponent(front.ticker)}` +
-    `?resolution=5min&limit=1000&sort=window_start.asc&window_start.gte=${ymdUtc(from)}`;
+    `?resolution=5min&limit=1000&sort=window_start.${sort}&window_start.gte=${ymdUtc(from)}`;
   const got = await massiveGetJson(url, key);
   if (!got.ok) {
-    futuresAggCache.set(front.ticker, { at: now, value: null });
+    futuresAggCache.set(cacheKey, { at: now, value: null });
     return { bars: [], ticker: front.ticker, error: got.error };
   }
   const bars = parseMassiveFuturesAggs(got.body);
-  futuresAggCache.set(front.ticker, { at: now, value: bars.length ? bars : null });
+  futuresAggCache.set(cacheKey, { at: now, value: bars.length ? bars : null });
   if (!bars.length) return { bars: [], ticker: front.ticker, error: "empty Massive futures aggs" };
   return { bars, ticker: front.ticker };
 }

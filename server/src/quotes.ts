@@ -243,11 +243,28 @@ export async function fetchDelayedQuotes(symbols: string[]): Promise<DelayedQuot
   return mapPool(unique, QUOTE_FETCH_CONCURRENCY, (sym) => fetchOne(sym, now));
 }
 
-export async function fetchYahooFiveMinuteBars(symbol = "MES=F"): Promise<MinuteBar[]> {
+/** Stochastic Yahoo 5m window. Starts near midnight ET and omits the prior cash close. */
+export const DAY_MES_YAHOO_RANGE = "1d";
+/**
+ * Fade Yahoo 5m window. Five calendar days still includes the prior cash
+ * close after a weekend or a one-day NYSE holiday.
+ */
+export const CPI_LATE_FADE_YAHOO_RANGE = "5d";
+/**
+ * Fade Massive aggs lookback in calendar days. Newest-first, same limit as
+ * the day series, so today's bars stay and the prior close is in range.
+ */
+export const CPI_LATE_FADE_MASSIVE_LOOKBACK_DAYS = 5;
+
+export async function fetchYahooFiveMinuteBars(
+  symbol = "MES=F",
+  range = DAY_MES_YAHOO_RANGE,
+): Promise<MinuteBar[]> {
   const now = Date.now();
-  const hit = barsCache.get(symbol);
+  const cacheKey = `${symbol}|5m|${range}`;
+  const hit = barsCache.get(cacheKey);
   if (hit && now - hit.at < QUOTE_CACHE_MS) return hit.bars;
-  const url = `${YAHOO_CHART_BASE}${encodeURIComponent(symbol)}?interval=5m&range=1d`;
+  const url = `${YAHOO_CHART_BASE}${encodeURIComponent(symbol)}?interval=5m&range=${encodeURIComponent(range)}`;
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS);
   try {
@@ -255,7 +272,7 @@ export async function fetchYahooFiveMinuteBars(symbol = "MES=F"): Promise<Minute
     if (!res.ok) return [];
     const body: unknown = await res.json();
     const bars = parseYahooFiveMinuteBars(body);
-    barsCache.set(symbol, { at: now, bars });
+    barsCache.set(cacheKey, { at: now, bars });
     return bars;
   } catch {
     return hit?.bars ?? [];
@@ -266,7 +283,11 @@ export async function fetchYahooFiveMinuteBars(symbol = "MES=F"): Promise<Minute
 
 const DAY_MES_BARS_CACHE = "day:MES";
 
-/** Day-sleeve MES 5m: Massive Futures front-month aggs when the key works; Yahoo MES=F otherwise. */
+/**
+ * Day-sleeve MES 5m for the stochastic leg. Massive Futures front-month aggs
+ * (two days, oldest-first) when the key works; Yahoo MES=F `range=1d` otherwise.
+ * The CPI fade does not use this series alone — see `fetchCpiLateFadeMesFiveMinuteBars`.
+ */
 export async function fetchDayMesFiveMinuteBars(): Promise<MinuteBar[]> {
   const now = Date.now();
   const hit = barsCache.get(DAY_MES_BARS_CACHE);
@@ -284,7 +305,43 @@ export async function fetchDayMesFiveMinuteBars(): Promise<MinuteBar[]> {
     console.info("[EventGate] day MES 5m bars source=yahoo (massive unconfigured)");
   }
 
-  const yahoo = await fetchYahooFiveMinuteBars("MES=F");
+  const yahoo = await fetchYahooFiveMinuteBars("MES=F", DAY_MES_YAHOO_RANGE);
   barsCache.set(DAY_MES_BARS_CACHE, { at: now, bars: yahoo });
+  return yahoo;
+}
+
+const FADE_MES_BARS_CACHE = "fade:MES";
+
+/**
+ * MES 5m bars for `cpiLateFade`. Includes the prior regular-session close.
+ * Massive uses a five-day newest-first window so `limit=1000` does not drop
+ * today. Yahoo fallback is `range=5d`. The stochastic fetch is unchanged.
+ */
+export async function fetchCpiLateFadeMesFiveMinuteBars(): Promise<MinuteBar[]> {
+  const now = Date.now();
+  const hit = barsCache.get(FADE_MES_BARS_CACHE);
+  if (hit && now - hit.at < QUOTE_CACHE_MS) return hit.bars;
+
+  if (massiveConfigured()) {
+    const got = await fetchMassiveFuturesFiveMinuteBars("MES", {
+      lookbackDays: CPI_LATE_FADE_MASSIVE_LOOKBACK_DAYS,
+      sort: "desc",
+    });
+    if (got.bars.length) {
+      console.info(
+        `[EventGate] cpiLateFade MES 5m bars source=massive contract=${got.ticker ?? "?"} lookback=${CPI_LATE_FADE_MASSIVE_LOOKBACK_DAYS}d`,
+      );
+      barsCache.set(FADE_MES_BARS_CACHE, { at: now, bars: got.bars });
+      return got.bars;
+    }
+    console.info(
+      `[EventGate] cpiLateFade MES 5m bars source=yahoo (massive ${got.error ?? "unavailable"})`,
+    );
+  } else {
+    console.info("[EventGate] cpiLateFade MES 5m bars source=yahoo (massive unconfigured)");
+  }
+
+  const yahoo = await fetchYahooFiveMinuteBars("MES=F", CPI_LATE_FADE_YAHOO_RANGE);
+  barsCache.set(FADE_MES_BARS_CACHE, { at: now, bars: yahoo });
   return yahoo;
 }

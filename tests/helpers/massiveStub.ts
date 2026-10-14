@@ -176,6 +176,11 @@ export type StubMarketOpts = {
   /** When set, Massive /futures/v1/* returns this HTTP status (Yahoo fallback tests). */
   futuresStatus?: number;
   futuresAggs?: Array<{ ts: number; open: number; high: number; low: number; close: number; volume?: number }>;
+  /** When set, asc vs desc aggs URLs return different bars. Falls back to futuresAggs. */
+  futuresAggsBySort?: {
+    asc?: Array<{ ts: number; open: number; high: number; low: number; close: number; volume?: number }>;
+    desc?: Array<{ ts: number; open: number; high: number; low: number; close: number; volume?: number }>;
+  };
   yahooFiveMinuteBars?: Array<{
     ts: number;
     open: number;
@@ -184,6 +189,11 @@ export type StubMarketOpts = {
     close: number;
     volume?: number;
   }>;
+  /** When set, chart URLs return the bars for that `range` (1d vs 5d). */
+  yahooBarsByRange?: Record<
+    string,
+    Array<{ ts: number; open: number; high: number; low: number; close: number; volume?: number }>
+  >;
 };
 
 /** Mock Massive equities, E*TRADE option chains, Yahoo futures. Never hits the network except localhost. */
@@ -252,7 +262,9 @@ export function stubMarketFetch(opts: StubMarketOpts = {}) {
           return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
         }
         if (url.includes("/futures/v1/aggs/")) {
-          const bars = opts.futuresAggs ?? fiveMinuteBars(22, last);
+          const sort = new URL(url).searchParams.get("sort") ?? "";
+          const bySort = sort.endsWith("desc") ? opts.futuresAggsBySort?.desc : opts.futuresAggsBySort?.asc;
+          const bars = bySort ?? opts.futuresAggs ?? fiveMinuteBars(22, last);
           const body = massiveFuturesAggsBody(contract, bars);
           return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
         }
@@ -265,7 +277,8 @@ export function stubMarketFetch(opts: StubMarketOpts = {}) {
           typeof lastBy === "number"
             ? lastBy
             : lastBy[symbol] ?? lastBy[symbol.replace("=F", "")] ?? 100;
-        const yBars = opts.yahooFiveMinuteBars;
+        const range = new URL(url).searchParams.get("range") ?? "";
+        const yBars = (range && opts.yahooBarsByRange?.[range]) || opts.yahooFiveMinuteBars;
         return {
           ok: true,
           status: 200,

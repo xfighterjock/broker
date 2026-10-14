@@ -67,7 +67,12 @@ import {
   verticalStopCooling,
 } from "./vertical";
 import { CPI_LATE_FADE_ENABLED } from "../../shared/constants";
-import { decideCpiLateFade, isOpenCpiLateFade } from "./cpiLateFade";
+import {
+  decideCpiLateFade,
+  isOpenCpiLateFade,
+  mergeCpiLateFadeBars,
+  noteCpiLateFadeSkip,
+} from "./cpiLateFade";
 import { decideDayMomentum, type MinuteBar } from "./dayMomentum";
 
 export const MAX_AUTO_MOMENTUM = 5;
@@ -961,6 +966,11 @@ export type AutopilotCtx = {
   now?: Date;
   gateMode?: GateMode;
   dayBars?: MinuteBar[];
+  /**
+   * Longer MES 5m series for `cpiLateFade` (prior NYSE close). Merged with
+   * `dayBars` for the fade only. The stochastic leg still reads `dayBars`.
+   */
+  cpiLateFadeBars?: MinuteBar[];
   /** ISO knowledge_time after the print. Day MES stoch entries stay flat without it. */
   knowledgeTime?: string | null;
   /** NFP/CPI/FOMC calendar. Stage-3 does not arm without a print on this ET day. */
@@ -1041,7 +1051,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
     const fade = decideCpiLateFade({
       now,
       gateMode: ctx.gateMode,
-      bars: ctx.dayBars,
+      bars: mergeCpiLateFadeBars(ctx.dayBars, ctx.cpiLateFadeBars ?? []),
       positions: ctx.getPositions(),
       sleeveLossCapUsd: dayLossCap,
       sleeveRealizedPnlUsd: dayRealized,
@@ -1058,6 +1068,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
         ctx.log(`auto paper close skip ${s.symbol}: ${r.error}`);
       }
     }
+    if (!fade.buy && fade.sells.length === 0) noteCpiLateFadeSkip(now, fade.reason);
     if (fade.buy) {
       const r = await ctx.place({ ...fade.buy, cpiLateFade: true });
       if (r.ok) {

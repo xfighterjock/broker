@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cpiLateFadeSignal } from "../server/src/cpiLateFade";
 import {
+  fetchCpiLateFadeMesFiveMinuteBars,
   fetchDayMesFiveMinuteBars,
   fetchDelayedQuotes,
   isYahooFuturesSymbol,
@@ -35,6 +37,7 @@ import {
 } from "./helpers/massiveStub";
 
 afterEach(() => {
+  vi.useRealTimers();
   clearMassiveTestKey();
   resetQuoteCache();
   resetMassiveCache();
@@ -283,6 +286,97 @@ describe("fetchDayMesFiveMinuteBars Massive vs Yahoo", () => {
     expect(got.buy?.side).toBe("Buy");
     expect(got.buy?.symbol).toBe("MES=F");
     expect(got.buy?.qty).toBe(1);
+  });
+});
+
+function ohlc(ts: number, close: number) {
+  return { ts, open: close, high: close + 1, low: close - 1, close, volume: 1000 };
+}
+
+describe("cpiLateFade bar window vs the stochastic series", () => {
+  it("reproduces Yahoo range=1d missing the prior close and loads it on range=5d", async () => {
+    clearMassiveTestKey();
+    const prior = zonedTimeToUtc(2026, 10, 13, 15, 55, 0).getTime();
+    const todayOnly = [
+      ohlc(zonedTimeToUtc(2026, 10, 14, 0, 5, 0).getTime(), 100),
+      ohlc(zonedTimeToUtc(2026, 10, 14, 10, 25, 0).getTime(), 110),
+      ohlc(zonedTimeToUtc(2026, 10, 14, 15, 25, 0).getTime(), 111),
+    ];
+    stubMarketFetch({
+      yahooBarsByRange: {
+        "1d": todayOnly,
+        "5d": [ohlc(prior, 100), ...todayOnly],
+      },
+    });
+    const now = zonedTimeToUtc(2026, 10, 14, 15, 30, 0);
+    const day = await fetchDayMesFiveMinuteBars();
+    const missing = cpiLateFadeSignal(now, day);
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) expect(missing.reason).toBe("missing MES 5m prior close");
+
+    const fade = await fetchCpiLateFadeMesFiveMinuteBars();
+    const got = cpiLateFadeSignal(now, fade);
+    expect(got.ok).toBe(true);
+    if (got.ok) {
+      expect(got.priorClose).toBe(100);
+      expect(got.moveSign).toBe(1);
+    }
+    const urls = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.map((c) => String(c[0]));
+    expect(urls.some((u) => u.includes("/v8/finance/chart/") && u.includes("range=1d"))).toBe(true);
+    expect(urls.some((u) => u.includes("/v8/finance/chart/") && u.includes("range=5d"))).toBe(true);
+    expect(urls.some((u) => u.includes("/futures/v1/aggs/"))).toBe(false);
+  });
+
+  it("keeps Massive day aggs at 2d oldest-first and covers the prior session on the fade query", async () => {
+    setMassiveTestKey();
+    const monday = zonedTimeToUtc(2026, 10, 12, 15, 30, 0);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(monday);
+    const friday = zonedTimeToUtc(2026, 10, 9, 15, 55, 0).getTime();
+    const todayOnly = [
+      ohlc(zonedTimeToUtc(2026, 10, 12, 0, 5, 0).getTime(), 100),
+      ohlc(zonedTimeToUtc(2026, 10, 12, 10, 25, 0).getTime(), 110),
+      ohlc(zonedTimeToUtc(2026, 10, 12, 15, 25, 0).getTime(), 111),
+    ];
+    stubMarketFetch({
+      futuresAggsBySort: {
+        asc: todayOnly,
+        desc: [ohlc(friday, 100), ...todayOnly],
+      },
+    });
+    const day = await fetchDayMesFiveMinuteBars();
+    const fade = await fetchCpiLateFadeMesFiveMinuteBars();
+    const missing = cpiLateFadeSignal(monday, day);
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) expect(missing.reason).toBe("missing MES 5m prior close");
+    const got = cpiLateFadeSignal(monday, fade);
+    expect(got.ok).toBe(true);
+    if (got.ok) expect(got.priorClose).toBe(100);
+
+    const urls = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.map((c) => String(c[0]));
+    const dayUrl = urls.find((u) => u.includes("/futures/v1/aggs/") && u.includes("sort=window_start.asc"));
+    const fadeUrl = urls.find((u) => u.includes("/futures/v1/aggs/") && u.includes("sort=window_start.desc"));
+    expect(dayUrl).toBeTruthy();
+    expect(fadeUrl).toBeTruthy();
+    expect(new URL(dayUrl!).searchParams.get("limit")).toBe("1000");
+    expect(new URL(fadeUrl!).searchParams.get("limit")).toBe("1000");
+    expect(new URL(dayUrl!).searchParams.get("window_start.gte")! > "2026-10-09").toBe(true);
+    expect(new URL(fadeUrl!).searchParams.get("window_start.gte")! <= "2026-10-09").toBe(true);
+    expect(urls.some((u) => u.includes("/v8/finance/chart/"))).toBe(false);
+  });
+
+  it("includes the Friday close on the Tuesday after Labor Day without widening the day query", async () => {
+    setMassiveTestKey();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(zonedTimeToUtc(2026, 9, 8, 15, 30, 0));
+    stubMarketFetch({ futuresAggs: fiveMinuteBars(4, 100) });
+    await fetchDayMesFiveMinuteBars();
+    await fetchCpiLateFadeMesFiveMinuteBars();
+    const urls = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.map((c) => String(c[0]));
+    const dayUrl = urls.find((u) => u.includes("/futures/v1/aggs/") && u.includes("sort=window_start.asc"));
+    const fadeUrl = urls.find((u) => u.includes("/futures/v1/aggs/") && u.includes("sort=window_start.desc"));
+    expect(new URL(dayUrl!).searchParams.get("window_start.gte")! > "2026-09-04").toBe(true);
+    expect(new URL(fadeUrl!).searchParams.get("window_start.gte")! <= "2026-09-04").toBe(true);
   });
 });
 
