@@ -56,6 +56,17 @@ export function etWeekday(now: Date): boolean {
   return w !== "Sat" && w !== "Sun";
 }
 
+/** Bars whose America/New_York calendar date is `now`. Session VWAP stays one day. */
+export function barsOnEtDay(bars: MinuteBar[], now: Date): MinuteBar[] {
+  const day = etParts(now);
+  const out: MinuteBar[] = [];
+  for (const b of bars) {
+    const p = etParts(new Date(b.ts));
+    if (p.year === day.year && p.month === day.month && p.day === day.day) out.push(b);
+  }
+  return out;
+}
+
 export function isRthBar(tsMs: number): boolean {
   const p = etParts(new Date(tsMs));
   if (p.weekday === "Sat" || p.weekday === "Sun") return false;

@@ -1,5 +1,6 @@
 import { CPI_LATE_FADE_ENABLED } from "../../shared/constants";
 import { etParts, pad2, sameEtDay, stage3Arm } from "../../shared/clock";
+import { nyseDayOn } from "../../shared/marketSession";
 import type { CalendarEvent, GateMode, Position, Side } from "../../shared/types";
 import {
   DAY_STOCH_QTY,
@@ -15,11 +16,14 @@ import {
 
 /**
  * CPI-day late-session fade (paper hypothesis, strategy id `cpiLateFade`).
- * Reference is the day sleeve's MES 5-minute series (Massive Futures
- * front-month, Yahoo MES=F fallback) — the same bars as the stochastic leg,
- * not a separate SPY feed. Prior cash close is the 15:55 ET bar close
- * (window start; that bar ends at 16:00). The 10:30 ET price is the 10:25 ET
- * bar close. Missing, stale, or a zero move is no trade.
+ * Reference is the fade MES 5-minute series (Massive Futures front-month as of
+ * the ET date, five calendar days, newest-first; Yahoo MES=F `range=5d`
+ * fallback), merged with the day series. The stochastic leg reads only the
+ * current ET day's bars, so the wider Yahoo window does not change its VWAP.
+ * Prior cash close is the
+ * previous NYSE session's 15:55 ET bar close (window start; that bar ends at
+ * 16:00). Weekends and full NYSE holidays are not that session. The 10:30 ET
+ * price is the 10:25 ET bar close. Missing, stale, or a zero move is no trade.
  * Provenance: Yahoo SPY 60m, 2023-11-13 through 2026-10-09, FRED CPIAUCNS
  * release dates through 2026-04-10. Paper only.
  */
@@ -64,14 +68,75 @@ function etMinuteOf(ts: number): number {
   return p.hour * 60 + p.minute;
 }
 
-/** Previous Mon–Fri America/New_York calendar day. */
+/**
+ * Previous NYSE cash session in America/New_York. Skips weekends and full
+ * holidays (early-close days still count). Walks at most two weeks.
+ */
 export function previousWeekdayKey(now: Date): string {
   const p = etParts(now);
   const cursor = new Date(Date.UTC(p.year, p.month - 1, p.day));
-  do {
+  let fallback = "";
+  for (let i = 0; i < 14; i++) {
     cursor.setUTCDate(cursor.getUTCDate() - 1);
-  } while (cursor.getUTCDay() === 0 || cursor.getUTCDay() === 6);
-  return etKeyFromParts(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, cursor.getUTCDate());
+    const year = cursor.getUTCFullYear();
+    const month = cursor.getUTCMonth() + 1;
+    const day = cursor.getUTCDate();
+    const wd = cursor.getUTCDay();
+    if (wd === 0 || wd === 6) continue;
+    const key = etKeyFromParts(year, month, day);
+    if (!fallback) fallback = key;
+    if (nyseDayOn(year, month, day)?.kind === "holiday") continue;
+    return key;
+  }
+  return fallback || etKeyFromParts(p.year, p.month, p.day);
+}
+
+/**
+ * Day series plus the fade's longer series. Day bars win on a shared timestamp
+ * so the stochastic feed stays the source for today's prints. An empty fade
+ * series leaves the day series as it is.
+ */
+export function mergeCpiLateFadeBars(dayBars: MinuteBar[], fadeBars: MinuteBar[]): MinuteBar[] {
+  if (fadeBars.length === 0) return dayBars;
+  if (dayBars.length === 0) return fadeBars;
+  const byTs = new Map<number, MinuteBar>();
+  for (const b of dayBars) byTs.set(b.ts, b);
+  for (const b of fadeBars) {
+    if (!byTs.has(b.ts)) byTs.set(b.ts, b);
+  }
+  return [...byTs.values()].sort((a, b) => a.ts - b.ts);
+}
+
+const QUIET_CPI_LATE_FADE_SKIPS = new Set([
+  "outside cpiLateFade entry window",
+  "not a CPI day",
+  "weekend",
+  "hold",
+  "flatten",
+  "stop",
+  "loss cap",
+  "buy",
+  "sell",
+]);
+
+let cpiLateFadeSkipLoggedDay: string | null = null;
+
+export function resetCpiLateFadeSkipLog(): void {
+  cpiLateFadeSkipLoggedDay = null;
+}
+
+/**
+ * One info line per ET day when the 15:30 entry window skips. Routine
+ * out-of-window and non-CPI passes stay quiet. stdout so journalctl shows it.
+ */
+export function noteCpiLateFadeSkip(now: Date, reason: string): void {
+  if (!reason || QUIET_CPI_LATE_FADE_SKIPS.has(reason)) return;
+  const mins = etMinutes(now);
+  if (mins < CPI_LATE_FADE_ENTRY_MIN || mins >= CPI_LATE_FADE_ENTRY_UNTIL_MIN) return;
+  const day = etKey(now.getTime());
+  if (cpiLateFadeSkipLoggedDay === day) return;
+  cpiLateFadeSkipLoggedDay = day;
+  console.info(`[EventGate] cpiLateFade skip: ${reason}`);
 }
 
 function findBar(bars: MinuteBar[], ymd: string, minute: number): MinuteBar | null {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { seedEvents, zonedTimeToUtc } from "../shared/clock";
 import { CPI_LATE_FADE_ENABLED } from "../shared/constants";
 import type { CalendarEvent, Position } from "../shared/types";
@@ -10,6 +10,10 @@ import {
   cpiLateFadeSignal,
   cpiLateFadeStopPrice,
   decideCpiLateFade,
+  mergeCpiLateFadeBars,
+  noteCpiLateFadeSkip,
+  previousWeekdayKey,
+  resetCpiLateFadeSkipLog,
 } from "../server/src/cpiLateFade";
 
 const events = seedEvents();
@@ -128,6 +132,28 @@ describe("cpiLateFade signal and entry", () => {
     expect(noPrior.reason).toBe("missing MES 5m prior close");
   });
 
+  it("reproduces a Yahoo range=1d series that starts near midnight ET without the prior close", () => {
+    const todayOnly = [
+      bar(cpiDay, 0, 5, 100),
+      bar(cpiDay, 10, 25, 110),
+      bar(cpiDay, 15, 25, 111),
+    ];
+    const missing = cpiLateFadeSignal(entryNow, todayOnly);
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) expect(missing.reason).toBe("missing MES 5m prior close");
+    expect(decide({ bars: todayOnly }).reason).toBe("missing MES 5m prior close");
+
+    const merged = mergeCpiLateFadeBars(todayOnly, [bar(priorDay, 15, 55, 100), ...todayOnly]);
+    const got = cpiLateFadeSignal(entryNow, merged);
+    expect(got.ok).toBe(true);
+    if (got.ok) {
+      expect(got.priorClose).toBe(100);
+      expect(got.price1030).toBe(110);
+      expect(got.moveSign).toBe(1);
+    }
+    expect(decide({ bars: merged }).buy?.side).toBe("Sell");
+  });
+
   it("does not trade when the MES series is stale", () => {
     const got = decide({
       bars: [bar(priorDay, 15, 55, 100), bar(cpiDay, 10, 25, 101), bar(cpiDay, 11, 0, 101)],
@@ -193,6 +219,59 @@ describe("cpiLateFade signal and entry", () => {
     const got = decide({ knowledgeTime: null });
     expect(got.buy).toBeNull();
     expect(got.reason).toMatch(/knowledge_time/);
+  });
+});
+
+describe("previous NYSE session", () => {
+  it("uses the prior weekday on a normal CPI Wednesday", () => {
+    expect(previousWeekdayKey(entryNow)).toBe("2026-10-13");
+  });
+
+  it("skips the weekend back to Friday", () => {
+    expect(previousWeekdayKey(at({ y: 2026, m: 10, d: 12 }, 15, 30))).toBe("2026-10-09");
+  });
+
+  it("skips a full holiday and still counts an early-close session", () => {
+    expect(previousWeekdayKey(at({ y: 2026, m: 9, d: 8 }, 15, 30))).toBe("2026-09-04");
+    expect(previousWeekdayKey(at({ y: 2026, m: 1, d: 20 }, 15, 30))).toBe("2026-01-16");
+    expect(previousWeekdayKey(at({ y: 2026, m: 11, d: 30 }, 15, 30))).toBe("2026-11-27");
+  });
+
+  it("reads the Friday close after Labor Day, not the holiday Monday", () => {
+    const tue = at({ y: 2026, m: 9, d: 8 }, 15, 30);
+    const bars = [
+      bar({ y: 2026, m: 9, d: 4 }, 15, 55, 200),
+      bar({ y: 2026, m: 9, d: 7 }, 15, 55, 50),
+      bar({ y: 2026, m: 9, d: 8 }, 10, 25, 210),
+      bar({ y: 2026, m: 9, d: 8 }, 15, 25, 211),
+    ];
+    const got = cpiLateFadeSignal(tue, bars);
+    expect(got.ok).toBe(true);
+    if (got.ok) expect(got.priorClose).toBe(200);
+  });
+});
+
+describe("cpiLateFade skip log", () => {
+  afterEach(() => {
+    resetCpiLateFadeSkipLog();
+    vi.restoreAllMocks();
+  });
+
+  it("logs an entry-window skip once per ET day at info", () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    noteCpiLateFadeSkip(entryNow, "missing MES 5m prior close");
+    noteCpiLateFadeSkip(at(cpiDay, 15, 32), "missing MES 5m prior close");
+    noteCpiLateFadeSkip(at(cpiDay, 11, 0), "missing MES 5m prior close");
+    noteCpiLateFadeSkip(entryNow, "not a CPI day");
+    const lines = info.mock.calls.map((c) => String(c[0])).filter((l) => l.includes("cpiLateFade skip"));
+    expect(lines).toEqual(["[EventGate] cpiLateFade skip: missing MES 5m prior close"]);
+
+    noteCpiLateFadeSkip(at({ y: 2026, m: 11, d: 10 }, 15, 30), "flat signal");
+    const again = info.mock.calls.map((c) => String(c[0])).filter((l) => l.includes("cpiLateFade skip"));
+    expect(again).toEqual([
+      "[EventGate] cpiLateFade skip: missing MES 5m prior close",
+      "[EventGate] cpiLateFade skip: flat signal",
+    ]);
   });
 });
 

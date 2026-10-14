@@ -1,4 +1,5 @@
 import path from "node:path";
+import { etParts, pad2 } from "../../shared/clock";
 import type {
   DelayedQuote,
   OptionChainSnapshot,
@@ -434,13 +435,24 @@ export function parseMassiveFuturesContracts(body: unknown): FuturesContractRow[
   return out;
 }
 
-/** Nearest active single (no spreads). Massive has no continuous F: ticker — front-month only. */
-export function pickFrontMonthContract(rows: FuturesContractRow[]): FuturesContractRow | null {
+/**
+ * Nearest active outright. Massive has no continuous F: ticker.
+ * `asOfYmd` is the ET session date: a contract whose last trade (or
+ * settlement) is already past that date is not the front month, even if a
+ * stale `days_to_maturity` is still positive. That is the September 2026
+ * MESU6 → MESZ6 roll.
+ */
+export function pickFrontMonthContract(
+  rows: FuturesContractRow[],
+  asOfYmd?: string,
+): FuturesContractRow | null {
   const eligible = rows.filter((r) => {
     if (!r.ticker || r.ticker.includes("-")) return false;
     if (r.active === false) return false;
-    if (r.type && r.type.toLowerCase() === "combo") return false;
+    if (r.type && r.type.toLowerCase() !== "single") return false;
     if (r.daysToMaturity !== null && r.daysToMaturity < 0) return false;
+    const expiry = r.lastTradeDate ?? r.settlementDate;
+    if (asOfYmd && expiry && expiry < asOfYmd) return false;
     return true;
   });
   eligible.sort((a, b) => {
@@ -570,27 +582,54 @@ export function parseMassiveFuturesSnapshotQuote(displaySymbol: string, body: un
   };
 }
 
+function etSessionYmd(now: Date): string {
+  const p = etParts(now);
+  return `${p.year}-${pad2(p.month)}-${pad2(p.day)}`;
+}
+
+const FRONT_MONTH_PAGES = 3;
+
 export async function resolveMassiveFrontMonth(
   productCode: string,
-): Promise<FuturesContractRow | null> {
+): Promise<{ contract: FuturesContractRow | null; error?: string }> {
   const key = massiveApiKey();
-  if (!key) return null;
+  if (!key) return { contract: null, error: MASSIVE_KEY_MISSING };
   const code = productCode.trim().toUpperCase();
-  if (!code) return null;
+  if (!code) return { contract: null, error: "missing futures product code" };
   const now = Date.now();
-  const hit = futuresContractCache.get(code);
-  if (hit && now - hit.at < MASSIVE_CACHE_MS) return hit.value;
-  const url =
-    `${MASSIVE_BASE}/futures/v1/contracts?product_code=${encodeURIComponent(code)}` +
-    `&active=true&type=single&limit=100&sort=days_to_maturity.asc`;
-  const got = await massiveGetJson(url, key);
-  if (!got.ok) {
-    futuresContractCache.set(code, { at: now, value: null });
-    return null;
+  const asOf = etSessionYmd(new Date(now));
+  const cacheKey = `${code}|${asOf}`;
+  const hit = futuresContractCache.get(cacheKey);
+  if (hit && now - hit.at < MASSIVE_CACHE_MS) {
+    return hit.value
+      ? { contract: hit.value }
+      : { contract: null, error: `no Massive front-month for ${code} as of ${asOf}` };
   }
-  const picked = pickFrontMonthContract(parseMassiveFuturesContracts(got.body));
-  futuresContractCache.set(code, { at: now, value: picked });
-  return picked;
+  // `date` is the point-in-time session. Without it, `active=true` is not
+  // "tradeable today", and days_to_maturity.asc can fill the page with
+  // expired MESU6 rows after the September roll so MESZ6 never appears.
+  let url: string | null =
+    `${MASSIVE_BASE}/futures/v1/contracts?product_code=${encodeURIComponent(code)}` +
+    `&date=${asOf}&active=true&type=single&last_trade_date.gte=${asOf}` +
+    `&limit=100&sort=days_to_maturity.asc`;
+  const rows: FuturesContractRow[] = [];
+  for (let page = 0; page < FRONT_MONTH_PAGES && url; page++) {
+    const got = await massiveGetJson(url, key);
+    if (!got.ok) {
+      if (page === 0) futuresContractCache.set(cacheKey, { at: now, value: null });
+      return { contract: null, error: got.error };
+    }
+    rows.push(...parseMassiveFuturesContracts(got.body));
+    const picked = pickFrontMonthContract(rows, asOf);
+    if (picked) {
+      futuresContractCache.set(cacheKey, { at: now, value: picked });
+      return { contract: picked };
+    }
+    const next = str(asRecord(got.body)?.next_url);
+    url = next ? stripApiKeyFromUrl(next) : null;
+  }
+  futuresContractCache.set(cacheKey, { at: now, value: null });
+  return { contract: null, error: `no Massive front-month for ${code} as of ${asOf}` };
 }
 
 export async function fetchMassiveFuturesQuote(displaySymbol: string): Promise<DelayedQuote> {
@@ -609,8 +648,9 @@ export async function fetchMassiveFuturesQuote(displaySymbol: string): Promise<D
   const key = massiveApiKey();
   if (!key) return { ...missing, error: MASSIVE_KEY_MISSING };
   if (!product) return { ...missing, error: `no Massive futures product for ${displaySymbol}` };
-  const front = await resolveMassiveFrontMonth(product);
-  if (!front) return { ...missing, error: `no Massive front-month for ${product}` };
+  const lookedUp = await resolveMassiveFrontMonth(product);
+  const front = lookedUp.contract;
+  if (!front) return { ...missing, error: lookedUp.error ?? `no Massive front-month for ${product}` };
   const url = `${MASSIVE_BASE}/futures/v1/snapshot?ticker=${encodeURIComponent(front.ticker)}&limit=1`;
   const got = await massiveGetJson(url, key);
   if (!got.ok) return { ...missing, error: got.error };
@@ -623,32 +663,53 @@ export type MassiveFuturesBarsResult = {
   error?: string;
 };
 
+export type MassiveFuturesBarsQuery = {
+  /**
+   * Calendar days before now for `window_start.gte`. Default 2 keeps the
+   * day-sleeve stochastic query (oldest-first). The fade passes a longer
+   * lookback so the prior cash close survives a weekend or a holiday.
+   */
+  lookbackDays?: number;
+  /**
+   * Default `asc` (stochastic). The fade uses `desc` so `limit=1000` keeps
+   * the newest bars — today's session and the prior close — instead of the
+   * oldest bars in a multi-day window.
+   */
+  sort?: "asc" | "desc";
+};
+
 export async function fetchMassiveFuturesFiveMinuteBars(
   productCode = "MES",
+  query?: MassiveFuturesBarsQuery,
 ): Promise<MassiveFuturesBarsResult> {
   const key = massiveApiKey();
   if (!key) return { bars: [], error: MASSIVE_KEY_MISSING };
   const code = productCode.trim().toUpperCase();
-  const front = await resolveMassiveFrontMonth(code);
-  if (!front) return { bars: [], error: `no Massive front-month for ${code}` };
+  const lookedUp = await resolveMassiveFrontMonth(code);
+  const front = lookedUp.contract;
+  if (!front) return { bars: [], error: lookedUp.error ?? `no Massive front-month for ${code}` };
+  const lookbackDays = query?.lookbackDays ?? 2;
+  const sort = query?.sort ?? "asc";
+  const cacheKey =
+    lookbackDays === 2 && sort === "asc" ? front.ticker : `${front.ticker}|${lookbackDays}|${sort}`;
   const now = Date.now();
-  const hit = futuresAggCache.get(front.ticker);
+  const hit = futuresAggCache.get(cacheKey);
   if (hit && now - hit.at < MASSIVE_CACHE_MS) {
     return hit.value?.length
       ? { bars: hit.value, ticker: front.ticker }
       : { bars: [], ticker: front.ticker, error: "empty Massive futures aggs" };
   }
-  const from = new Date(now - 2 * 86_400_000);
+  const from = new Date(now - lookbackDays * 86_400_000);
   const url =
     `${MASSIVE_BASE}/futures/v1/aggs/${encodeURIComponent(front.ticker)}` +
-    `?resolution=5min&limit=1000&sort=window_start.asc&window_start.gte=${ymdUtc(from)}`;
+    `?resolution=5min&limit=1000&sort=window_start.${sort}&window_start.gte=${ymdUtc(from)}`;
   const got = await massiveGetJson(url, key);
   if (!got.ok) {
-    futuresAggCache.set(front.ticker, { at: now, value: null });
+    futuresAggCache.set(cacheKey, { at: now, value: null });
     return { bars: [], ticker: front.ticker, error: got.error };
   }
   const bars = parseMassiveFuturesAggs(got.body);
-  futuresAggCache.set(front.ticker, { at: now, value: bars.length ? bars : null });
+  futuresAggCache.set(cacheKey, { at: now, value: bars.length ? bars : null });
   if (!bars.length) return { bars: [], ticker: front.ticker, error: "empty Massive futures aggs" };
   return { bars, ticker: front.ticker };
 }

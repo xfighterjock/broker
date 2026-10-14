@@ -4,6 +4,7 @@ import type { CalendarEvent, Position } from "../shared/types";
 import {
   DAY_STOCH_SYMBOL,
   dayStochArmed,
+  barsOnEtDay,
   decideDayMomentum,
   gateBlocksDayEntries,
   parseYahooFiveMinuteBars,
@@ -42,6 +43,29 @@ function pos(side: Position["side"]): Position {
     sleeveId: "day",
   };
 }
+
+describe("barsOnEtDay", () => {
+  it("keeps the current ET session and drops the prior close", () => {
+    const now = zonedTimeToUtc(2026, 10, 14, 15, 30, 0);
+    const prior: MinuteBar = {
+      ts: zonedTimeToUtc(2026, 10, 13, 15, 55, 0).getTime(),
+      open: 1,
+      high: 1,
+      low: 1,
+      close: 1,
+      volume: 1,
+    };
+    const today: MinuteBar = {
+      ts: zonedTimeToUtc(2026, 10, 14, 10, 25, 0).getTime(),
+      open: 2,
+      high: 2,
+      low: 2,
+      close: 2,
+      volume: 1,
+    };
+    expect(barsOnEtDay([prior, today], now)).toEqual([today]);
+  });
+});
 
 describe("stochasticKd", () => {
   it("is 100 at the 14-bar high close and 0 at the low", () => {

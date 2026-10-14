@@ -85,7 +85,13 @@ import { GateEngine } from "./gate";
 import { MockBroker } from "./mockBroker";
 import type { RedisClient } from "./redis";
 import { cpiLateFadeStopPrice, isOpenCpiLateFade } from "./cpiLateFade";
-import { fetchDelayedQuotes, fetchDayMesFiveMinuteBars, mapTicker, symbolsForSleeve } from "./quotes";
+import {
+  fetchCpiLateFadeMesFiveMinuteBars,
+  fetchDelayedQuotes,
+  fetchDayMesFiveMinuteBars,
+  mapTicker,
+  symbolsForSleeve,
+} from "./quotes";
 import { attachScanReady, getScan, getScanFeaturesCache, rankMomentum } from "./scan";
 import {
   alignedZeroSessionMark,
@@ -1536,6 +1542,10 @@ export function buildApp(deps: AppDeps): express.Express {
         .filter((q) => q.last !== null && Number.isFinite(q.last) && q.last > 0)
         .map((q) => ({ symbol: q.symbol, last: q.last as number }));
       const sleeveBooks = await sleeveBooksWithSession();
+      const [dayBars, cpiLateFadeBars] = await Promise.all([
+        fetchDayMesFiveMinuteBars().catch(() => []),
+        fetchCpiLateFadeMesFiveMinuteBars().catch(() => []),
+      ]);
       await runAutopilot({
         enabled: anyAutoPaperOn(memory.autoPaperBySleeve),
         sleeveAuto: memory.autoPaperBySleeve,
@@ -1561,7 +1571,8 @@ export function buildApp(deps: AppDeps): express.Express {
         gateMode: computeClock(tickNow, deps.getEvents()).mode,
         knowledgeTime: memory.knowledgeTime,
         events: deps.getEvents(),
-        dayBars: await fetchDayMesFiveMinuteBars().catch(() => []),
+        dayBars,
+        cpiLateFadeBars,
         riskoffSleeveBook: sleeveBooks.riskoff,
         placeVertical: async (v: AutoVertical) => {
           if (v.sleeveId === "riskoff" && v.right !== "P") {

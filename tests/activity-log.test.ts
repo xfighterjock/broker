@@ -1,6 +1,6 @@
 import http from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
-import { seedEvents } from "../shared/clock";
+import { seedEvents, zonedTimeToUtc } from "../shared/clock";
 import {
   ACTIVITY_LOG_PAGE_DEFAULT,
   ACTIVITY_LOG_PAGE_MAX,
@@ -55,6 +55,9 @@ function makeTestApp() {
     brokerMode: "mock",
     liveRefused: false,
     stubNote: null,
+    // Not a print day. GET /api/status auto-stamps knowledge_time on NFP/CPI/FOMC
+    // and that log would land after the marker this test asserts is newest.
+    now: () => zonedTimeToUtc(2026, 10, 9, 12, 0, 0),
   });
   return { app, engine };
 }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { zonedTimeToUtc } from "../shared/clock";
+import { seedEvents, zonedTimeToUtc } from "../shared/clock";
 import { DEFAULT_SLEEVE_EQUITY_USD } from "../shared/constants";
 import {
   defaultAutoPaperBySleeve,
@@ -16,6 +16,7 @@ import {
   sizeByStopRisk,
   type AutoBuy,
 } from "../server/src/autopilot";
+import { resetCpiLateFadeSkipLog } from "../server/src/cpiLateFade";
 import { sleeveBook } from "../server/src/paper";
 import { setPaperNow } from "../server/src/vertical";
 import type { MinuteBar } from "../server/src/dayMomentum";
@@ -608,6 +609,140 @@ describe("runAutopilot toggle", () => {
     });
     expect(placed).toEqual([]);
     expect(result.bought).toEqual([]);
+  });
+
+  it("does not let the fade series change the stochastic MES decision", async () => {
+    const noon = zonedTimeToUtc(2026, 9, 2, 11, 20, 0);
+    const placed: AutoBuy[] = [];
+    const fatPrior: MinuteBar = {
+      ts: zonedTimeToUtc(2026, 9, 1, 15, 55, 0).getTime(),
+      open: 500,
+      high: 500,
+      low: 500,
+      close: 500,
+      volume: 1_000_000,
+    };
+    await runAutopilot({
+      enabled: true,
+      sleeveAuto: { ...defaultAutoPaperBySleeve(false), day: true },
+      getPositions: () => [],
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [],
+      featureRows: [],
+      scanReady: true,
+      riskOn: true,
+      gateMode: "idle",
+      now: noon,
+      knowledgeTime: zonedTimeToUtc(2026, 9, 2, 8, 35, 0).toISOString(),
+      events: [
+        {
+          id: "nfp-2026-09-02",
+          timeUtc: zonedTimeToUtc(2026, 9, 2, 8, 30, 0).toISOString(),
+          type: "NFP",
+          flattenEt: "15:45",
+        },
+      ],
+      dayBars: [fatPrior, ...mesBuyBars()],
+      cpiLateFadeBars: [fatPrior],
+      place: async (b) => {
+        placed.push(b);
+        return { ok: true };
+      },
+      close: async () => ({ ok: true }),
+      log: () => {},
+    });
+    expect(placed.some((b) => b.symbol === "MES=F" && b.thesis.startsWith("auto day MES stoch"))).toBe(true);
+    expect(placed.some((b) => b.cpiLateFade)).toBe(false);
+  });
+
+  it("logs a missing prior close once and enters when the fade series has it", async () => {
+    resetCpiLateFadeSkipLog();
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const entry = zonedTimeToUtc(2026, 10, 14, 15, 30, 0);
+    const todayOnly: MinuteBar[] = [
+      {
+        ts: zonedTimeToUtc(2026, 10, 14, 0, 5, 0).getTime(),
+        open: 100,
+        high: 101,
+        low: 99,
+        close: 100,
+        volume: 1000,
+      },
+      {
+        ts: zonedTimeToUtc(2026, 10, 14, 10, 25, 0).getTime(),
+        open: 110,
+        high: 111,
+        low: 109,
+        close: 110,
+        volume: 1000,
+      },
+      {
+        ts: zonedTimeToUtc(2026, 10, 14, 15, 25, 0).getTime(),
+        open: 111,
+        high: 112,
+        low: 110,
+        close: 111,
+        volume: 1000,
+      },
+    ];
+    const prior: MinuteBar = {
+      ts: zonedTimeToUtc(2026, 10, 13, 15, 55, 0).getTime(),
+      open: 100,
+      high: 101,
+      low: 99,
+      close: 100,
+      volume: 1000,
+    };
+    const base = {
+      enabled: true,
+      sleeveAuto: { ...defaultAutoPaperBySleeve(false), day: true },
+      getPositions: () => [],
+      getSleeves: () => defaultSleeves(),
+      momentumRows: [],
+      featureRows: [],
+      scanReady: true,
+      riskOn: true,
+      gateMode: "idle" as const,
+      now: entry,
+      knowledgeTime: zonedTimeToUtc(2026, 10, 14, 8, 35, 0).toISOString(),
+      events: seedEvents(),
+      dayBars: todayOnly,
+      close: async () => ({ ok: true as const }),
+      log: () => {},
+    };
+    const skipped: string[] = [];
+    await runAutopilot({
+      ...base,
+      place: async (b) => {
+        skipped.push(b.symbol);
+        return { ok: true };
+      },
+    });
+    await runAutopilot({
+      ...base,
+      place: async () => ({ ok: true }),
+    });
+    const lines = info.mock.calls.map((c) => String(c[0])).filter((l) => l.includes("cpiLateFade skip"));
+    expect(skipped).toEqual([]);
+    expect(lines).toEqual(["[EventGate] cpiLateFade skip: missing MES 5m prior close"]);
+
+    resetCpiLateFadeSkipLog();
+    info.mockClear();
+    const bought: AutoBuy[] = [];
+    await runAutopilot({
+      ...base,
+      cpiLateFadeBars: [prior],
+      place: async (b) => {
+        bought.push(b);
+        return { ok: true };
+      },
+    });
+    expect(bought.map((b) => b.cpiLateFade)).toEqual([true]);
+    expect(bought[0]?.side).toBe("Sell");
+    expect(bought[0]?.qty).toBe(1);
+    expect(info.mock.calls.map((c) => String(c[0])).filter((l) => l.includes("cpiLateFade skip"))).toEqual([]);
+    info.mockRestore();
+    resetCpiLateFadeSkipLog();
   });
 });
 
