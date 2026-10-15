@@ -198,7 +198,7 @@ export function isRiskoffEtfHygOnlyIneligible(symbol: string): boolean {
   return (RISKOFF_ETF_HYG_ONLY_INELIGIBLE as readonly string[]).includes(symbol.trim().toUpperCase());
 }
 
-/** BTAL. RS-ineligible only when SPY is known below its 200dma. Stays eligible in HYG-only. Not a family change. */
+/** BTAL and USMV. RS-ineligible only when SPY is known below its 200dma. Both stay eligible in HYG-only (USMV keeps the 21d confirm and never-dual equity-factor set). Not a family change. USMV is not added to the HYG-only ineligible list. */
 export function isRiskoffEtfSpyUnder200Ineligible(symbol: string): boolean {
   return (RISKOFF_ETF_SPY_UNDER_200_INELIGIBLE as readonly string[]).includes(
     symbol.trim().toUpperCase(),
@@ -756,8 +756,9 @@ export function riskoffSpyUnder200RiskOff(
 }
 
 /**
- * SPY-under-200 RS eligibility. BTAL is not an overlay qualifier in that
- * regime, even if 63d beats BIL and own-200 is true. Off otherwise,
+ * SPY-under-200 RS eligibility. BTAL and USMV are not overlay qualifiers in
+ * that regime, even if 63d beats BIL and own-200 is true. The HYG-only 21d
+ * confirm is off for USMV there; the drop still applies. Off otherwise,
  * including HYG-only RISK OFF and when spyAbove200 is null or omitted.
  * Does not change families, the HYG-only ineligible list, or the duration book.
  */
@@ -774,9 +775,10 @@ export function riskoffEtfSpyUnder200RsEligible(symbol: string, spyUnder200: boo
  * names must beat BIL on that same map (a missing map fails them closed),
  * and RISKOFF_ETF_HYG_ONLY_INELIGIBLE names are dropped. Default false leaves
  * gold, the equity confirm set, and that drop off.
- * When spyUnder200 is true, RISKOFF_ETF_SPY_UNDER_200_INELIGIBLE (BTAL) is
- * dropped even if 63d beats BIL and own-200 is true. Default false leaves
- * that drop off, including HYG-only and an unknown SPY 200.
+ * When spyUnder200 is true, RISKOFF_ETF_SPY_UNDER_200_INELIGIBLE (BTAL, USMV)
+ * is dropped even if 63d beats BIL and own-200 is true. The HYG-only 21d
+ * confirm is off for USMV in that regime; the drop still applies. Default
+ * false leaves that drop off, including HYG-only and an unknown SPY 200.
  */
 export function riskoffEtfQualifiers(
   returns: RiskoffEtfReturns,
@@ -1057,7 +1059,7 @@ function commitEntrySessions(
  * Caller drops names that no longer clear beat-BIL / own-200 / CTA 21d,
  * the HYG-only gold 21d check, the HYG-only equity 21d check, the
  * HYG-only TLT/IEF/XLU/PDBC/KMLM/GDX/DBMF/XLP/GLD drop, or the
- * SPY-under-200 BTAL drop. GDX and GLD stay in the gold family.
+ * SPY-under-200 BTAL and USMV drop. GDX and GLD stay in the gold family.
  * DBMF is in that drop and stays in the CTA family.
  * XLP is in that drop and is not 21d-confirmed.
  */
@@ -1390,11 +1392,15 @@ export function decideRiskoffEtf(input: {
    * DBMF is in that drop and stays in the CTA family.
    * XLP is in that drop and is not 21d-confirmed. When SPY is below 200
    * XLP stays eligible under ordinary beat-BIL and own-200.
-   * The same resolved false also drops BTAL
-   * (RISKOFF_ETF_SPY_UNDER_200_INELIGIBLE) even if 63d beats BIL and BTAL
-   * is above its own 200dma. A null or omitted value is not that drop.
-   * BTAL stays eligible in HYG-only. A held BTAL that fails the drop is
-   * not min-hold protected and rotates at this cash-close rebalance.
+   * The same resolved false also drops BTAL and USMV
+   * (RISKOFF_ETF_SPY_UNDER_200_INELIGIBLE) even if 63d beats BIL and the
+   * name is above its own 200dma. The HYG-only 21d confirm is off for USMV
+   * in that book; the drop still applies. A null or omitted value is not
+   * that drop. Both stay eligible in HYG-only: BTAL under beat-BIL and
+   * own-200; USMV under beat-BIL, own-200, the 21d confirm, and never-dual
+   * with CLSE/QUAL/FTLS. USMV is not added to the HYG-only ineligible list.
+   * A held BTAL or USMV that fails the drop is not min-hold protected and
+   * rotates at this cash-close rebalance.
    */
   spyAbove200?: boolean | null;
   /**

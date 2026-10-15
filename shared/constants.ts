@@ -231,10 +231,13 @@ export type RiskoffQuoteSymbol = (typeof RISKOFF_QUOTE_STRIP)[number];
  * FLOT and BTAL are not
  * RISKOFF_ETF_COMMODITY_BETA and have no new family. Do not add FLRN.
  * When RISK OFF and SPY is known below its 200dma (spyAbove200 === false),
- * BTAL is not an RS qualifier (RISKOFF_ETF_SPY_UNDER_200_INELIGIBLE) even
- * if 63d beats BIL and own-200 is true. A null or unknown spyAbove200 is
- * not below and does not apply that drop. In HYG-only RISK OFF BTAL stays
- * eligible under beat-BIL and own-200.
+ * BTAL and USMV are not RS qualifiers (RISKOFF_ETF_SPY_UNDER_200_INELIGIBLE)
+ * even if 63d beats BIL and own-200 is true. The HYG-only 21d confirm is
+ * off for USMV in that regime; the drop still applies. A null or unknown
+ * spyAbove200 is not below and does not apply that drop. In HYG-only RISK
+ * OFF BTAL stays eligible under beat-BIL and own-200. USMV stays eligible
+ * there under beat-BIL, own-200, the HYG-only 21d confirm, and never-dual
+ * with CLSE/QUAL/FTLS. USMV is not added to RISKOFF_ETF_HYG_ONLY_INELIGIBLE.
  * PDBC is broad commodity beta (RISKOFF_ETF_COMMODITY_BETA). Where it remains
  * eligible it is mutually exclusive with the CTA family for the #2 diversifier
  * only.
@@ -319,8 +322,13 @@ export type RiskoffEtfGoldSymbol = (typeof RISKOFF_ETF_GOLD_FAMILY)[number];
  * including when SPY is below 200.
  * In HYG-only RISK OFF (risk off, SPY known above 200, HYG known below 200)
  * each member must also beat BIL on RISKOFF_ETF_CTA_CONFIRM_DAYS. When SPY
- * is below 200 that 21d check is off. Missing or non-finite 21d on the
- * name or on BIL skips that name (fail closed). BTAL, XLP, FLOT, and PDBC
+ * is below 200 that 21d check is off. USMV is also in
+ * RISKOFF_ETF_SPY_UNDER_200_INELIGIBLE, so a confirmed SPY-below book still
+ * drops USMV even though this 21d check is off. CLSE, QUAL, and FTLS stay
+ * eligible there under beat-BIL and own-200. USMV is not added to
+ * RISKOFF_ETF_HYG_ONLY_INELIGIBLE and stays fully eligible in HYG-only
+ * under this 21d confirm, own-200, and never-dual. Missing or non-finite
+ * 21d on the name or on BIL skips that name (fail closed). BTAL, XLP, FLOT, and PDBC
  * are not members. PDBC and XLP are dropped from HYG-only RS instead
  * (RISKOFF_ETF_HYG_ONLY_INELIGIBLE); XLP is not added to this confirm set
  * and QUAL is not added to that ineligible set. KMLM is dropped from
@@ -375,22 +383,26 @@ export const RISKOFF_ETF_HYG_ONLY_INELIGIBLE = ["TLT", "IEF", "XLU", "PDBC", "KM
 export type RiskoffEtfHygOnlyIneligibleSymbol = (typeof RISKOFF_ETF_HYG_ONLY_INELIGIBLE)[number];
 /**
  * RS overlay names that are not qualifiers when RISK OFF and SPY is known
- * below its 200dma (spyAbove200 === false). Mirror of
+ * below its 200dma (spyAbove200 === false). Order is BTAL, then USMV
+ * (membership; rank still comes from 63d RS). Mirror of
  * RISKOFF_ETF_HYG_ONLY_INELIGIBLE, which applies only in HYG-only. BTAL
- * fails this gate even when 63d beats BIL and it is above its own 200dma.
- * The next remaining qualifier fills the slot; none left → BIL. A held
- * BTAL is not min-hold protected once it fails this gate, so the cash-close
- * rebalance rotates it the same way a HYG-only-ineligible name leaves.
- * Midday bars do not rotate it. A null or omitted spyAbove200 is not below
- * and does not apply this drop (same confirmed check as
- * riskoffEquityPutsAllowed). decideRiskoffEtf uses the resolved regime: a
- * raw null with no latch is the HYG-only pair, so this stays off, and a
- * latched confirmed below keeps it on. BTAL stays fully eligible in
- * HYG-only RISK OFF. Does not change RISKOFF_ETF_HYG_ONLY_INELIGIBLE,
- * families, weights, notional, puts, duration, or the cash sweep.
- * Paper / MockBroker only.
+ * and USMV fail this gate even when 63d beats BIL and they are above their
+ * own 200dma. The HYG-only 21d confirm is off for USMV in this regime; the
+ * drop still applies. The next remaining qualifier fills the slot; none
+ * left → BIL. A held BTAL or USMV is not min-hold protected once it fails
+ * this gate, so the cash-close rebalance rotates it the same way a
+ * HYG-only-ineligible name leaves. Midday bars do not rotate it. A null or
+ * omitted spyAbove200 is not below and does not apply this drop (same
+ * confirmed check as riskoffEquityPutsAllowed). decideRiskoffEtf uses the
+ * resolved regime: a raw null with no latch is the HYG-only pair, so this
+ * stays off, and a latched confirmed below keeps it on. Both stay fully
+ * eligible in HYG-only RISK OFF: BTAL under beat-BIL and own-200; USMV
+ * under beat-BIL, own-200, the HYG-only 21d confirm, and never-dual with
+ * CLSE/QUAL/FTLS. USMV is not added to RISKOFF_ETF_HYG_ONLY_INELIGIBLE.
+ * Does not change that list, families, weights, notional, puts, duration,
+ * or the cash sweep. Paper / MockBroker only.
  */
-export const RISKOFF_ETF_SPY_UNDER_200_INELIGIBLE = ["BTAL"] as const;
+export const RISKOFF_ETF_SPY_UNDER_200_INELIGIBLE = ["BTAL", "USMV"] as const;
 export type RiskoffEtfSpyUnder200IneligibleSymbol =
   (typeof RISKOFF_ETF_SPY_UNDER_200_INELIGIBLE)[number];
 /**
