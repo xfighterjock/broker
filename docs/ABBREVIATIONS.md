@@ -12,9 +12,9 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **200dma** — 200-day simple moving average. RISK ON requires SPY, ACWI, and HYG last above it. Momentum and ownership filters and below-200 exits use it too. It does not gate the csp sleeve.
 
-**%D** — 3-period SMA of slow %K. Day-sleeve MES stochastic signal line.
+**%D** — Stochastic signal line. Day sleeve: 3-period SMA of slow %K (14,3,3). csp sleeve: period 5 (`CSP_STOCH_D`) on the (30,5,5) slow stochastic. A csp entry needs %K to cross up through %D while %K is below 20.
 
-**%K** — Slow stochastic (14,3). Day-sleeve MES momentum after knowledge_time on that ET print day. Long when %K crosses up through %D after %K was at or below 20; short is the mirror above 80.
+**%K** — Slow stochastic. Day sleeve: (14,3) on MES after Stage-3. csp sleeve: period 30, smooth 5 (`CSP_STOCH_K`, `CSP_STOCH_SMOOTH`). csp enters on a cross up through %D while %K is below 20. That sleeve has no 200-day filter.
 
 **ACWI** — iShares MSCI ACWI ETF (global equities). One of three 200dma legs on the RISK ON badge.
 
@@ -30,19 +30,21 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **AUTH_MODE** — Auth front door. Production `users` (users table + cookie/bearer). Local default `cookie` (GATE_PASSWORD). `nginx` is remapped to `users` in production. GET /api/public/risk is exempt in-app too.
 
-**AUTO PAPER** — Autopilot. Independent enable per sleeve (`autoPaperBySleeve`: day, momentum, options, ownership, csp). Snapshot `autoPaper` is true if ANY sleeve is on (badge / old clients). POST /api/paper/auto `{ enabled }` sets all; `{ sleeveId, enabled }` sets one. Redis `paper:auto` is JSON; legacy `0`/`1` migrates on first boot (`0` all off including csp, `1` all on including csp). Default all on when the key is missing. A missing `csp` key defaults ON even when other sleeves are explicitly false. Explicit `csp: false` stays off. A stored `riskoff` key is stripped. The options-sleeve CSP/CC overlay stays manual. The csp sleeve sells cash-secured puts when its AUTO flag is on, in both risk regimes. GATE still binds day and new csp shorts. Day MES stoch also needs Stage-3: an NFP/CPI/FOMC ET day, knowledge_time on that day at or after the anchor, and now at or after the stamp. A non-print or pre-print stamp does not enter. Idle RTH without the stamp does not enter. On a CPI day, day AUTO also runs `cpiLateFade` when `CPI_LATE_FADE_ENABLED` is true.
+**AUTO PAPER** — Autopilot. Independent enable per sleeve (`autoPaperBySleeve`: day, momentum, options, ownership, csp). Snapshot `autoPaper` is true if ANY sleeve is on (badge / old clients). POST /api/paper/auto `{ enabled }` sets all; `{ sleeveId, enabled }` sets one. Redis `paper:auto` is JSON; legacy `0`/`1` migrates on first boot (`0` all off including csp, `1` all on including csp). Default all on when the key is missing. A missing `csp` key defaults ON even when other sleeves are explicitly false. Explicit `csp: false` stays off. A stored `riskoff` key is stripped. The options-sleeve CSP/CC overlay stays manual. The csp sleeve sells cash-secured puts when its AUTO flag is on, in both risk regimes. GATE still binds day and new csp shorts. Day MES stoch also needs Stage-3: an NFP/CPI/FOMC ET day, knowledge_time on that day at or after the anchor, and now at or after the stamp. A non-print or pre-print stamp does not enter. Idle RTH without the stamp does not enter. On a CPI day, day AUTO also runs `cpiLateFade` when `CPI_LATE_FADE_ENABLED` is true. Essentials and the desktop header chips are D, M, O, Ow, Cs (`AUTO_SLEEVE_CHIPS` in client/src/essentials.ts; iOS `SleeveChip` in EssentialsFormat.swift).
 
 **bearer** — Opaque session token from POST /api/auth/login. Stored as sha256 in Postgres `user_sessions` (`SESSION_TTL_MS` 30 days). iOS keeps the raw token in the Keychain and sends `Authorization: Bearer`. SPA uses cookie `eg.sid` instead.
 
-**BIL** — SPDR Bloomberg 1-3 Month T-Bill ETF. The risk-off sleeve that used BIL as an RS cash benchmark and an idle-cash sweep was deleted, including its paper history. The csp sleeve accrues T-bill yield from the live 13-week rate when known, otherwise 0.04. BIL is not auto-traded.
+**beta** — Trailing 252-session beta of daily returns versus SPY (`CSP_BETA_DAYS`, `betaToBenchmark` in server/src/cspMath.ts). The csp sleeve requires beta above 1.3 (`CSP_BETA_MIN`). Recomputed on each csp scan (`cspScanDue` in server/src/cspScan.ts): once per cash-session day in the 16:10–16:25 ET window, or when the stored scan is missing or older than 26 hours. Not a monthly job.
+
+**BIL** — SPDR Bloomberg 1-3 Month T-Bill ETF. The risk-off sleeve that used BIL as an RS cash benchmark and an idle-cash sweep was deleted, including its paper history. BIL is not auto-traded and the csp sleeve does not trade it. The csp Black-Scholes rate is the live 13-week yield when Yahoo ^IRX returns one, otherwise 0.04 (`CSP_BS_RATE_FALLBACK`). `tbillDayAccrual` is not applied to paper P/L.
 
 **BTAL** — AGF U.S. Market Neutral Anti-Beta Fund. Retired with the risk-off sleeve, which was deleted including its paper history. Not a current rule, and it does not gate csp.
 
 **BUNDLE_ID** — iOS application id. Event Gate iOS must stay `com.logikmancer.mybroker` to match the existing Firebase iOS app.
 
-**cash sweep** — Retired. The risk-off idle-cash BIL lot was deleted with that sleeve, including its paper history.
-
 **calendarStale** — GET `/api/status` flag. True when no future NFP, CPI, or FOMC row falls within 35 days (`CALENDAR_STALE_WITHIN_MS`). The process logs `calendar stale` once per stale stretch. Web and iOS show `Calendar stale: no NFP/CPI/FOMC in the next 35 days`. A September-only `events` table (the old seed) is stale after those prints. Not a GateMode and not an arm by itself.
+
+**cash sweep** — Retired. The risk-off idle-cash BIL lot was deleted with that sleeve, including its paper history.
 
 **CC** — Covered call. Manual overlay on the options sleeve, tagged to an ownership or SPCX thesis. Not sold by autopilot. Never naked.
 
@@ -58,19 +60,77 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **cpiLateFade** — Day-sleeve paper strategy id for the CPI-day late-session fade. CPI calendar rows only. Signal is the sign of the MES 5-minute move from the prior NYSE session's 16:00 ET close (15:55 bar close; weekends and full holidays skipped) to 10:30 ET (10:25 bar close). The fade series is Yahoo `range=5d` or Massive five-day newest-first aggs, merged with the day series. The Yahoo fallback is `range=5d` (not `range=1d`) so the prior 16:00 ET bar exists. The stochastic leg uses only the current ET day's bars. At 15:30 ET, 1 MES opposite that sign. Missing, stale, or a zero move does not trade. An entry-window skip is logged once per ET day at info. Protective stop 0.4% adverse from the mock fill. Flatten at or after 15:59 ET. Position tag `cpiLateFade`; blotter notes start with `cpiLateFade`. Skips when the stochastic MES lot is already open. The 15:45 session flatten does not take this lot. Stage-3, GATE idle, qty 1, and the day-sleeve loss cap still bind new entries. RISK ON/OFF does not. Paper / MockBroker only.
 
+**credit_put_opened** — FCM helper `notifyCreditPutOpened` still sends “Credit-leg put opened on {symbol}.” `CREDIT_LEG_SYMBOLS` is HYG, LQD, JNK. No trading path calls it (tests only). The credit-leg program was deleted with the risk-off sleeve.
+
+**credit_put_risk_on_flatten** — FCM helper `notifyCreditPutRiskOnFlatten` still sends “RISK ON flattened credit-leg puts.” No trading path calls it (tests only).
+
+**credit_put_stopped** — FCM helper `notifyCreditPutStopped` still sends “Credit-leg put 50% debit stop on {symbol}.” No trading path calls it (tests only).
+
+**Cs** — AUTO PAPER chip initial for the csp sleeve. The five chips are D, M, O, Ow, Cs on the desktop header, web essentials, and iOS. Source: `AUTO_SLEEVE_CHIPS` in client/src/essentials.ts and `SleeveChip` in ios/EventGate/EssentialsFormat.swift. A separate desktop hint string in client/src/App.tsx still reads “D / M / O / Ow / R”; that sentence is not the chip list.
+
 **CSP** — Cash-secured put. Two uses. (1) Sleeve id `csp`: paper cash-secured puts on oversold high-beta S&P 500 names. Not gated by RISK ON/OFF. Default AUTO ON. (2) Manual overlay on the options sleeve (`POST /api/paper/csp`), which reserves strike × 100 × qty and is not sold by the csp autopilot. Never naked. Never a live order.
 
 **csp** — Sleeve id for cash-secured puts (oversold high-beta). Trades in both risk regimes. See DESIGN.md.
 
-**beta** — Trailing 252-session beta of daily returns versus SPY. The csp sleeve requires beta above 1.3. Recomputed about monthly.
+**CSP_ADR_EXCLUSIONS** — Empty list in shared/cspUniverse.ts. Tickers removed from the csp universe even if a future constituent file lists them. ADRs belong here.
 
-**delta** — Option delta. csp targets absolute delta 0.20. Shadow probability rules use absolute delta. E*TRADE greek when the chain has it; otherwise Black-Scholes from chain IV (13-week rate when known, else 0.04).
+**CSP_BETA_DAYS** — 252. Trailing sessions for csp beta versus SPY (`betaToBenchmark` in server/src/cspMath.ts).
 
-**DTE** — Days to expiration. Options-sleeve auto verticals target 30-45 DTE and exit at 21 DTE (OPTIONS_DTE_EXIT). The csp sleeve targets 45 DTE and accepts 35–50. A shadow rule exits at 21 DTE on paper only (it does not trade).
+**CSP_BETA_MIN** — 1.3. csp requires beta strictly above this (`isHighBeta`).
 
-**IV** — Implied volatility from the option chain, stored as a decimal (0.21 is 21%). csp records it and uses it for the Black-Scholes delta fallback.
+**CSP_BS_RATE_FALLBACK** — 0.04. Black-Scholes rate when the Yahoo ^IRX quote is missing (`annualRateFromIrx`). Not a fill and not a paper P/L credit.
 
-**MACD** — Moving average convergence/divergence. csp uses MACD(12,26,9). The histogram must be higher than the prior day. No 200-day filter on this sleeve.
+**CSP_COLLATERAL_FRAC** — 0.10. Target collateral per csp put is about 10% of sleeve equity (`sizeCashSecuredPut`).
+
+**CSP_DELTA_TARGET** — 0.20. csp strike nearest this absolute delta (`pickCspStrike`).
+
+**CSP_DTE_MAX** — 50. Upper bound of the csp expiry window (`pickCspExpiry`).
+
+**CSP_DTE_MIN** — 35. Lower bound of the csp expiry window (`pickCspExpiry`).
+
+**CSP_MACD_FAST** — 12. MACD fast EMA on the csp sleeve (`macdHistogram`).
+
+**CSP_MACD_SIGNAL** — 9. MACD signal EMA on the csp sleeve.
+
+**CSP_MACD_SLOW** — 26. MACD slow EMA on the csp sleeve.
+
+**CSP_MAX_POSITIONS** — 10. Cap on concurrent csp short puts (`sizeCashSecuredPut`).
+
+**CSP_MAX_SPREAD_OF_MID** — 0.5. Skip a csp put when the bid/ask spread is wider than half the mid (`planCspEntry`).
+
+**CSP_MIN_BID** — 0.05. Skip a csp put when the bid is not above this.
+
+**CSP_MIN_OPEN_INTEREST** — 100. Minimum open interest on the chosen csp put (`openInterestOk`).
+
+**CSP_ONE_LOT_MAX_FRAC** — 0.15. Skip when one contract's collateral would exceed 15% of sleeve equity.
+
+**CSP_RECORDER_TOP_BETA** — 50. The chain recorder also snapshots the 50 highest betas (`recorderSymbols` in server/src/cspScan.ts).
+
+**CSP_SCAN_END_MINUTE** — 16:25 ET (990 minutes). End of the after-close csp scan window (`cspCloseScanWindow`).
+
+**CSP_SCAN_STALE_MS** — 26 hours. A missing or older stored scan is retried on the next autopilot tick (`cspScanDue`).
+
+**CSP_SCAN_START_MINUTE** — 16:10 ET (970 minutes). Start of the after-close csp scan window.
+
+**CSP_SHADOW_RULES** — Log-only exit ids in server/src/cspMath.ts: tp50, dte21, combined, tp75, swing_low, spy_200, 7, 8, 7+2x, 8+2x, 7+8+2x, 7d03, 8d40, 7d03+2x, 8d40+2x, 7d03+8d40+2x. `shadowOrders` rejects any order whose reason starts with shadow. They do not trade.
+
+**CSP_SHARE_CLASS_DROP** — GOOG, FOX, NWS. Secondary share classes dropped when the primary class is also in the csp universe (shared/cspUniverse.ts).
+
+**CSP_STOCH_D** — 5. csp slow-stochastic %D period (`slowStochastic`).
+
+**CSP_STOCH_K** — 30. csp slow-stochastic %K period.
+
+**CSP_STOCH_SMOOTH** — 5. csp slow-stochastic %K smooth.
+
+**CSP_STOP_MULT** — 2. Live csp exit when the put mid reaches 2× the entry premium (`twoXStopHit`). Shadow rules do not use this as an order.
+
+**CSP_SWING_LOOKBACK** — 20. Sessions of swing low stored for the shadow `swing_low` rule only (`swingLowBeforeEntry`).
+
+**CSP_TARGET_DTE** — 45. csp expiry nearest this DTE inside 35–50 (`pickCspExpiry`).
+
+**CSP_UNIVERSE** — Baked S&P 500 single-name list in shared/cspUniverse.ts. Not fetched at runtime and not the momentum scan CSV. The file is the name list; this glossary does not dump it.
+
+**CSP_UNIVERSE_REFRESHED** — 2026-10-17. Date stamp on `CSP_UNIVERSE` in shared/cspUniverse.ts.
 
 **CTA** — Retired with the risk-off sleeve, which was deleted including its paper history. Not a current rule, and it does not gate csp.
 
@@ -80,15 +140,17 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **DBMF** — iMGP DBi Managed Futures Strategy ETF. Retired with the risk-off sleeve, which was deleted including its paper history. Not a current rule, and it does not gate csp.
 
+**delta** — Option delta. csp targets absolute delta 0.20. Shadow probability rules use absolute delta. E*TRADE greek when the chain has it; otherwise Black-Scholes from chain IV (13-week rate when known, else 0.04).
+
 **distribution** — Retired. Risk-off ETF dividend credits were deleted with that sleeve, including Redis `paper:riskoff_distributions`.
-
-**dPnL** — Day P/L on one open mock lot in the paper blotter (`Position.dayPnl`). Stock and futures: same `signedPnl` as uPnL (side, qty, point value) vs prior close, or the quote's day change when prior close is missing. Debit vertical: (long netChange − short netChange) × 100 × qty. Short overlay: −netChange × 100 × qty. Signed dollars, green/red, same as sleeve-tab P/L. Distinct from uPnL and from account dayPnl. Flat or zero qty is not an open row. Fill journal has no dPnL column.
-
-**slow stochastic (30,5,5)** — csp entry oscillator. %K period 30, smooth 5, %D period 5. Entry when %K crosses up through %D while %K is below 20. Distinct from the day sleeve's 14,3,3 stochastic.
 
 **dma** — Daily moving average. See 20dma / 200dma.
 
 **dollar veto** — RISK ON fails when UUP's 20-session return is missing or greater than +3% (RISK_UUP_VETO_FRAC). Exposed as dollarVeto on GET /api/public/risk. It does not gate the csp sleeve.
+
+**dPnL** — Day P/L on one open mock lot in the paper blotter (`Position.dayPnl`). Stock and futures: same `signedPnl` as uPnL (side, qty, point value) vs prior close, or the quote's day change when prior close is missing. Debit vertical: (long netChange − short netChange) × 100 × qty. Short overlay: −netChange × 100 × qty. Signed dollars, green/red, same as sleeve-tab P/L. Distinct from uPnL and from account dayPnl. Flat or zero qty is not an open row. Fill journal has no dPnL column.
+
+**DTE** — Days to expiration. Options-sleeve auto verticals target 30-45 DTE and exit at 21 DTE (OPTIONS_DTE_EXIT). The csp sleeve targets 45 DTE and accepts 35–50. A shadow rule exits at 21 DTE on paper only (it does not trade).
 
 **duration** — Treasury-bond exposure (TLT, IEF). The risk-off gated-duration long and the RS overlay that held them were deleted, including paper history. TLT stays on the momentum and ownership quote strips. Duration does not gate the csp sleeve.
 
@@ -106,9 +168,9 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **FedWatch** — CME FedWatch snapshot field on the freeze card (NFP/CPI/FOMC briefing).
 
-**FCM** — Firebase Cloud Messaging. Event Gate push provider (HTTP v1 via Firebase Admin SDK on the VPS; Firebase iOS SDK in `ios/`). Disabled by default until `PUSH_FCM_ENABLED=1` and credentials are configured. The iOS client registers tokens with a users-table bearer; it does not hold the Admin service-account JSON. Live eventTypes: `risk_flip`, `service_fault`, `auth_needed`, `pre_arm`, `freeze_missing`, `day_fill`, `day_flatten`, `day_loss_cap`, `veto_confirm`, `overlay_rotation`, `credit_put_opened`, `credit_put_stopped`, `credit_put_risk_on_flatten`, `oi_skip_streak`, `etrade_renew_failed`, `sleeve_loss_warn`, plus test `paper_guard`.
+**FCM** — Firebase Cloud Messaging. Event Gate push provider (HTTP v1 via Firebase Admin SDK on the VPS; Firebase iOS SDK in `ios/`). Disabled by default until `PUSH_FCM_ENABLED=1` and credentials are configured. The iOS client registers tokens with a users-table bearer; it does not hold the Admin service-account JSON. Trading or status paths can send `risk_flip`, `service_fault`, `auth_needed`, `pre_arm`, `freeze_missing`, `day_fill`, `day_flatten`, `day_loss_cap`, `veto_confirm`, `etrade_renew_failed`, `sleeve_loss_warn`, plus test `paper_guard`. `overlay_rotation`, `credit_put_opened`, `credit_put_stopped`, `credit_put_risk_on_flatten`, and `oi_skip_streak` stay in `EVENT_GATE_ALERT_TYPES` but no trading path calls their helpers after the risk-off sleeve was deleted.
 
-**Flatten** — Close gated day-sleeve names (POST /api/flatten) or a sleeve position (POST /api/paper/close, needs a delayed last). Print-day veto with GATE OFF. Does not flatten other sleeves from the event clock. Not a sleeve reset — that is POST /api/paper/reset.
+**Flatten** — Close gated day-sleeve names (POST /api/flatten) or a sleeve position (POST /api/paper/close, needs a delayed last). Print-day veto with GATE OFF. Does not flatten momentum, options, ownership, or csp from the event clock. Not a sleeve reset — that is POST /api/paper/reset.
 
 **FOMC** — Federal Open Market Committee. Calendar rows FOMC_STATEMENT (14:00 ET) and FOMC_PC (14:30 ET) on the second meeting day; flatten 15:30 ET when type contains FOMC. Dates through December 2027 are from federalreserve.gov/monetarypolicy/fomccalendars.htm and the September 5, 2025 schedule release (statement 2:00 p.m. ET, press conference 2:30 p.m. ET). January 2028 is listed by the Fed but not seeded.
 
@@ -120,7 +182,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **FTLS** — First Trust Long/Short Equity ETF. Retired with the risk-off sleeve, which was deleted including its paper history. Not a current rule, and it does not gate csp.
 
-**GATE** — Event-clock risk gate on futures roots. Modes: idle, PRE-ARM, NO-STOP BAND, SESSION FLATTEN. Enable via POST /api/gate/enable. Not the login password (GATE_PASSWORD is cookie-mode / signing only).
+**GATE** — Event-clock risk gate on futures roots. Modes: idle, PRE-ARM, NO-STOP BAND, SESSION FLATTEN. Enable via POST /api/gate/enable. Not the login password (GATE_PASSWORD is cookie-mode / signing only). Session flatten does not close a csp put. `planCspEntry` skips a new csp short when GATE is off or the mode is not idle.
 
 **GATED_ROOTS** — MES, MNQ, ES, NQ, ZN, ZF, ZT, ZB, SR3, 6E, M6E. Longest-first match so MES wins over ES, M6E over 6E, MNQ over NQ.
 
@@ -142,7 +204,11 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **inverse-vol** — Retired. Inverse realized-vol weights belonged to the deleted risk-off RS overlay.
 
-**iOS Event Gate** — Native SwiftUI app in ios/ (bundle com.logikmancer.mybroker). Phone Event Gate client: essentials (clock, cash open/close countdown under the ET clock, US cash closed/holiday strip, GATE, RISK, AUTO PAPER chips, read-only knowledge_time and Stage-3 (`Stage-3 armed (auto)` / `Stage-3 not armed`; no stamp button), Flatten, sleeve P/L, E*TRADE re-auth banner), paged Activity log, plus FCM. When `etradeAuth` is not `ok`, the banner opens in-app Safari (SFSafariViewController) and the PIN is typed in the app. Settings links to the web app as a fallback. Users-table login + optional Face ID / Touch ID unlock of the Keychain session. Web `/m` remains for browsers. A new phone build is an Xcode install, not a web deploy. Push notification glyph is the AppIcon (same auto-agent artwork as the web favicon).
+**iOS Event Gate** — Native SwiftUI app in ios/ (bundle com.logikmancer.mybroker). Phone Event Gate client: essentials (clock, cash open/close countdown under the ET clock, US cash closed/holiday strip, GATE, RISK, AUTO PAPER chips D/M/O/Ow/Cs (`SleeveChip` in EssentialsFormat.swift), read-only knowledge_time and Stage-3 (`Stage-3 armed (auto)` / `Stage-3 not armed`; no stamp button), Flatten, sleeve P/L, E*TRADE re-auth banner), paged Activity log, plus FCM. When `etradeAuth` is not `ok`, the banner opens in-app Safari (SFSafariViewController) and the PIN is typed in the app. Settings links to the web app as a fallback. Users-table login + optional Face ID / Touch ID unlock of the Keychain session. Web `/m` remains for browsers. A new phone build is an Xcode install, not a web deploy. Push notification glyph is the AppIcon (same auto-agent artwork as the web favicon).
+
+**IRX** — Yahoo chart symbol `^IRX`, the 13-week T-bill yield. `tbillRate` in server/src/cspLive.ts reads it. `annualRateFromIrx` treats a last above 1 as percent. Used as the Black-Scholes rate, not as a paper P/L credit.
+
+**IV** — Implied volatility from the option chain, stored as a decimal (0.21 is 21%). csp records it and uses it for the Black-Scholes delta fallback.
 
 **IWM** — iShares Russell 2000 ETF. Options quote strip. Not a csp underlying. The risk-off equity-index put was deleted with that sleeve.
 
@@ -162,11 +228,13 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **M6E** — CME Micro Euro FX futures. Gated root; freeze-card liquid contract; day quote strip. Massive Futures product_code M6E (front-month); Yahoo fallback M6E=F.
 
+**MACD** — Moving average convergence/divergence. csp uses MACD(12,26,9). The histogram must be higher than the prior day. No 200-day filter on this sleeve.
+
 **Market** — Market order type. Cancelled on gated roots in PRE-ARM and NO-STOP BAND.
 
 **marketSession** — Top-level GET `/api/status` field: NYSE cash calendar in ET (`cashOpen`, `inCashSession`, `closedReason`, `holidayName`, `asOfEt`, `nextOpenEt`, `nextCloseEt`, `nextOpenAt`, `nextCloseAt`). Not a GateMode. Web header, `/m`, and the iOS essentials header count down to `nextCloseAt` while `inCashSession` (`Cash close in 2h 14m 03s`) and to `nextOpenAt` otherwise (`Cash open in …`). Tick is client-side (Swift `TimelineView` on iOS, about once a second, no extra status poll). Early close is 13:00 ET.
 
-**Massive** — Market-data vendor (api.massive.com). Same MASSIVE_API_KEY: Stocks Starter for equities last, S&P scan dailies, and risk-gate bars (15-minute delayed); Futures for day MES 5m aggs and futures quote-strip lasts (front-month dated contracts such as MESZ6 via `/futures/v1/contracts?date=` the ET session + `/futures/v1/aggs` + `/futures/v1/snapshot`). No documented continuous F: ticker — do not invent one. Yahoo =F `range=5d` is the futures 5m fallback so the prior 16:00 ET bar is present.
+**Massive** — Market-data vendor (api.massive.com). Same MASSIVE_API_KEY: Stocks Starter for equities last, S&P scan dailies, RISK ON bars (SPY, ACWI, HYG, UUP), and csp daily OHLC (`fetchMassiveOhlcDailyBars`, used when at least 80 bars come back). Futures for day MES 5m aggs and futures quote-strip lasts (front-month dated contracts such as MESZ6 via `/futures/v1/contracts?date=` the ET session + `/futures/v1/aggs` + `/futures/v1/snapshot`). No documented continuous F: ticker — do not invent one. Yahoo =F `range=5d` is the futures 5m fallback so the prior 16:00 ET bar is present. LQD/JNK 200dma bars and the risk-off ETF RS overlay are not fetched.
 
 **MES** — CME Micro E-mini S&P 500 futures. Gated root; freeze-card liquid contract; day quote strip and paper symbol MES=F. Day-sleeve 5m stoch/VWAP bars prefer Massive Futures front-month (product_code MES); Yahoo MES=F fallback.
 
@@ -196,7 +264,11 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **OI** — Open interest. A csp short requires at least 100 on the chosen put. Manual options-sleeve verticals have no OI floor.
 
+**oi_skip_streak** — FCM helper `noteCreditLegOiSkip` still counts HYG/LQD/JNK skips and would send once at 6 inside about 30 minutes. No trading path calls it. `resetOiSkipStreak` still runs when RISK ON is true (`runAutopilot`, `applyResolvedRisk`).
+
 **OTM** — Out of the money. Put debit shorts a lower strike; call debit shorts a higher strike.
+
+**overlay_rotation** — FCM eventType still in `EVENT_GATE_ALERT_TYPES`. `notifyOverlayRotation` body is `Risk-off overlay {from} → {to}`. No caller outside tests after the risk-off sleeve was deleted. It does not fire on csp.
 
 **paper_guard** — FCM eventType used only by `POST /api/notifications/test` (`dedupeKey` `event-gate-test`). Not a live trading alert.
 
@@ -206,7 +278,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **PIN** — E*TRADE verifier after Authorize. Typed in Event Gate (desktop banner under the header, web `/m`, or the iOS essentials banner). Needed after midnight ET, and when renew returns HTTP 401 (`etradeAuth` `needs_pin`). Never stored in git or chat.
 
-**Postgres** — Database for calendar events, freeze snapshots, `users` + `user_sessions`, iOS FCM device tokens, push-alert dedupe, and the activity journal (`gate_log`, plus `session_logs`). Activity rows older than 90 days are deleted. Production calendar is the `events` table: if it has any rows, those replace `seedEvents()`. Migration `001_init.sql` inserted only September 2026, which is why the live book went idle after those prints. Migration `005_calendar_through_2027.sql` adds the later NFP, CPI, and FOMC rows.
+**Postgres** — Database for calendar events, freeze snapshots, `users` + `user_sessions`, iOS FCM device tokens, push-alert dedupe, and the activity journal (`gate_log`, plus `session_logs`). Activity rows older than 90 days are deleted. Production calendar is the `events` table: if it has any rows, those replace `seedEvents()`. Migration `001_init.sql` inserted only September 2026, which is why the live book went idle after those prints. Migration `005_calendar_through_2027.sql` adds the later NFP, CPI, and FOMC rows. Migration `006_csp_and_drop_riskoff.sql` adds `csp_option_snapshots` and `csp_shadow_exits` and deletes rows tagged `riskoff`.
 
 **PRE-ARM** — Gate mode T-15m to T-2m. Cancels Market / StopMarket / StopLimit / MIT on gated roots.
 
@@ -218,45 +290,13 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **realized vol** — Sample standard deviation of returns. The risk-off overlay's 20-session inverse-vol weight was deleted with that sleeve. Not the 20-session UUP dollar veto.
 
-**Redis** — Cache/store for gate flags, mock book, sleeves, blotter, session marks, scan, AUTO PAPER (per-sleeve JSON on `paper:auto`), last-known RISK ON/OFF (`risk:on`), and SPA cookie sessions (cookie name `eg.sid`, Redis prefix `eg:sess:`).
+**Redis** — Cache/store for gate flags, mock book, sleeves, blotter, session marks, scan, AUTO PAPER (per-sleeve JSON on `paper:auto`), last-known RISK ON/OFF (`risk:on`), and SPA cookie sessions (cookie name `eg.sid`, Redis prefix `eg:sess:`). csp scan state is `paper:csp_state` (`REDIS_KEYS.cspState`). Boot purge deletes `paper:riskoff_distributions`.
 
 **RISK OFF** — Badge when RISK ON is false. Pauses new momentum longs and options call-debits. Ownership pauses new adds. The csp sleeve keeps trading. The day sleeve is not bound. The former risk-off sleeve was deleted, including its history. A null above200 check is not a below-200 read.
 
 **RISK ON** — Badge iff SPY, ACWI, and HYG are above 200dma and UUP 20d is not greater than +3%. A missing or too-short series is null on that check and fails the badge closed to RISK OFF. Null is not reported as below 200dma. The badge does not gate the csp sleeve; csp trades in both regimes.
 
 **RISK_ABOVE200_STALE_MAX_MISSES** — 3. Consecutive risk refreshes that may repeat the last computed SPY/ACWI/HYG above200 boolean before that check is published as null. At the 15-minute risk cache, misses 1–2 are about 45 minutes (a few refreshes, inside one cash session); the third null is "200dma missing", not "below". Process-local, not persisted. Does not carry the dollar veto. Does not gate the csp sleeve.
-
-**RISKOFF_DURATION_NOTIONAL_FRAC** — Retired constant. Removed with the risk-off sleeve. Not in the code, and it does not gate csp.
-
-**RISKOFF_ETF_COMMODITY_BETA** — Retired constant. Removed with the risk-off sleeve. Not in the code, and it does not gate csp.
-
-**RISKOFF_ETF_CTA_CONFIRM_DAYS** — Retired constant. Removed with the risk-off sleeve. Not in the code, and it does not gate csp.
-
-**RISKOFF_ETF_CTA_FAMILY** — Retired constant. Removed with the risk-off sleeve. Not in the code, and it does not gate csp.
-
-**RISKOFF_ETF_GOLD_FAMILY** — Retired constant. Removed with the risk-off sleeve. Not in the code, and it does not gate csp.
-
-**RISKOFF_ETF_HYG_ONLY_21D_CONFIRM** — Retired constant. Removed with the risk-off sleeve. Not in the code, and it does not gate csp.
-
-**RISKOFF_ETF_HYG_ONLY_INELIGIBLE** — Retired constant. Removed with the risk-off sleeve. Not in the code, and it does not gate csp.
-
-**RISKOFF_ETF_MIN_HOLD_SESSIONS** — Retired constant. Removed with the risk-off sleeve. Not in the code, and it does not gate csp.
-
-**RISKOFF_ETF_MISSING_BARS_MAX_MISSES** — Retired constant. Removed with the risk-off sleeve. Not in the code, and it does not gate csp.
-
-**RISKOFF_ETF_NOTIONAL_FRAC** — Retired constant. Removed with the risk-off sleeve. Not in the code, and it does not gate csp.
-
-**RISKOFF_ETF_NOTIONAL_FRAC_PUT_GATED** — Retired constant. Removed with the risk-off sleeve. Not in the code, and it does not gate csp.
-
-**RISKOFF_ETF_REQUIRE_ABOVE_200** — Retired constant. Removed with the risk-off sleeve. Not in the code, and it does not gate csp.
-
-**RISKOFF_ETF_REBALANCE_MINUTE** — Retired constant. Removed with the risk-off sleeve. Not in the code, and it does not gate csp.
-
-**RISKOFF_ETF_RESIZE_NOTIONAL_FRAC** — Retired constant. Removed with the risk-off sleeve. Not in the code, and it does not gate csp.
-
-**RISKOFF_ETF_RS_HYSTERESIS** — Retired constant. Removed with the risk-off sleeve. Not in the code, and it does not gate csp.
-
-**RISKOFF_ETF_SPY_UNDER_200_INELIGIBLE** — Retired constant. Removed with the risk-off sleeve. Not in the code, and it does not gate csp.
 
 **risk_flip** — FCM eventType when the global RISK ON/OFF badge changes. Last-known state is in memory and Redis `risk:on` so a restart does not false-flip.
 
@@ -276,9 +316,13 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **SH** — ProShares Short S&P 500. Retired with the risk-off sleeve, which was deleted including its paper history. Not a current rule, and it does not gate csp.
 
+**shadow exit** — Log-only csp hypothetical. `applyShadowCheck` records the first trigger, the put mid and bid/ask, a buy fill of min(ask, mid + 0.25×spread), and P/L versus the actual close. It never places or closes an order (`shadowOrders` in server/src/cspCycle.ts).
+
 **SJB** — ProShares Short High Yield. Retired with the risk-off sleeve, which was deleted including its paper history. Not a current rule, and it does not gate csp.
 
 **sleeve reset** — POST `/api/paper/reset` `{ sleeveId }`. MockBroker only. One sleeve back to a clean $100k book: no open position, no working stop, empty blotter, journal realized 0, session mark aligned so daily and total P/L are 0. Rebuilds mock:day_pnl from remaining sleeves' session daily so stale account dayPnl cannot keep tripping GATE daily-loss after leftover books are flat; does not wipe another sleeve's today. Does not need a delayed last (unlike POST /api/paper/close). Does not flatten other sleeves, does not toggle AUTO PAPER, does not change GATE. Refuses when the process is not MockBroker. Never a live or E*TRADE order. EVENT_GATE_OPS_TOKEN may call it. POST `/api/day-pnl` is the manual accumulator path (not on the ops-token allowlist). Do not stop event-gate or edit Redis (`mock:positions`, `mock:orders`, `mock:day_pnl`, `sleeves:cards`, `sleeves:blotter`, `sleeves:session_marks`) to wipe a stuck premarket lot.
+
+**slow stochastic (30,5,5)** — csp entry oscillator. %K period 30, smooth 5, %D period 5. Entry when %K crosses up through %D while %K is below 20. Distinct from the day sleeve's 14,3,3 stochastic.
 
 **SMA** — Simple moving average. 20- and 200-day windows in scan/risk features.
 
@@ -303,6 +347,8 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 **StopMarket** — Stop-market order type. Same cancel rules as Market on gated roots in those windows.
 
 **TA** — Technical analysis. Momentum/ownership entries come from the S&P scan filters and scores, not from the event clock.
+
+**tbillDayAccrual** — Function in server/src/cspMath.ts. One calendar day of yield, `(cash × annualRate) / 365`, or 0 when cash or the rate is unusable. No caller applies it to paper P/L.
 
 **TLT** — iShares 20+ Year Treasury Bond ETF. On the momentum and ownership quote strips. The risk-off RS overlay and gated-duration long were deleted with that sleeve.
 
@@ -332,7 +378,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **XLU** — Utilities Select Sector SPDR Fund. Retired with the risk-off sleeve, which was deleted including its paper history. Not a current rule, and it does not gate csp.
 
-**Yahoo** — Yahoo Finance chart API. Fallback for futures =F lasts and day MES 5m bars when Massive Futures is unconfigured or errors. Equities stay Massive Stocks Starter.
+**Yahoo** — Yahoo Finance chart API. Fallback for futures =F lasts and day MES 5m bars when Massive Futures is unconfigured or errors. csp daily OHLC fallback (`interval=1d&range=2y`) when Massive returns fewer than 80 bars, plus the csp earnings calendar (`quoteSummary` `calendarEvents`) and the 13-week yield (`^IRX`). Equity lasts stay Massive Stocks Starter.
 
 **ZB** — CME 30-Year U.S. Treasury Bond futures. Gated root.
 
@@ -341,4 +387,3 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 **ZN** — CME 10-Year U.S. Treasury Note futures. Gated root; freeze-card liquid contract; day quote strip. Massive Futures product_code ZN (front-month); Yahoo fallback ZN=F.
 
 **ZT** — CME 2-Year U.S. Treasury Note futures. Gated root.
-
