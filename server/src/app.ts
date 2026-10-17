@@ -308,6 +308,8 @@ export function buildApp(deps: AppDeps): express.Express {
     cspShadows: [] as ShadowRow[],
     cspSkips: [] as Array<{ symbol: string; reason: string }>,
     cspSignals: [] as string[],
+    cspQueued: [] as Array<{ symbol: string; tradeYmd: string; beta: number; betaAsOfYmd: string | null }>,
+    cspBetaAsOfYmd: null as string | null,
     cspRecorder: { lastAt: null as string | null, rows: 0, blocking: false, auth: "unknown" },
   };
 
@@ -1372,6 +1374,8 @@ export function buildApp(deps: AppDeps): express.Express {
     if (prep.shadows && memory.cspShadows.length === 0) memory.cspShadows = prep.shadows;
     memory.cspRecorder = prep.recorder;
     memory.cspSignals = prep.signals;
+    memory.cspQueued = prep.queued;
+    memory.cspBetaAsOfYmd = prep.betaAsOfYmd;
     for (const [id, mark] of Object.entries(prep.marks)) {
       const pos = deps.broker.getPositionsSync().find((p) => p.id === id);
       if (!pos?.csp || mark.mid === null) continue;
@@ -1703,6 +1707,8 @@ export function buildApp(deps: AppDeps): express.Express {
         positions: deps.broker.getPositionsSync(),
         skips: memory.cspSkips,
         signals: memory.cspSignals,
+        queued: memory.cspQueued,
+        betaAsOfYmd: memory.cspBetaAsOfYmd,
         recorder: { ...memory.cspRecorder, auth: etradeAuth },
         shadows: memory.cspShadows,
         now,

@@ -100,8 +100,9 @@ describe("csp live scan", () => {
       now: new Date("2026-10-16T20:12:00Z"),
     });
     expect(selected.ranked[0].symbol).toBe("HOT");
+    expect(selected.ranked[0].asOfYmd).toBe("2026-09-30");
     expect(selected.pending.every((p) => p.symbol !== "COLD")).toBe(true);
-    expect(selected.pending.every((p) => p.beta > 1.3)).toBe(true);
+    expect(selected.pending.every((p) => p.beta > 1.3 && p.betaAsOfYmd === "2026-09-30")).toBe(true);
   });
 
   it("parses Massive and Yahoo daily OHLC and an earnings calendar", () => {

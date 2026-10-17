@@ -55,4 +55,28 @@ describe("CspBook", () => {
     expect(node.textContent).not.toContain("T-bill");
     expect(node.textContent).toContain("realized");
   });
+
+  it("shows each queued candidate's month-end beta and as-of date", () => {
+    const status = {
+      etradeAuth: "ok",
+      csp: {
+        equityUsd: 100_000,
+        cashUsd: 80_000,
+        reservedUsd: 20_000,
+        utilizationPct: 20,
+        realizedPnlUsd: 0,
+        openPuts: [],
+        assigned: [],
+        skips: [],
+        signals: ["NVDA signal 2026-10-16 for 2026-10-19 beta 1.42 as of 2026-09-30"],
+        queued: [{ symbol: "NVDA", tradeYmd: "2026-10-19", beta: 1.42, betaAsOfYmd: "2026-09-30" }],
+        betaAsOfYmd: "2026-09-30",
+        recorder: { lastAt: null, rows: 0, blocking: false, auth: "ok" },
+        shadow: [],
+      },
+    } as StatusSnapshot;
+    const node = render(<CspBook status={status} />);
+    expect(node.textContent).toContain("Beta as of 2026-09-30");
+    expect(node.textContent).toContain("NVDA beta 1.42 as of 2026-09-30");
+  });
 });

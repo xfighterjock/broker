@@ -14,6 +14,10 @@ export interface CspPersistedState {
   pending: CspPendingSignal[];
   ranked: CspBetaRank[];
   recorderSlots: string[];
+  /** Calendar month (`YYYY-MM`) the cached month-end betas apply to. */
+  betaMonth: string | null;
+  /** Last trading day of the prior month. Null until a month-end scan is stored. */
+  betaAsOfYmd: string | null;
 }
 
 export function emptyCspState(): CspPersistedState {
@@ -23,6 +27,8 @@ export function emptyCspState(): CspPersistedState {
     pending: [],
     ranked: [],
     recorderSlots: [],
+    betaMonth: null,
+    betaAsOfYmd: null,
   };
 }
 
@@ -38,6 +44,8 @@ export function parseCspState(raw: string | null): CspPersistedState {
       recorderSlots: Array.isArray(parsed.recorderSlots)
         ? parsed.recorderSlots.filter((s): s is string => typeof s === "string")
         : [],
+      betaMonth: typeof parsed.betaMonth === "string" ? parsed.betaMonth : null,
+      betaAsOfYmd: typeof parsed.betaAsOfYmd === "string" ? parsed.betaAsOfYmd : null,
     };
   } catch {
     return emptyCspState();
