@@ -14,10 +14,6 @@ export interface CspPersistedState {
   pending: CspPendingSignal[];
   ranked: CspBetaRank[];
   recorderSlots: string[];
-  /** America/New_York date of the last T-bill credit. Null until the first credit. */
-  tbillAccruedYmd: string | null;
-  /** Cumulative T-bill interest credited to the csp book. */
-  tbillAccruedUsd: number;
 }
 
 export function emptyCspState(): CspPersistedState {
@@ -27,8 +23,6 @@ export function emptyCspState(): CspPersistedState {
     pending: [],
     ranked: [],
     recorderSlots: [],
-    tbillAccruedYmd: null,
-    tbillAccruedUsd: 0,
   };
 }
 
@@ -44,11 +38,6 @@ export function parseCspState(raw: string | null): CspPersistedState {
       recorderSlots: Array.isArray(parsed.recorderSlots)
         ? parsed.recorderSlots.filter((s): s is string => typeof s === "string")
         : [],
-      tbillAccruedYmd: typeof parsed.tbillAccruedYmd === "string" ? parsed.tbillAccruedYmd : null,
-      tbillAccruedUsd:
-        typeof parsed.tbillAccruedUsd === "number" && Number.isFinite(parsed.tbillAccruedUsd)
-          ? parsed.tbillAccruedUsd
-          : 0,
     };
   } catch {
     return emptyCspState();

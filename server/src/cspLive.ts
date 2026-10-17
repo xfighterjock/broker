@@ -10,7 +10,7 @@ import { fetchMassiveOhlcDailyBars } from "./massive";
 import { fetchDelayedQuotes, mapPool, YAHOO_CHART_BASE, YAHOO_UA } from "./quotes";
 import type { CspCandidate, CspMark } from "./cspCycle";
 import type { ShadowRow } from "./cspMath";
-import { calendarDte, CSP_BS_RATE_FALLBACK, pickCspExpiry, resolvePutDelta, tbillAccrualCredit } from "./cspMath";
+import { calendarDte, pickCspExpiry, resolvePutDelta } from "./cspMath";
 import {
   annualRateFromIrx,
   candidateFromChain,
@@ -75,89 +75,6 @@ export function resetCspLiveForTests(): void {
 
 export function cspPendingFor(symbol: string): CspPendingSignal | undefined {
   return state.pending.find((p) => p.symbol === symbol);
-}
-
-/** ^IRX when the network scan is on. Tests and a missing quote use the 0.04 fallback. */
-export async function cspTbillRate(): Promise<number> {
-  if (!networkScanEnabled()) return CSP_BS_RATE_FALLBACK;
-  return tbillRate();
-}
-
-export function cspTbillAccruedUsd(): number {
-  return state.tbillAccruedUsd;
-}
-
-export async function cspTbillAccruedForStatus(redis: RedisLike | null): Promise<number> {
-  if (!stateLoaded) {
-    state = await loadCspState(redis);
-    stateLoaded = true;
-  }
-  return state.tbillAccruedUsd;
-}
-
-/**
- * Credit one T-bill day per America/New_York calendar date, including weekends
- * and holidays. The last date is stored on the csp Redis state so a restart
- * does not credit the same day again. A gap credits each missed day once.
- */
-export async function accrueCspTbill(input: {
-  now: Date;
-  equityUsd: number;
-  reservedUsd: number;
-  assignedMvUsd: number;
-  rate: number | null;
-  redis: RedisLike | null;
-  log: LogFn;
-}): Promise<{ credited: number; accruedUsd: number; days: number; ymd: string; rate: number }> {
-  if (!stateLoaded) {
-    state = await loadCspState(input.redis);
-    stateLoaded = true;
-  }
-  const today = etYmd(input.now);
-  const planned = tbillAccrualCredit({
-    equityUsd: input.equityUsd,
-    reservedUsd: input.reservedUsd,
-    assignedMvUsd: input.assignedMvUsd,
-    annualRate: input.rate,
-    lastYmd: state.tbillAccruedYmd,
-    todayYmd: today,
-  });
-  if (planned.days <= 0) {
-    return {
-      credited: 0,
-      accruedUsd: state.tbillAccruedUsd,
-      days: 0,
-      ymd: state.tbillAccruedYmd ?? today,
-      rate: planned.rate,
-    };
-  }
-  state = {
-    ...state,
-    tbillAccruedYmd: today,
-    tbillAccruedUsd: Math.round((state.tbillAccruedUsd + planned.credit) * 100) / 100,
-  };
-  await saveCspState(input.redis, state);
-  input.log(
-    `[EventGate] csp tbill accrual days=${planned.days} rate=${planned.rate} base=${planned.base.toFixed(2)} credit=${planned.credit.toFixed(2)} (paper, not a broker credit)`,
-  );
-  return {
-    credited: planned.credit,
-    accruedUsd: state.tbillAccruedUsd,
-    days: planned.days,
-    ymd: today,
-    rate: planned.rate,
-  };
-}
-
-/** Drop the interest total when the csp sleeve book is reset. Other sleeves are untouched. */
-export async function resetCspTbillAccrual(redis: RedisLike | null): Promise<void> {
-  if (!stateLoaded) {
-    state = await loadCspState(redis);
-    stateLoaded = true;
-  }
-  if (state.tbillAccruedYmd === null && state.tbillAccruedUsd === 0) return;
-  state = { ...state, tbillAccruedYmd: null, tbillAccruedUsd: 0 };
-  await saveCspState(redis, state);
 }
 
 export async function noteCspFill(symbol: string, redis: RedisLike | null): Promise<void> {

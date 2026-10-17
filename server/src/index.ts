@@ -13,6 +13,7 @@ import { createPool, loadEvents, purgeExpiredLogs, recentGateLog, runMigrations 
 import { GateEngine } from "./gate";
 import { MockBroker } from "./mockBroker";
 import { purgeRiskoffSleeve } from "./riskoffCleanup";
+import { reverseCspTbillAccrual } from "./cspTbillReversal";
 import { connectRedis } from "./redis";
 import { createTradovateFromEnv } from "./tradovateBroker";
 import { attachScanRedis, kickScan } from "./scan";
@@ -98,6 +99,10 @@ async function main(): Promise<void> {
       broker: mock,
       redis: redis.client,
       pool,
+      log: (line) => console.log(line),
+    });
+    await reverseCspTbillAccrual({
+      redis: redis.client,
       log: (line) => console.log(line),
     });
   }
