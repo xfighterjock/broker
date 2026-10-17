@@ -264,6 +264,7 @@ export class MockBroker implements BrokerClient {
         if (patch.dayPnl !== undefined) writeDayPnl(p, patch.dayPnl);
         if (patch.vertical) p.vertical = patch.vertical;
         if (patch.overlay) p.overlay = patch.overlay;
+        if (patch.csp) p.csp = patch.csp;
         if (patch.avgPrice !== undefined) p.avgPrice = patch.avgPrice;
         if (patch.qty !== undefined) p.qty = patch.qty;
         if (patch.side !== undefined) p.side = patch.side;

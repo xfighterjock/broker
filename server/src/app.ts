@@ -12,7 +12,7 @@ import {
   TZ,
 } from "../../shared/constants";
 import { calendarIsStale, computeClock, stage3Arm } from "../../shared/clock";
-import { computeMarketSession } from "../../shared/marketSession";
+import { cashSessionIsOpen, computeMarketSession } from "../../shared/marketSession";
 import {
   anyAutoPaperOn,
   applyAutoPaperPatch,
@@ -139,8 +139,11 @@ import {
   notifyDayFlatten,
   notifyVetoConfirm,
 } from "./eventGateAlerts";
-import { buildCspStatus, cspRecorderSlot, runCspDecisions, type CspCycleOrder } from "./cspCycle";
-import type { ShadowRow } from "./cspMath";
+import { buildCspStatus, runCspDecisions, stampActualPnl, type CspCycleOrder } from "./cspCycle";
+import { shortPutPnlPerContract, type ShadowRow } from "./cspMath";
+import { cspPendingFor, noteCspFill, prepareCspTick } from "./cspLive";
+import { etYmd } from "./cspScan";
+import { upsertCspShadows } from "./cspStore";
 import {
   applyOverlayMarks,
   detectOverlaySettlements,
@@ -1358,11 +1361,37 @@ export function buildApp(deps: AppDeps): express.Express {
   async function runWiredCsp(now: Date, riskOn: boolean): Promise<void> {
     await ensureSleeves();
     const positions = deps.broker.getPositionsSync();
+    const prep = await prepareCspTick({
+      now,
+      positions,
+      redis: deps.redis,
+      pool: deps.pool,
+      log: (line) => deps.engine.log(line),
+      recorder: memory.cspRecorder,
+    });
+    if (prep.shadows && memory.cspShadows.length === 0) memory.cspShadows = prep.shadows;
+    memory.cspRecorder = prep.recorder;
+    memory.cspSignals = prep.signals;
+    for (const [id, mark] of Object.entries(prep.marks)) {
+      const pos = deps.broker.getPositionsSync().find((p) => p.id === id);
+      if (!pos?.csp || mark.mid === null) continue;
+      const pnl = (pos.csp.entryPremium - mark.mid) * 100 * pos.csp.contracts;
+      deps.broker.patchPosition(pos.symbol, {
+        unrealizedPnl: pnl,
+        csp: {
+          ...pos.csp,
+          mid: mark.mid,
+          bid: mark.bid ?? pos.csp.bid,
+          ask: mark.ask ?? pos.csp.ask,
+          delta: mark.delta ?? pos.csp.delta,
+        },
+      });
+    }
     const sleeve = memory.sleeves.csp;
-    const book = sleeveBook(sleeve, positions);
+    const livePositions = deps.broker.getPositionsSync();
+    const book = sleeveBook(sleeve, livePositions);
     const lossCapHit = sleeve.paper.realizedPnlUsd <= -sleeve.lossCapUsd || book.totalPnlUsd <= -sleeve.lossCapUsd;
     const clock = computeClock(now, deps.getEvents());
-    const auth = etradeAuthState();
     const decision = runCspDecisions({
       now,
       riskOn,
@@ -1371,39 +1400,32 @@ export function buildApp(deps: AppDeps): express.Express {
       gateMode: clock.mode,
       lossCapHit,
       equityUsd: book.equityUsd,
-      positions,
-      candidates: [],
-      chainAvailable: auth === "ok",
-      atClose: false,
-      marks: {},
+      positions: livePositions,
+      candidates: prep.candidates,
+      chainAvailable: prep.chainAvailable,
+      atClose: prep.atClose,
+      marks: prep.marks,
       shadows: memory.cspShadows,
     });
     memory.cspShadows = decision.shadows;
-    memory.cspSkips = decision.skips;
-    for (const order of decision.orders) {
-      await applyCspOrder(order);
-    }
-    const slot = cspRecorderSlot(now);
-    if (slot) {
-      if (auth !== "ok") {
-        memory.cspRecorder = { ...memory.cspRecorder, blocking: true, auth };
-        deps.engine.log(`csp recorder skip: E*TRADE auth ${auth} (no crash, chain snapshot not taken)`);
-      } else if (memory.cspRecorder.lastAt?.slice(0, 10) !== now.toISOString().slice(0, 10) || !memory.cspRecorder.lastAt.includes(slot)) {
-        memory.cspRecorder = {
-          lastAt: `${now.toISOString()} ${slot}`,
-          rows: memory.cspRecorder.rows,
-          blocking: false,
-          auth,
-        };
+    memory.cspSkips = [...prep.skips, ...decision.skips].slice(-40);
+    const allowOrders = cashSessionIsOpen(now) || prep.atClose;
+    if (allowOrders) {
+      for (const order of decision.orders) {
+        await applyCspOrder(order, now);
       }
-    } else {
-      memory.cspRecorder = { ...memory.cspRecorder, auth, blocking: auth !== "ok" };
+    }
+    await upsertCspShadows(deps.pool, memory.cspShadows);
+    if (decision.orders.length > 0) {
+      await persistBlotter();
+      await persistSleeves();
     }
   }
 
-  async function applyCspOrder(order: CspCycleOrder): Promise<void> {
+  async function applyCspOrder(order: CspCycleOrder, now: Date): Promise<void> {
     if (order.kind === "sell-put" && order.entry) {
       const e = order.entry;
+      const pending = cspPendingFor(e.underlying);
       const symbol = order.symbol;
       deps.broker.injectPosition({
         symbol,
@@ -1418,8 +1440,9 @@ export function buildApp(deps: AppDeps): express.Express {
           entryPremium: e.fill,
           contracts: e.contracts,
           reservedUsd: e.reservedUsd,
-          entryYmd: new Date().toISOString().slice(0, 10),
-          swingLow: null,
+          entryYmd: etYmd(now),
+          swingLow: pending?.swingLow ?? null,
+          earningsDates: pending?.earnings ?? null,
           iv: e.iv,
           delta: e.delta,
           bid: e.bid,
@@ -1430,31 +1453,48 @@ export function buildApp(deps: AppDeps): express.Express {
         },
       });
       memory.blotter.push({
-        id: `csp-${Date.now().toString(36)}`,
+        id: `csp-${Date.now().toString(36)}-${e.underlying}`,
         sleeveId: "csp",
-        ts: new Date().toISOString(),
+        ts: now.toISOString(),
         symbol,
         side: "Sell",
         qty: e.contracts,
         price: e.fill,
         notes: `csp entry ${e.underlying} ${e.strike} ${e.expiry} x${e.contracts}`,
       });
+      await noteCspFill(e.underlying, deps.redis);
       deps.engine.log(
         `auto paper csp sell ${e.contracts} ${symbol} @ ${e.fill} (MockBroker, not live, not E*TRADE order)`,
       );
       return;
     }
-    if (order.kind === "buy-put" && order.positionId) {
+    if ((order.kind === "buy-put" || order.kind === "sell-shares") && order.positionId) {
       const pos = deps.broker.getPositionsSync().find((p) => p.id === order.positionId);
-      deps.broker.flattenPositionIds([order.positionId]);
       const entry = pos?.csp?.entryPremium ?? 0;
-      const pnl = (entry - order.price) * 100 * order.qty;
+      const contracts = pos?.csp?.contracts ?? order.qty;
+      const perContract =
+        order.kind === "sell-shares"
+          ? shortPutPnlPerContract(entry, Math.max((pos?.csp?.strike ?? order.price) - order.price, 0))
+          : shortPutPnlPerContract(entry, order.price);
+      memory.cspShadows = stampActualPnl(memory.cspShadows, order.positionId, perContract);
+      deps.broker.flattenPositionIds([order.positionId]);
+      const pnl = perContract * contracts;
       deps.broker.addRealizedPnl(pnl);
       const card = memory.sleeves.csp;
       memory.sleeves.csp = {
         ...card,
         paper: { ...card.paper, realizedPnlUsd: card.paper.realizedPnlUsd + pnl, trades: card.paper.trades + 1 },
       };
+      memory.blotter.push({
+        id: `csp-x-${Date.now().toString(36)}`,
+        sleeveId: "csp",
+        ts: now.toISOString(),
+        symbol: order.symbol,
+        side: order.kind === "sell-shares" ? "Sell" : "Buy",
+        qty: order.qty,
+        price: order.price,
+        notes: `csp ${order.reason}`,
+      });
       deps.engine.log(
         `auto paper csp close ${order.symbol} ${order.reason} pnl ${pnl.toFixed(2)} (MockBroker, not live, not E*TRADE order)`,
       );

@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS csp_shadow_exits (
   final_actual_pnl  double precision
 );
 
-CREATE INDEX IF NOT EXISTS idx_csp_shadow_exits_position
+CREATE UNIQUE INDEX IF NOT EXISTS idx_csp_shadow_exits_position
   ON csp_shadow_exits (position_id, rule_id);
 
 DELETE FROM gate_log

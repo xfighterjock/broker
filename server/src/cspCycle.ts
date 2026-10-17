@@ -1,5 +1,5 @@
 import { etParts } from "../../shared/clock";
-import { cashSessionIsOpen } from "../../shared/marketSession";
+import { cashSessionCloseMinute, cashSessionIsOpen } from "../../shared/marketSession";
 import type { CspPutMeta, CspStatusView, GateMode, Position } from "../../shared/types";
 import {
   CSP_SHADOW_RULES,
@@ -336,9 +336,10 @@ export function buildCspStatus(input: {
   };
 }
 
-/** Minute-of-day windows: 12:30–12:40 and 16:15–16:25 ET. */
+/** Cash-session days only. 12:30–12:40 and 16:15–16:25 ET. */
 export function cspRecorderSlot(now: Date): "mid" | "close" | null {
   const p = etParts(now);
+  if (cashSessionCloseMinute(p.year, p.month, p.day) === null) return null;
   const minute = p.hour * 60 + p.minute;
   if (minute >= 12 * 60 + 30 && minute < 12 * 60 + 40) return "mid";
   if (minute >= 16 * 60 + 15 && minute < 16 * 60 + 25) return "close";

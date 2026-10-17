@@ -693,13 +693,18 @@ export interface CspShadowSummary {
 
 export function summarizeShadowExits(rows: ShadowRow[]): CspShadowSummary[] {
   return CSP_SHADOW_RULES.map((ruleId) => {
-    const done = rows.filter(
-      (r) => r.ruleId === ruleId && r.pnl !== null && r.finalActualPnl !== null && Number.isFinite(r.pnl),
+    const scored = rows.filter((r) => {
+      if (r.ruleId !== ruleId || r.pnl === null || !Number.isFinite(r.pnl)) return false;
+      return r.triggeredAt !== null || r.finalActualPnl !== null;
+    });
+    const count = scored.length;
+    const wins = scored.filter((r) => (r.pnl as number) > 0).length;
+    const totalPnl = scored.reduce((s, r) => s + (r.pnl as number), 0);
+    const compared = scored.filter((r) => r.finalActualPnl !== null && Number.isFinite(r.finalActualPnl));
+    const totalVsActual = compared.reduce(
+      (s, r) => s + ((r.pnl as number) - (r.finalActualPnl as number)),
+      0,
     );
-    const count = done.length;
-    const wins = done.filter((r) => (r.pnl as number) > 0).length;
-    const totalPnl = done.reduce((s, r) => s + (r.pnl as number), 0);
-    const totalVsActual = done.reduce((s, r) => s + ((r.pnl as number) - (r.finalActualPnl as number)), 0);
     return {
       ruleId,
       count,
@@ -708,7 +713,7 @@ export function summarizeShadowExits(rows: ShadowRow[]): CspShadowSummary[] {
       totalPnl,
       avgPnl: count ? totalPnl / count : null,
       totalVsActual,
-      avgVsActual: count ? totalVsActual / count : null,
+      avgVsActual: compared.length ? totalVsActual / compared.length : null,
     };
   });
 }

@@ -32,12 +32,14 @@ type CacheEntry<T> = { at: number; value: T };
 const expiryCache = new Map<string, CacheEntry<OptionExpiriesResponse>>();
 const chainCache = new Map<string, CacheEntry<OptionChainSnapshot>>();
 const aggCache = new Map<string, CacheEntry<DailyBar[] | null>>();
+const ohlcCache = new Map<string, CacheEntry<MassiveOhlcBar[] | null>>();
 const dividendCache = new Map<string, CacheEntry<MassiveCashDividend[] | null>>();
 
 export function resetMassiveCache(): void {
   expiryCache.clear();
   chainCache.clear();
   aggCache.clear();
+  ohlcCache.clear();
   dividendCache.clear();
   futuresContractCache.clear();
   futuresAggCache.clear();
@@ -312,6 +314,58 @@ export async function fetchMassiveQuote(symbol: string): Promise<DelayedQuote> {
     };
   }
   return parseMassiveSnapshotQuote(symbol, got.body);
+}
+
+export type MassiveOhlcBar = {
+  /** Trading date from the aggregate timestamp (UTC calendar day). */
+  ymd: string;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
+
+/** Daily OHLC. Rows missing high, low, close, or a timestamp are dropped. */
+export function parseMassiveOhlcDailyBars(body: unknown): MassiveOhlcBar[] | null {
+  const root = asRecord(body);
+  const results = root?.results;
+  if (!Array.isArray(results)) return null;
+  const bars: MassiveOhlcBar[] = [];
+  for (const row of results) {
+    const r = asRecord(row);
+    if (!r) continue;
+    const t = num(r.t);
+    const high = num(r.h);
+    const low = num(r.l);
+    const close = num(r.c);
+    if (t === null || high === null || low === null || close === null) continue;
+    const ms = t > 1e12 ? t : t * 1000;
+    const ymd = new Date(ms).toISOString().slice(0, 10);
+    const volume = num(r.v);
+    bars.push({ ymd, high, low, close, volume: volume !== null ? volume : 0 });
+  }
+  return bars.length ? bars : null;
+}
+
+export async function fetchMassiveOhlcDailyBars(ticker: string): Promise<MassiveOhlcBar[] | null> {
+  const key = massiveApiKey();
+  if (!key) return null;
+  const now = Date.now();
+  const hit = ohlcCache.get(ticker);
+  if (hit && now - hit.at < MASSIVE_CACHE_MS) return hit.value;
+  const to = new Date(now);
+  const from = new Date(now - AGG_LOOKBACK_DAYS * 86_400_000);
+  const url =
+    `${MASSIVE_BASE}/v2/aggs/ticker/${encodeURIComponent(ticker)}/range/1/day/${ymdUtc(from)}/${ymdUtc(to)}` +
+    `?adjusted=true&sort=asc&limit=50000`;
+  const got = await massiveGetJson(url, key);
+  if (!got.ok) {
+    ohlcCache.set(ticker, { at: now, value: null });
+    return null;
+  }
+  const bars = parseMassiveOhlcDailyBars(got.body);
+  ohlcCache.set(ticker, { at: now, value: bars });
+  return bars;
 }
 
 export async function fetchMassiveDailyBars(ticker: string): Promise<DailyBar[] | null> {
