@@ -139,9 +139,24 @@ import {
   notifyDayFlatten,
   notifyVetoConfirm,
 } from "./eventGateAlerts";
-import { buildCspStatus, runCspDecisions, stampActualPnl, type CspCycleOrder } from "./cspCycle";
+import {
+  buildCspStatus,
+  cspAssignedMvUsd,
+  cspReservedUsd,
+  runCspDecisions,
+  stampActualPnl,
+  type CspCycleOrder,
+} from "./cspCycle";
 import { shortPutPnlPerContract, type ShadowRow } from "./cspMath";
-import { cspPendingFor, noteCspFill, prepareCspTick } from "./cspLive";
+import {
+  accrueCspTbill,
+  cspPendingFor,
+  cspTbillAccruedForStatus,
+  cspTbillRate,
+  noteCspFill,
+  prepareCspTick,
+  resetCspTbillAccrual,
+} from "./cspLive";
 import { etYmd } from "./cspScan";
 import { upsertCspShadows } from "./cspStore";
 import {
@@ -1351,6 +1366,7 @@ export function buildApp(deps: AppDeps): express.Express {
     await persistSleeves();
     await persistBlotter();
     await persistSessionMarks();
+    if (sleeveId === "csp") await resetCspTbillAccrual(deps.redis);
     sessionNote("paper_reset", `${sleeveId} reset to starting equity (mock, no fill)`);
     deps.engine.log(
       `paper sleeve reset ${sleeveId} (MockBroker, no delayed last, not Tradovate, not live, AUTO/GATE unchanged)`,
@@ -1387,9 +1403,30 @@ export function buildApp(deps: AppDeps): express.Express {
         },
       });
     }
-    const sleeve = memory.sleeves.csp;
     const livePositions = deps.broker.getPositionsSync();
-    const book = sleeveBook(sleeve, livePositions);
+    let sleeve = memory.sleeves.csp;
+    let book = sleeveBook(sleeve, livePositions);
+    const accrual = await accrueCspTbill({
+      now,
+      equityUsd: book.equityUsd,
+      reservedUsd: cspReservedUsd(livePositions),
+      assignedMvUsd: cspAssignedMvUsd(livePositions),
+      rate: await cspTbillRate(),
+      redis: deps.redis,
+      log: (line) => deps.engine.log(line),
+    });
+    if (accrual.credited !== 0) {
+      memory.sleeves.csp = {
+        ...sleeve,
+        paper: {
+          ...sleeve.paper,
+          realizedPnlUsd: sleeve.paper.realizedPnlUsd + accrual.credited,
+        },
+      };
+      await persistSleeves();
+      sleeve = memory.sleeves.csp;
+      book = sleeveBook(sleeve, livePositions);
+    }
     const lossCapHit = sleeve.paper.realizedPnlUsd <= -sleeve.lossCapUsd || book.totalPnlUsd <= -sleeve.lossCapUsd;
     const clock = computeClock(now, deps.getEvents());
     const decision = runCspDecisions({
@@ -1705,6 +1742,7 @@ export function buildApp(deps: AppDeps): express.Express {
         signals: memory.cspSignals,
         recorder: { ...memory.cspRecorder, auth: etradeAuth },
         shadows: memory.cspShadows,
+        tbillAccruedUsd: await cspTbillAccruedForStatus(deps.redis),
         now,
       }),
       riskOn: risk.riskOn,
