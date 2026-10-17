@@ -33,17 +33,16 @@ afterEach(() => {
   host = null;
 });
 
-describe("CspBook T-bill line", () => {
-  it("shows accrued interest from the csp status payload", () => {
+describe("CspBook", () => {
+  it("does not show a T-bill interest line", () => {
     const status = {
       etradeAuth: "ok",
       csp: {
-        equityUsd: 100_010.96,
-        cashUsd: 80_010.96,
+        equityUsd: 100_000,
+        cashUsd: 80_000,
         reservedUsd: 20_000,
         utilizationPct: 20,
-        realizedPnlUsd: 10.96,
-        tbillAccruedUsd: 10.96,
+        realizedPnlUsd: 0,
         openPuts: [],
         assigned: [],
         skips: [],
@@ -53,7 +52,7 @@ describe("CspBook T-bill line", () => {
       },
     } as StatusSnapshot;
     const node = render(<CspBook status={status} />);
-    expect(node.textContent).toContain("T-bill");
-    expect(node.textContent).toContain("+$10.96");
+    expect(node.textContent).not.toContain("T-bill");
+    expect(node.textContent).toContain("realized");
   });
 });

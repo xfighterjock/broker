@@ -30,8 +30,6 @@ export function CspBook({ status }: { status: StatusSnapshot }) {
         <div>{book ? `${book.utilizationPct.toFixed(1)}%` : "—"}</div>
         <div className="k">realized</div>
         <div>{usd(book?.realizedPnlUsd)}</div>
-        <div className="k">T-bill</div>
-        <div>{usd(book?.tbillAccruedUsd)}</div>
       </div>
       <table>
         <thead>
