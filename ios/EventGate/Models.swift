@@ -172,6 +172,17 @@ struct BrokerSnapshot: Codable {
     let positions: [BrokerPosition]?
 }
 
+struct CspRecorderSnap: Codable {
+    let lastAt: String?
+    let rows: Int?
+    let blocking: Bool?
+    let auth: String?
+}
+
+struct CspStatusSnap: Codable {
+    let recorder: CspRecorderSnap?
+}
+
 struct StatusSnapshot: Codable {
     let clock: ClockSnapshot?
     let marketSession: MarketSessionSnap?
@@ -188,6 +199,7 @@ struct StatusSnapshot: Codable {
     let stage3Armed: Bool?
     /// No future NFP/CPI/FOMC within 35 days.
     let calendarStale: Bool?
+    let csp: CspStatusSnap?
 }
 
 struct ActivityLogEntry: Decodable, Identifiable, Equatable {

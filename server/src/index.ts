@@ -12,6 +12,7 @@ import { maybeLoadAppDotenv } from "./massive";
 import { createPool, loadEvents, purgeExpiredLogs, recentGateLog, runMigrations } from "./db";
 import { GateEngine } from "./gate";
 import { MockBroker } from "./mockBroker";
+import { purgeRiskoffSleeve } from "./riskoffCleanup";
 import { connectRedis } from "./redis";
 import { createTradovateFromEnv } from "./tradovateBroker";
 import { attachScanRedis, kickScan } from "./scan";
@@ -93,6 +94,12 @@ async function main(): Promise<void> {
   if (redis) {
     mock.attachRedis(redis.client);
     await mock.loadFromRedis();
+    await purgeRiskoffSleeve({
+      broker: mock,
+      redis: redis.client,
+      pool,
+      log: (line) => console.log(line),
+    });
   }
 
   let brokerName = "MockBroker";

@@ -189,7 +189,7 @@ describe("vertical exit blotter price: immediate close credit, not close + entry
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          sleeveId: "riskoff",
+          sleeveId: "options",
           symbol: "HYG",
           right: "P",
           expiry: "2026-10-09",
@@ -214,7 +214,7 @@ describe("vertical exit blotter price: immediate close credit, not close + entry
       // GET /api/quotes awaits markPaperQuiet (status only kicks it).
       resetEtradeCache();
       stub.setClosed();
-      const marked = await fetch(`${srv.url}/api/quotes?sleeve=riskoff`);
+      const marked = await fetch(`${srv.url}/api/quotes?sleeve=options`);
       expect(marked.status).toBe(200);
       const afterClose = await fetch(`${srv.url}/api/status`);
       expect(afterClose.status).toBe(200);
@@ -229,7 +229,7 @@ describe("vertical exit blotter price: immediate close credit, not close + entry
       // The bug this replaces would have recorded close + entry debit = .07 + .20 = .27.
       expect(exitFill?.price).not.toBeCloseTo(0.27, 2);
       // realizedPnl = close ($35) - netDebitPaid ($100) = -$65 for 5 contracts, booked into the sleeve.
-      expect(closedSnap.sleeveBooks.riskoff.realizedPnlUsd).toBeCloseTo(-65, 0);
+      expect(closedSnap.sleeveBooks.options.realizedPnlUsd).toBeCloseTo(-65, 0);
     } finally {
       await srv.close();
     }

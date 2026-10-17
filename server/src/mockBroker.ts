@@ -134,15 +134,27 @@ export class MockBroker implements BrokerClient {
       gatedDuration: input.gatedDuration,
       cashSweep: input.cashSweep === true ? true : undefined,
       cpiLateFade: input.cpiLateFade === true ? true : undefined,
+      csp: input.csp,
+      cspAssigned: input.cspAssigned,
     };
     if (input.dayPnl != null && Number.isFinite(input.dayPnl)) pos.dayPnl = input.dayPnl;
     if (pos.cashSweep !== true) delete pos.cashSweep;
     if (pos.cpiLateFade !== true) delete pos.cpiLateFade;
     const incomingSweep = input.cashSweep === true;
+    const cspLot = input.csp != null || input.cspAssigned != null;
     this.positions = this.positions.filter((p) => {
       if (p.symbol.toUpperCase() !== input.symbol.toUpperCase()) return true;
+      if (cspLot) {
+        if (p.sleeveId !== "csp") return true;
+        if (input.csp && p.csp && p.csp.expiry === input.csp.expiry && p.csp.strike === input.csp.strike) {
+          return false;
+        }
+        if (input.cspAssigned && p.cspAssigned) return false;
+        return true;
+      }
       // Overlay BIL and the idle-cash sweep are different lots.
       if (Boolean(p.cashSweep) !== incomingSweep) return true;
+      if (p.csp || p.cspAssigned) return true;
       return false;
     });
     this.positions.push(pos);
@@ -275,7 +287,9 @@ export class MockBroker implements BrokerClient {
         (input.sleeveId === undefined || p.sleeveId === input.sleeveId) &&
         !p.vertical &&
         !p.overlay &&
-        !p.cashSweep,
+        !p.cashSweep &&
+        !p.csp &&
+        !p.cspAssigned,
     );
     if (!existing) return this.injectPosition(input);
     const addQty = input.qty;
@@ -335,6 +349,24 @@ export class MockBroker implements BrokerClient {
       return { ...p };
     }
     return null;
+  }
+
+  /** Drop every lot and working order tagged with this sleeve id, including a retired id. */
+  removeBySleeveId(sleeveId: string): { positions: Position[]; orders: WorkingOrder[] } {
+    const positions: Position[] = [];
+    this.positions = this.positions.filter((p) => {
+      if (p.sleeveId !== sleeveId) return true;
+      positions.push({ ...p });
+      return false;
+    });
+    const orders: WorkingOrder[] = [];
+    this.orders = this.orders.filter((o) => {
+      if (o.sleeveId !== sleeveId) return true;
+      orders.push({ ...o });
+      return false;
+    });
+    this.persist();
+    return { positions, orders };
   }
 
   reset(): void {

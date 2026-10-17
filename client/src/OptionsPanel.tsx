@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { OPTIONS_MULTIPLIER, RISKOFF_ETF_SYMBOLS } from "../../shared/constants";
+import { OPTIONS_MULTIPLIER } from "../../shared/constants";
 import type {
   OptionChainSnapshot,
   OptionExpiry,
@@ -72,7 +72,7 @@ export function OptionsPanel({
   defaultRight?: OptionRight;
   showOverlay?: boolean;
 }) {
-  const putsOnly = sleeveId === "riskoff";
+  const putsOnly = false;
   const [symbol, setSymbol] = useState("SPY");
   const [symbolDraft, setSymbolDraft] = useState("SPY");
   const [expiries, setExpiries] = useState<OptionExpiry[]>([]);
@@ -410,7 +410,7 @@ export function OptionsPanel({
         {putsOnly && (
           <>
             <label>
-              <SymbolList symbols={RISKOFF_ETF_SYMBOLS} /> (top-2 50/50, or inverse-vol in HYG-only)
+              <SymbolList symbols={[]} />
             </label>
             <div className="hint">
               Autopilot holds the one or two names among GLD, GDX, PDBC, UUP, TLT, IEF, FLOT, XLU, XLP, DBMF, KMLM, CLSE, USMV, QUAL, FTLS, and BTAL that

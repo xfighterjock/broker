@@ -1,11 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  GATED_ROOTS,
-  OPTIONS_V1_SYMBOLS,
-  RISKOFF_CREDIT_LEG_SYMBOLS,
-  RISKOFF_ETF_SYMBOLS,
-  RISKOFF_QUOTE_STRIP,
-} from "../shared/constants";
+import { GATED_ROOTS, OPTIONS_V1_SYMBOLS } from "../shared/constants";
 import {
   SYMBOL_DESCRIPTIONS,
   splitInstrumentLabels,
@@ -14,12 +8,11 @@ import {
 } from "../shared/symbolDescriptions";
 
 const METHODOLOGY = [
-  ...RISKOFF_QUOTE_STRIP,
-  ...RISKOFF_ETF_SYMBOLS,
-  ...RISKOFF_CREDIT_LEG_SYMBOLS,
   ...OPTIONS_V1_SYMBOLS,
   ...GATED_ROOTS,
   "ACWI",
+  "HYG",
+  "SPY",
 ] as const;
 
 describe("symbol descriptions", () => {

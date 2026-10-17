@@ -157,6 +157,15 @@ struct EssentialsView: View {
         return parts.joined(separator: " · ")
     }
 
+    private var cspRecorderLine: String {
+        let rec = snap?.csp?.recorder
+        let when = rec?.lastAt ?? "never"
+        let rows = rec?.rows ?? 0
+        let auth = rec?.auth ?? snap?.etradeAuth ?? "unknown"
+        let block = rec?.blocking == true ? " · auth blocking" : ""
+        return "CSP recorder \(when) · \(rows) rows · E*TRADE \(auth)\(block)"
+    }
+
     private var riskBadge: some View {
         let on = snap?.riskOn == true
         return VStack(spacing: 8) {
@@ -164,6 +173,7 @@ struct EssentialsView: View {
                 .font(.title.monospaced().weight(.semibold))
                 .tracking(1.4)
                 .foregroundStyle(on ? Color(red: 0.24, green: 0.75, blue: 0.48) : Color(red: 0.89, green: 0.29, blue: 0.29))
+            Text(cspRecorderLine)
             Text(snap.map(EssentialsFormat.riskWhyLine) ?? "SPY/ACWI/HYG 200dma + UUP 20d")
                 .font(.subheadline)
                 .multilineTextAlignment(.center)

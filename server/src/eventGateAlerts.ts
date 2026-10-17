@@ -1,5 +1,4 @@
 import { etParts, isPrintEvent, pad2 } from "../../shared/clock";
-import { RISKOFF_CREDIT_LEG_SYMBOLS } from "../../shared/constants";
 import type {
   CalendarEvent,
   ClockSnapshot,
@@ -8,6 +7,10 @@ import type {
   SleeveCard,
   SleeveId,
 } from "../../shared/types";
+
+/** Former risk-off credit-leg underlyers. Alert helpers only; the sleeve is gone. */
+const CREDIT_LEG_SYMBOLS = ["HYG", "LQD", "JNK"] as const;
+
 import {
   createEventGateAlert,
   sendEventGateAlert,
@@ -26,7 +29,7 @@ export const OI_SKIP_WINDOW_MS = 30 * 60 * 1000;
 export const SLEEVE_LOSS_WARN_FRAC = 0.8;
 export const FREEZE_MISSING_LEAD_MS = 2 * 60 * 60 * 1000;
 
-const CREDIT_LEG = new Set<string>(RISKOFF_CREDIT_LEG_SYMBOLS);
+const CREDIT_LEG = new Set<string>(CREDIT_LEG_SYMBOLS);
 
 /** Minimal risk snapshot for flip copy. Keep this file free of risk.ts imports. */
 export type RiskAlertSnap = {

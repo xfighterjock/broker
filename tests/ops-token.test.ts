@@ -272,7 +272,7 @@ describe("EVENT_GATE_OPS_TOKEN HTTPS ops scope", () => {
       side: "Long",
       avgPrice: 80,
       unrealizedPnl: -40,
-      sleeveId: "riskoff",
+      sleeveId: "csp",
     });
     broker.injectOrder({
       symbol: "XLP",
@@ -280,7 +280,7 @@ describe("EVENT_GATE_OPS_TOKEN HTTPS ops scope", () => {
       side: "Sell",
       qty: 500,
       stopPrice: 73.6,
-      sleeveId: "riskoff",
+      sleeveId: "csp",
     });
     expect(engine.enabled).toBe(true);
     const srv = await listen(app);
@@ -288,21 +288,21 @@ describe("EVENT_GATE_OPS_TOKEN HTTPS ops scope", () => {
       const reset = await fetch(`${srv.url}/api/paper/reset`, {
         method: "POST",
         headers: { ...opsHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ sleeveId: "riskoff" }),
+        body: JSON.stringify({ sleeveId: "csp" }),
       });
       expect(reset.status).toBe(200);
       const snap = (await reset.json()) as {
         gateEnabled?: boolean;
-        autoPaperBySleeve?: { riskoff?: boolean };
-        sleeveBooks?: { riskoff?: { equityUsd: number; realizedPnlUsd: number; unrealizedPnlUsd: number } };
+        autoPaperBySleeve?: { csp?: boolean };
+        sleeveBooks?: { csp?: { equityUsd: number; realizedPnlUsd: number; unrealizedPnlUsd: number } };
         broker?: { positions?: { symbol: string; side: string; qty: number }[]; orders?: { symbol: string; state: string }[] };
       };
       expect(snap.gateEnabled).toBe(true);
       expect(engine.enabled).toBe(true);
-      expect(snap.autoPaperBySleeve?.riskoff).toBe(true);
-      expect(snap.sleeveBooks?.riskoff?.equityUsd).toBe(100_000);
-      expect(snap.sleeveBooks?.riskoff?.realizedPnlUsd).toBe(0);
-      expect(snap.sleeveBooks?.riskoff?.unrealizedPnlUsd).toBe(0);
+      expect(snap.autoPaperBySleeve?.csp).toBe(true);
+      expect(snap.sleeveBooks?.csp?.equityUsd).toBe(100_000);
+      expect(snap.sleeveBooks?.csp?.realizedPnlUsd).toBe(0);
+      expect(snap.sleeveBooks?.csp?.unrealizedPnlUsd).toBe(0);
       const xlp = snap.broker?.positions?.find((p) => p.symbol === "XLP");
       expect(xlp).toBeUndefined();
       const working = snap.broker?.orders?.filter((o) => o.symbol === "XLP" && o.state === "Working");

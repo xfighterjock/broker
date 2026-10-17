@@ -9,7 +9,7 @@ describe("defaultSleeves", () => {
   it("returns five thesis/risk cards with the expected defaults", () => {
     const sleeves = defaultSleeves();
     expect(Object.keys(sleeves).sort()).toEqual(
-      ["day", "momentum", "options", "ownership", "riskoff"].sort(),
+      ["day", "momentum", "options", "ownership", "csp"].sort(),
     );
     expect(sleeves.day.name).toBe("Day trading (events)");
     expect(sleeves.day.horizon).toBe("intraday");
@@ -36,37 +36,14 @@ describe("defaultSleeves", () => {
     expect(sleeves.ownership.structure).toMatch(/covered call/);
     expect(sleeves.ownership.killRules).toMatch(/not session clock/);
     expect(sleeves.ownership.status).toBe("idea");
-    expect(sleeves.riskoff.name).toMatch(/Risk-off/);
-    expect(sleeves.riskoff.status).toBe("paper");
-    expect(sleeves.riskoff.thesis).toMatch(/RISK OFF/);
-    expect(sleeves.riskoff.thesis).toMatch(/LQD/);
-    expect(sleeves.riskoff.thesis).toMatch(/JNK/);
-    expect(sleeves.riskoff.structure).toMatch(/put debit verticals/);
-    expect(sleeves.riskoff.structure).toMatch(/GLD/);
-    expect(sleeves.riskoff.structure).toMatch(/60%/);
-    expect(sleeves.riskoff.structure).toMatch(/no naked short vol/);
-    expect(sleeves.riskoff.killRules).toMatch(/max debit lost/);
-    expect(sleeves.riskoff.instruments).toMatch(/SPY/);
-    expect(sleeves.riskoff.instruments).toMatch(/HYG/);
-    expect(sleeves.riskoff.instruments).toMatch(/GLD/);
-    expect(sleeves.riskoff.instruments).toMatch(/TLT/);
-    expect(sleeves.riskoff.instruments).toMatch(/IEF/);
-    expect(sleeves.riskoff.instruments).toMatch(/XLU/);
-    expect(sleeves.riskoff.instruments).toMatch(/XLP/);
-    expect(sleeves.riskoff.instruments).toMatch(/DBMF/);
-    expect(sleeves.riskoff.instruments).toMatch(/KMLM/);
-    expect(sleeves.riskoff.instruments).toMatch(/CLSE/);
-    expect(sleeves.riskoff.instruments).toMatch(/USMV/);
-    expect(sleeves.riskoff.instruments).toMatch(/QUAL/);
-    expect(sleeves.riskoff.instruments).toMatch(/FTLS/);
-    expect(sleeves.riskoff.instruments).toMatch(/BTAL/);
-    expect(sleeves.riskoff.instruments).toMatch(/FLOT/);
-    expect(sleeves.riskoff.instruments).toMatch(/PDBC/);
-    expect(sleeves.riskoff.instruments).toMatch(/GDX/);
-    expect(sleeves.riskoff.instruments).toMatch(/LQD/);
-    expect(sleeves.riskoff.instruments).toMatch(/JNK/);
+    expect(sleeves.csp.name).toMatch(/Cash-secured puts/);
+    expect(sleeves.csp.status).toBe("paper");
+    expect(sleeves.csp.thesis).toMatch(/RISK ON and RISK OFF/);
+    expect(sleeves.csp.lossCapUsd).toBe(10000);
+    expect(sleeves.csp.structure).toMatch(/cash-secured puts/);
+    expect(sleeves.csp.killRules).toMatch(/2×/);
     expect(sleeves.day.paper).toEqual(emptyPaperStats());
-    expect(sleeves.riskoff.paper).toEqual(emptyPaperStats());
+    expect(sleeves.csp.paper).toEqual(emptyPaperStats());
   });
 });
 

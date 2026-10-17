@@ -119,12 +119,12 @@ function stubNoDelayedLast() {
 describe("parsePaperReset", () => {
   it("requires a known sleeveId", () => {
     expect(parsePaperReset({})).toEqual({
-      error: "sleeveId must be day|momentum|options|ownership|riskoff",
+      error: "sleeveId must be day|momentum|options|ownership|csp",
     });
     expect(parsePaperReset({ sleeveId: "live" })).toEqual({
-      error: "sleeveId must be day|momentum|options|ownership|riskoff",
+      error: "sleeveId must be day|momentum|options|ownership|csp",
     });
-    expect(parsePaperReset({ sleeveId: "riskoff" })).toEqual({ sleeveId: "riskoff" });
+    expect(parsePaperReset({ sleeveId: "csp" })).toEqual({ sleeveId: "csp" });
   });
 });
 
@@ -146,7 +146,7 @@ describe("realizedDayPnlToMatchSessionDaily", () => {
       momentum: { dailyPnlUsd: 0, totalPnlUsd: 0, realizedPnlUsd: 0, unrealizedPnlUsd: 0, pnlUsd: 0, equityUsd: 100_000 },
       options: { dailyPnlUsd: 0, totalPnlUsd: 0, realizedPnlUsd: 0, unrealizedPnlUsd: 0, pnlUsd: 0, equityUsd: 100_000 },
       ownership: { dailyPnlUsd: 0, totalPnlUsd: 0, realizedPnlUsd: 0, unrealizedPnlUsd: 0, pnlUsd: 0, equityUsd: 100_000 },
-      riskoff: { dailyPnlUsd: 0, totalPnlUsd: 0, realizedPnlUsd: 0, unrealizedPnlUsd: 0, pnlUsd: 0, equityUsd: 100_000 },
+      csp: { dailyPnlUsd: 0, totalPnlUsd: 0, realizedPnlUsd: 0, unrealizedPnlUsd: 0, pnlUsd: 0, equityUsd: 100_000 },
     };
     expect(realizedDayPnlToMatchSessionDaily(books, [])).toBe(0);
   });
@@ -157,7 +157,7 @@ describe("realizedDayPnlToMatchSessionDaily", () => {
       momentum: { dailyPnlUsd: -200, totalPnlUsd: -200, realizedPnlUsd: -160, unrealizedPnlUsd: -40, pnlUsd: -200, equityUsd: 99_800 },
       options: { dailyPnlUsd: 0, totalPnlUsd: 0, realizedPnlUsd: 0, unrealizedPnlUsd: 0, pnlUsd: 0, equityUsd: 100_000 },
       ownership: { dailyPnlUsd: 0, totalPnlUsd: 0, realizedPnlUsd: 0, unrealizedPnlUsd: 0, pnlUsd: 0, equityUsd: 100_000 },
-      riskoff: { dailyPnlUsd: 0, totalPnlUsd: 0, realizedPnlUsd: 0, unrealizedPnlUsd: 0, pnlUsd: 0, equityUsd: 100_000 },
+      csp: { dailyPnlUsd: 0, totalPnlUsd: 0, realizedPnlUsd: 0, unrealizedPnlUsd: 0, pnlUsd: 0, equityUsd: 100_000 },
     };
     const positions = [
       {
@@ -185,7 +185,7 @@ describe("MockBroker.resetSleeve", () => {
       side: "Long",
       avgPrice: 80,
       unrealizedPnl: -20,
-      sleeveId: "riskoff",
+      sleeveId: "csp",
     });
     broker.injectOrder({
       symbol: "XLP",
@@ -193,7 +193,7 @@ describe("MockBroker.resetSleeve", () => {
       side: "Sell",
       qty: 400,
       stopPrice: 73.6,
-      sleeveId: "riskoff",
+      sleeveId: "csp",
     });
     broker.injectPosition({
       symbol: "SPY",
@@ -211,7 +211,7 @@ describe("MockBroker.resetSleeve", () => {
       stopPrice: 492.5,
       sleeveId: "momentum",
     });
-    const out = broker.resetSleeve("riskoff");
+    const out = broker.resetSleeve("csp");
     expect(out.removed).toHaveLength(1);
     expect(out.removed[0]?.symbol).toBe("XLP");
     expect(out.cancelled).toHaveLength(1);
@@ -253,7 +253,7 @@ describe("POST /api/paper/reset", () => {
       side: "Long",
       avgPrice: 81,
       unrealizedPnl: -120,
-      sleeveId: "riskoff",
+      sleeveId: "csp",
     });
     broker.injectOrder({
       symbol: "XLP",
@@ -261,7 +261,7 @@ describe("POST /api/paper/reset", () => {
       side: "Sell",
       qty: 500,
       stopPrice: 74.52,
-      sleeveId: "riskoff",
+      sleeveId: "csp",
     });
     broker.injectPosition({
       symbol: "SPY",
@@ -281,7 +281,7 @@ describe("POST /api/paper/reset", () => {
     });
     const srv = await listen(app);
     try {
-      const riskoffPaper = await fetch(`${srv.url}/api/sleeves/riskoff/paper`, {
+      const cspPaper = await fetch(`${srv.url}/api/sleeves/csp/paper`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -292,9 +292,9 @@ describe("POST /api/paper/reset", () => {
           notes: "stuck overlay",
         }),
       });
-      expect(riskoffPaper.status).toBe(200);
+      expect(cspPaper.status).toBe(200);
 
-      const riskoffFill = await fetch(`${srv.url}/api/sleeves/riskoff/fills`, {
+      const cspFill = await fetch(`${srv.url}/api/sleeves/csp/fills`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -305,7 +305,7 @@ describe("POST /api/paper/reset", () => {
           notes: "overlay",
         }),
       });
-      expect(riskoffFill.status).toBe(200);
+      expect(cspFill.status).toBe(200);
 
       const momFill = await fetch(`${srv.url}/api/sleeves/momentum/fills`, {
         method: "POST",
@@ -330,7 +330,7 @@ describe("POST /api/paper/reset", () => {
       const close = await fetch(`${srv.url}/api/paper/close`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sleeveId: "riskoff", symbol: "XLP", reason: "premarket reset" }),
+        body: JSON.stringify({ sleeveId: "csp", symbol: "XLP", reason: "premarket reset" }),
       });
       expect(close.status).toBe(400);
       const closeBody = (await close.json()) as { error: string };
@@ -340,24 +340,24 @@ describe("POST /api/paper/reset", () => {
       const reset = await fetch(`${srv.url}/api/paper/reset`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sleeveId: "riskoff" }),
+        body: JSON.stringify({ sleeveId: "csp" }),
       });
       expect(reset.status).toBe(200);
       const snap = (await reset.json()) as StatusSnapshot;
       expect(snap.gateEnabled).toBe(true);
       expect(engine.enabled).toBe(true);
       expect(snap.autoPaper).toBe(true);
-      expect(snap.autoPaperBySleeve.riskoff).toBe(true);
+      expect(snap.autoPaperBySleeve.csp).toBe(true);
       expect(snap.autoPaperBySleeve.momentum).toBe(true);
 
-      expect(snap.sleeves.riskoff.paper).toEqual(emptyPaperStats());
-      expect(snap.paperBlotter.filter((f) => f.sleeveId === "riskoff")).toHaveLength(0);
-      const riskoffBook = snap.sleeveBooks.riskoff;
-      expect(riskoffBook.equityUsd).toBe(DEFAULT_SLEEVE_EQUITY_USD);
-      expect(riskoffBook.realizedPnlUsd).toBe(0);
-      expect(riskoffBook.unrealizedPnlUsd).toBe(0);
-      expect(riskoffBook.totalPnlUsd).toBe(0);
-      expect(riskoffBook.dailyPnlUsd).toBe(0);
+      expect(snap.sleeves.csp.paper).toEqual(emptyPaperStats());
+      expect(snap.paperBlotter.filter((f) => f.sleeveId === "csp")).toHaveLength(0);
+      const cspBook = snap.sleeveBooks.csp;
+      expect(cspBook.equityUsd).toBe(DEFAULT_SLEEVE_EQUITY_USD);
+      expect(cspBook.realizedPnlUsd).toBe(0);
+      expect(cspBook.unrealizedPnlUsd).toBe(0);
+      expect(cspBook.totalPnlUsd).toBe(0);
+      expect(cspBook.dailyPnlUsd).toBe(0);
 
       const open = snap.broker.positions.filter((p) => p.side !== "Flat" && p.qty > 0);
       expect(open.map((p) => p.symbol).sort()).toEqual(["SPY"]);
@@ -416,7 +416,7 @@ describe("POST /api/paper/reset", () => {
       const res = await fetch(`${srv.url}/api/paper/reset`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sleeveId: "riskoff" }),
+        body: JSON.stringify({ sleeveId: "csp" }),
       });
       expect(res.status).toBe(403);
       const body = (await res.json()) as { error: string };

@@ -94,7 +94,7 @@ describe("riskFromFeatures", () => {
     expect(Object.keys(missing.checks).sort()).toEqual(
       ["acwiAbove200", "dollarVeto", "hygAbove200", "spyAbove200", "uup20dPct"].sort(),
     );
-    expect(missing.creditLegAbove200).toEqual({ lqdAbove200: null, jnkAbove200: null });
+    expect(missing).not.toHaveProperty("creditLegAbove200");
     expect(missing.checks).not.toHaveProperty("lqdAbove200");
     expect(missing.checks).not.toHaveProperty("jnkAbove200");
 
@@ -103,11 +103,9 @@ describe("riskFromFeatures", () => {
       acwi: feat(true),
       hyg: feat(true),
       uup20dPct: 0.01,
-      lqd: feat(false),
-      jnk: feat(true),
     });
     expect(known.riskOn).toBe(true);
-    expect(known.creditLegAbove200).toEqual({ lqdAbove200: false, jnkAbove200: true });
+    expect(known).not.toHaveProperty("creditLegAbove200");
     expect(known.checks).not.toHaveProperty("lqdAbove200");
 
     const barsMissing = riskFromFeatures({
@@ -115,11 +113,9 @@ describe("riskFromFeatures", () => {
       acwi: feat(true),
       hyg: feat(true),
       uup20dPct: 0.01,
-      lqd: null,
-      jnk: null,
     });
-    expect(barsMissing.creditLegAbove200).toEqual({ lqdAbove200: null, jnkAbove200: null });
-    expect(riskOffFallback().creditLegAbove200).toEqual({ lqdAbove200: null, jnkAbove200: null });
+    expect(barsMissing).not.toHaveProperty("creditLegAbove200");
+    expect(riskOffFallback()).not.toHaveProperty("creditLegAbove200");
   });
 
   it("dollar-vetoes when UUP 20d > +3% or the series is missing", () => {

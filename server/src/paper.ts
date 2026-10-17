@@ -14,7 +14,6 @@ import type {
 } from "../../shared/types";
 import {
   DEFAULT_SLEEVE_EQUITY_USD,
-  RISKOFF_ETF_SYMBOLS,
   SLEEVE_IDS,
   TZ,
 } from "../../shared/constants";
@@ -213,21 +212,11 @@ export function validatePaperOrder(
       error: "options sleeve: paper debit verticals only (POST /api/paper/vertical); no stock legs",
     };
   }
-  if (input.sleeveId === "riskoff") {
-    const etf = input.symbol.trim().toUpperCase();
-    if (!(RISKOFF_ETF_SYMBOLS as readonly string[]).includes(etf)) {
-      return {
-        ok: false,
-        error:
-          `riskoff sleeve: put debit verticals (POST /api/paper/vertical) or ${RISKOFF_ETF_SYMBOLS.join("/")} ETF long only`,
-      };
-    }
-    if (input.side !== "Buy") {
-      return {
-        ok: false,
-        error: "riskoff ETF: long only (close via POST /api/paper/close)",
-      };
-    }
+  if (input.sleeveId === "csp") {
+    return {
+      ok: false,
+      error: "csp sleeve: cash-secured puts are autopilot-only (MockBroker, not a stock ticket)",
+    };
   }
 
   return {

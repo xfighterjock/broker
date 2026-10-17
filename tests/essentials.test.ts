@@ -49,7 +49,7 @@ function snapshot(over: Partial<StatusSnapshot> = {}): StatusSnapshot {
     momentum: book(0, 0),
     options: book(40, 40),
     ownership: book(0, 0),
-    riskoff: book(-8, -8),
+    csp: book(-8, -8),
   } as Record<SleeveId, SleeveBook>;
   return {
     trader: "Richard",
@@ -250,15 +250,15 @@ describe("risk why line", () => {
 });
 
 describe("AUTO PAPER flags", () => {
-  it("exposes D/M/O/Ow/R chips for all five sleeves", () => {
+  it("exposes D/M/O/Ow/Cs chips for all five sleeves", () => {
     expect(AUTO_SLEEVE_CHIPS.map((c) => c.id)).toEqual([
       "day",
       "momentum",
       "options",
       "ownership",
-      "riskoff",
+      "csp",
     ]);
-    expect(AUTO_SLEEVE_CHIPS.map((c) => c.initial)).toEqual(["D", "M", "O", "Ow", "R"]);
+    expect(AUTO_SLEEVE_CHIPS.map((c) => c.initial)).toEqual(["D", "M", "O", "Ow", "Cs"]);
   });
 
   it("treats autoPaper as any-on and falls back when per-sleeve is missing", () => {
@@ -269,12 +269,12 @@ describe("AUTO PAPER flags", () => {
         momentum: true,
         options: false,
         ownership: false,
-        riskoff: true,
+        csp: true,
       },
     });
     expect(autoPaperAnyOn(mixed)).toBe(true);
     expect(autoPaperFlags(mixed).day).toBe(false);
-    expect(autoPaperFlags(mixed).riskoff).toBe(true);
+    expect(autoPaperFlags(mixed).csp).toBe(true);
     const legacyOn = snapshot({ autoPaper: true });
     delete (legacyOn as { autoPaperBySleeve?: unknown }).autoPaperBySleeve;
     expect(autoPaperFlags(legacyOn).day).toBe(true);
@@ -292,11 +292,11 @@ describe("sleeve P/L rows", () => {
       "momentum",
       "options",
       "ownership",
-      "riskoff",
+      "csp",
     ]);
     expect(rows[0]).toMatchObject({ label: "Day", daily: 12.5, total: -3 });
     expect(rows[2]).toMatchObject({ label: "Options", daily: 40, total: 40 });
-    expect(rows[4]).toMatchObject({ label: "Risk-off", daily: -8, total: -8 });
+    expect(rows[4]).toMatchObject({ label: "CSP", daily: -8, total: -8 });
   });
 
   it("adds an open-lots hint from existing positions, not new P/L math", () => {
