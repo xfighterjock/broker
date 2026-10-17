@@ -198,7 +198,13 @@ export function runCspDecisions(ctx: CspCycleCtx): CspCycleResult {
   const assigned = cspAssignedMvUsd(ctx.positions);
   let openCount = openPuts.length;
   let reservedRunning = reserved;
+  const busy = cspOpenUnderlyings(ctx.positions);
   for (const cand of ctx.candidates) {
+    const key = cand.underlying.trim().toUpperCase();
+    if (busy.has(key)) {
+      skips.push({ symbol: cand.underlying, reason: "already open" });
+      continue;
+    }
     const planned = planCspEntry({
       riskOn: ctx.riskOn,
       autoOn: ctx.autoOn,
@@ -237,6 +243,7 @@ export function runCspDecisions(ctx: CspCycleCtx): CspCycleResult {
       reason: "csp entry",
       entry: planned.entry,
     });
+    busy.add(key);
     reservedRunning += planned.entry.reservedUsd;
     openCount += 1;
   }
@@ -281,12 +288,25 @@ export function actualShortPutPnl(entry: number, exit: number): number {
   return shortPutPnlPerContract(entry, exit);
 }
 
+/** Underlyings that already have an open csp put or assigned csp shares. Overlay puts do not count. */
+export function cspOpenUnderlyings(positions: Position[]): Set<string> {
+  const out = new Set<string>();
+  for (const p of positions) {
+    if (p.sleeveId !== "csp" || !isOpen(p)) continue;
+    if (p.csp?.underlying) out.add(p.csp.underlying.trim().toUpperCase());
+    if (p.cspAssigned && p.symbol) out.add(p.symbol.trim().toUpperCase());
+  }
+  return out;
+}
+
 export function buildCspStatus(input: {
   equityUsd: number;
   realizedPnlUsd: number;
   positions: Position[];
   skips: Array<{ symbol: string; reason: string }>;
   signals: string[];
+  queued: CspStatusView["queued"];
+  betaAsOfYmd: string | null;
   recorder: CspStatusView["recorder"];
   shadows: ShadowRow[];
   now: Date;
@@ -324,6 +344,8 @@ export function buildCspStatus(input: {
       .map((p) => ({ symbol: p.symbol, qty: p.qty, avgPrice: p.avgPrice })),
     skips: input.skips.slice(-20),
     signals: input.signals.slice(-20),
+    queued: input.queued.slice(-20),
+    betaAsOfYmd: input.betaAsOfYmd,
     recorder: input.recorder,
     shadow: summaries.map((s) => ({
       ruleId: s.ruleId,

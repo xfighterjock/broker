@@ -76,7 +76,7 @@ export const REDIS_KEYS = {
   riskOn: "risk:on",
   /** JSON string[] of keys already credited on the deleted risk-off book. Purged on boot. */
   riskoffDistributions: "paper:riskoff_distributions",
-  /** CSP betas, pending signals, and recorder slots. */
+  /** CSP month-end betas, pending signals, and recorder slots. */
   cspState: "paper:csp_state",
 } as const;
 

@@ -71,6 +71,15 @@ export function CspBook({ status }: { status: StatusSnapshot }) {
           Assigned {book!.assigned.map((a) => `${a.qty} ${a.symbol} @ ${a.avgPrice}`).join(", ")}
         </div>
       )}
+      {book?.betaAsOfYmd ? <div className="hint">Beta as of {book.betaAsOfYmd}</div> : null}
+      {(book?.queued?.length ?? 0) > 0 && (
+        <div className="hint">
+          Queued{" "}
+          {book!.queued
+            .map((q) => `${q.symbol} beta ${q.beta.toFixed(2)} as of ${q.betaAsOfYmd ?? book!.betaAsOfYmd ?? "unknown"}`)
+            .join(", ")}
+        </div>
+      )}
       {(book?.signals.length ?? 0) > 0 && <div className="hint">Signals {book!.signals.join(", ")}</div>}
       {(book?.skips.length ?? 0) > 0 && (
         <div className="hint">

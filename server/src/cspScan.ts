@@ -13,6 +13,7 @@ import {
   cspEntrySignal,
   dailyReturns,
   earningsWindowDecision,
+  isHighBeta,
   optionMid,
   pickCspExpiry,
   pickCspStrike,
@@ -44,12 +45,19 @@ export interface CspPendingSignal {
   /** null = calendar unknown (entry will skip). */
   earnings: string[] | null;
   beta: number;
+  /** Last trading day of the prior calendar month. Eligibility uses this beta only. */
+  betaAsOfYmd?: string;
 }
 
 export interface CspBetaRank {
   symbol: string;
   beta: number;
+  /** Month-end session this beta was measured through. Absent on a pre-rule cache. */
+  asOfYmd?: string;
 }
+
+export const CSP_QUEUE_DROP_OPEN = "already open";
+export const CSP_QUEUE_DROP_BETA = "beta below 1.3 at month end";
 
 export function etYmd(now: Date): string {
   const p = etParts(now);
@@ -127,20 +135,79 @@ export function pairedBeta(stock: CspDailyBar[], spy: CspDailyBar[]): number | n
   return betaToBenchmark(dailyReturns(stockCloses), dailyReturns(benchCloses));
 }
 
+function ymdParts(ymd: string): { year: number; month: number; day: number } | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  return { year, month, day };
+}
+
+function formatYmd(year: number, month: number, day: number): string {
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+/** Last NYSE cash session on or before `ymd`, walking back weekends and full holidays. */
+export function lastTradingYmdOnOrBefore(ymd: string): string | null {
+  let cursor: string | null = ymd;
+  for (let i = 0; i < 12 && cursor; i++) {
+    const parts = ymdParts(cursor);
+    if (!parts) return null;
+    if (cashSessionCloseMinute(parts.year, parts.month, parts.day) !== null) return cursor;
+    const prev = new Date(Date.UTC(parts.year, parts.month - 1, parts.day - 1));
+    cursor = formatYmd(prev.getUTCFullYear(), prev.getUTCMonth() + 1, prev.getUTCDate());
+  }
+  return null;
+}
+
+/**
+ * Eligibility beta for `now`: one value for the whole calendar month, measured
+ * through the last trading day of the prior calendar month.
+ */
+export function monthEndBetaSpec(now: Date): { appliesTo: string; asOfYmd: string | null } {
+  const p = etParts(now);
+  const priorMonth = p.month === 1 ? 12 : p.month - 1;
+  const priorYear = p.month === 1 ? p.year - 1 : p.year;
+  const lastDay = new Date(Date.UTC(priorYear, priorMonth, 0)).getUTCDate();
+  return {
+    appliesTo: `${p.year}-${String(p.month).padStart(2, "0")}`,
+    asOfYmd: lastTradingYmdOnOrBefore(formatYmd(priorYear, priorMonth, lastDay)),
+  };
+}
+
+/**
+ * 252 paired daily returns ending on `asOfYmd` (that session's return is included).
+ * Same OLS as `pairedBeta` / `betaToBenchmark`. Bars after the as-of session are ignored.
+ */
+export function monthEndBeta(stock: CspDailyBar[], spy: CspDailyBar[], asOfYmd: string | null): number | null {
+  if (!asOfYmd) return null;
+  return pairedBeta(
+    stock.filter((b) => b.ymd <= asOfYmd),
+    spy.filter((b) => b.ymd <= asOfYmd),
+  );
+}
+
 export function selectCspSignals(input: {
   names: Array<{ symbol: string; bars: CspDailyBar[] }>;
   spy: CspDailyBar[];
   earningsBySymbol: Map<string, string[] | null>;
   now: Date;
+  /** Frozen month-end betas for this calendar month. Missing symbols are computed. */
+  cachedBetas?: Map<string, number> | null;
 }): { pending: CspPendingSignal[]; ranked: CspBetaRank[] } {
+  const spec = monthEndBetaSpec(input.now);
   const ranked: CspBetaRank[] = [];
   const pending: CspPendingSignal[] = [];
   const signalYmd = input.spy.length ? input.spy[input.spy.length - 1].ymd : etYmd(input.now);
   const tradeYmd = cspTradeYmd(input.now);
   for (const name of input.names) {
-    const beta = pairedBeta(name.bars, input.spy);
+    const cached = input.cachedBetas?.get(name.symbol);
+    const beta =
+      cached !== undefined && Number.isFinite(cached) ? cached : monthEndBeta(name.bars, input.spy, spec.asOfYmd);
     if (beta === null || !Number.isFinite(beta)) continue;
-    ranked.push({ symbol: name.symbol, beta });
+    ranked.push({ symbol: name.symbol, beta, asOfYmd: spec.asOfYmd ?? undefined });
     const signal = cspEntrySignal({ bars: name.bars, beta });
     if (!signal.ok) continue;
     const closes = name.bars.map((b) => b.close);
@@ -151,10 +218,64 @@ export function selectCspSignals(input: {
       swingLow: swingLowBeforeEntry(closes),
       earnings: input.earningsBySymbol.get(name.symbol) ?? null,
       beta,
+      betaAsOfYmd: spec.asOfYmd ?? undefined,
     });
   }
   ranked.sort((a, b) => b.beta - a.beta);
   return { pending, ranked };
+}
+
+export function formatCspSignal(signal: CspPendingSignal): string {
+  const asOf = signal.betaAsOfYmd ? ` as of ${signal.betaAsOfYmd}` : "";
+  return `${signal.symbol} signal ${signal.signalYmd} for ${signal.tradeYmd} beta ${signal.beta.toFixed(2)}${asOf}`;
+}
+
+export function cspQueueDropLine(symbol: string, reason: string): string {
+  return `[EventGate] csp queue drop ${symbol}: ${reason}`;
+}
+
+function normSymbol(symbol: string): string {
+  return symbol.trim().toUpperCase();
+}
+
+/**
+ * Drop queued signals that fail the month-end beta rule or already have a csp
+ * put or assigned shares. Does not special-case any ticker. `skipBeta` keeps
+ * the beta check off when bars are unavailable (the caller retries).
+ */
+export function revalidateQueuedSignals(input: {
+  pending: CspPendingSignal[];
+  betaBySymbol: Map<string, number | null>;
+  openUnderlyings: Set<string>;
+  asOfYmd: string | null;
+  skipBeta?: boolean;
+}): { pending: CspPendingSignal[]; dropped: Array<{ symbol: string; reason: string }> } {
+  const open = new Set([...input.openUnderlyings].map(normSymbol));
+  const betas = new Map<string, number | null>();
+  for (const [symbol, beta] of input.betaBySymbol) betas.set(normSymbol(symbol), beta);
+  const pending: CspPendingSignal[] = [];
+  const dropped: Array<{ symbol: string; reason: string }> = [];
+  const seen = new Set<string>();
+  for (const sig of input.pending) {
+    const symbol = normSymbol(sig.symbol);
+    if (!symbol || open.has(symbol) || seen.has(symbol)) {
+      dropped.push({ symbol: sig.symbol, reason: CSP_QUEUE_DROP_OPEN });
+      continue;
+    }
+    if (input.skipBeta) {
+      seen.add(symbol);
+      pending.push(sig);
+      continue;
+    }
+    const beta = betas.has(symbol) ? betas.get(symbol)! : null;
+    if (beta === null || !isHighBeta(beta)) {
+      dropped.push({ symbol: sig.symbol, reason: CSP_QUEUE_DROP_BETA });
+      continue;
+    }
+    seen.add(symbol);
+    pending.push({ ...sig, beta, betaAsOfYmd: input.asOfYmd ?? sig.betaAsOfYmd });
+  }
+  return { pending, dropped };
 }
 
 export function parseYahooOhlcDailyBars(body: unknown): CspDailyBar[] | null {

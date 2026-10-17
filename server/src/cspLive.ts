@@ -8,7 +8,7 @@ import type { OptionLeg, Position } from "../../shared/types";
 import { etradeAuthState, fetchOptionChain, fetchOptionExpiries, findLeg } from "./etrade";
 import { fetchMassiveOhlcDailyBars } from "./massive";
 import { fetchDelayedQuotes, mapPool, YAHOO_CHART_BASE, YAHOO_UA } from "./quotes";
-import type { CspCandidate, CspMark } from "./cspCycle";
+import { cspOpenUnderlyings, cspRecorderSlot, type CspCandidate, type CspMark } from "./cspCycle";
 import type { ShadowRow } from "./cspMath";
 import { calendarDte, pickCspExpiry, resolvePutDelta } from "./cspMath";
 import {
@@ -16,19 +16,23 @@ import {
   candidateFromChain,
   completedDailyBars,
   cspAtClose,
+  cspQueueDropLine,
   cspScanDue,
   CSP_RECORDER_TOP_BETA,
   etYmd,
+  formatCspSignal,
   markFromLeg,
+  monthEndBeta,
+  monthEndBetaSpec,
   parseYahooEarningsCalendar,
   parseYahooOhlcDailyBars,
   recorderSymbols,
+  revalidateQueuedSignals,
   selectCspSignals,
   snapshotRowsFromLegs,
   type CspDailyBar,
   type CspPendingSignal,
 } from "./cspScan";
-import { cspRecorderSlot } from "./cspCycle";
 import {
   emptyCspState,
   insertCspSnapshots,
@@ -49,6 +53,8 @@ let shadowsLoaded = false;
 let rateCache: { at: number; rate: number } | null = null;
 let lastAuthLog = "";
 let scanInflight: Promise<void> | null = null;
+/** Calendar month whose queued signals were already rechecked in this process. */
+let queueCheckedMonth: string | null = null;
 
 function networkScanEnabled(): boolean {
   return (process.env.NODE_ENV || "").toLowerCase() !== "test";
@@ -71,6 +77,7 @@ export function resetCspLiveForTests(): void {
   rateCache = null;
   lastAuthLog = "";
   scanInflight = null;
+  queueCheckedMonth = null;
 }
 
 export function cspPendingFor(symbol: string): CspPendingSignal | undefined {
@@ -89,6 +96,8 @@ export interface CspTickPrep {
   atClose: boolean;
   chainAvailable: boolean;
   signals: string[];
+  queued: Array<{ symbol: string; tradeYmd: string; beta: number; betaAsOfYmd: string | null }>;
+  betaAsOfYmd: string | null;
   skips: Array<{ symbol: string; reason: string }>;
   recorder: { lastAt: string | null; rows: number; blocking: boolean; auth: string };
   /** Non-null only on the first successful load. */
@@ -117,6 +126,7 @@ export async function prepareCspTick(input: {
     const today = etYmd(input.now);
     const pendingBefore = state.pending.length;
     state.pending = state.pending.filter((p) => p.tradeYmd >= today);
+    await revalidateQueued(input.now, input.positions, input.redis, log);
     if (networkScanEnabled() && cspScanDue(state.scannedAt, state.scannedYmd, input.now) && !scanInflight) {
       const redis = input.redis;
       const now = input.now;
@@ -136,7 +146,7 @@ export async function prepareCspTick(input: {
     const chainAvailable = auth === "ok";
     const atClose = cspAtClose(input.now);
     const open = input.positions.filter((p) => p.side !== "Flat" && p.qty > 0 && p.csp && p.sleeveId === "csp");
-    const openUnderlyings = new Set(open.map((p) => p.csp!.underlying));
+    const openUnderlyings = cspOpenUnderlyings(input.positions);
     let recorder: CspTickPrep["recorder"] = { ...input.recorder, auth };
     let blocking = auth !== "ok";
     const skips: Array<{ symbol: string; reason: string }> = [];
@@ -175,7 +185,7 @@ export async function prepareCspTick(input: {
       marks,
       atClose,
       chainAvailable: chainAvailable && !blocking,
-      signals: state.pending.map((p) => `${p.symbol} signal ${p.signalYmd} for ${p.tradeYmd}`),
+      ...signalPayload(input.now),
       skips,
       recorder,
       shadows,
@@ -187,12 +197,30 @@ export async function prepareCspTick(input: {
       marks: {},
       atClose: cspAtClose(input.now),
       chainAvailable: false,
-      signals: state.pending.map((p) => `${p.symbol} signal ${p.signalYmd} for ${p.tradeYmd}`),
+      ...signalPayload(input.now),
       skips: [{ symbol: "csp", reason: "tick failed" }],
       recorder: { ...input.recorder, blocking: true },
       shadows: null,
     };
   }
+}
+
+function signalPayload(now: Date): {
+  signals: string[];
+  queued: CspTickPrep["queued"];
+  betaAsOfYmd: string | null;
+} {
+  const spec = monthEndBetaSpec(now);
+  return {
+    signals: state.pending.map(formatCspSignal),
+    queued: state.pending.map((p) => ({
+      symbol: p.symbol,
+      tradeYmd: p.tradeYmd,
+      beta: p.beta,
+      betaAsOfYmd: p.betaAsOfYmd ?? state.betaAsOfYmd ?? spec.asOfYmd,
+    })),
+    betaAsOfYmd: state.betaAsOfYmd ?? spec.asOfYmd,
+  };
 }
 
 export async function collectEntryCandidates(input: {
@@ -216,9 +244,10 @@ export async function collectEntryCandidates(input: {
   }
   const today = etYmd(input.now);
   let blocking = false;
+  const open = new Set([...input.openUnderlyings].map((s) => s.trim().toUpperCase()));
   for (const sig of input.pending) {
     if (sig.tradeYmd !== today) continue;
-    if (input.openUnderlyings.has(sig.symbol)) {
+    if (open.has(sig.symbol.trim().toUpperCase())) {
       skips.push({ symbol: sig.symbol, reason: "already open" });
       continue;
     }
@@ -293,7 +322,11 @@ async function runScan(now: Date, log: LogFn): Promise<void> {
     log(`[EventGate] csp scan incomplete names=${names.length}; will retry`);
     return;
   }
-  const prelim = selectCspSignals({ names, spy, earningsBySymbol: new Map(), now });
+  const spec = monthEndBetaSpec(now);
+  const cachedBetas = monthBetaCacheValid(spec)
+    ? new Map(state.ranked.map((row) => [row.symbol, row.beta]))
+    : null;
+  const prelim = selectCspSignals({ names, spy, earningsBySymbol: new Map(), now, cachedBetas });
   const earningsBySymbol = new Map<string, string[] | null>();
   await mapPool(prelim.pending, 4, async (sig) => {
     const yahoo = CSP_UNIVERSE.find((n) => n.symbol === sig.symbol)?.yahoo ?? sig.symbol;
@@ -304,18 +337,142 @@ async function runScan(now: Date, log: LogFn): Promise<void> {
     }
     await sleep(150);
   });
-  const selected = selectCspSignals({ names, spy, earningsBySymbol, now });
+  const selected = selectCspSignals({ names, spy, earningsBySymbol, now, cachedBetas });
   state = {
     ...state,
     scannedAt: now.toISOString(),
     scannedYmd: etYmd(now),
     pending: selected.pending,
-    ranked: selected.ranked.slice(0, 80),
+    ranked: selected.ranked,
+    betaMonth: spec.appliesTo,
+    betaAsOfYmd: spec.asOfYmd,
   };
   const highBeta = selected.ranked.filter((r) => r.beta > 1.3).length;
   log(
-    `[EventGate] csp scan done names=${names.length} highBeta=${highBeta} signals=${selected.pending.length} trade=${selected.pending[0]?.tradeYmd ?? "none"}`,
+    `[EventGate] csp scan done names=${names.length} highBeta=${highBeta} signals=${selected.pending.length} asOf=${spec.asOfYmd ?? "none"} trade=${selected.pending[0]?.tradeYmd ?? "none"}`,
   );
+}
+
+function monthBetaCacheValid(spec: { appliesTo: string; asOfYmd: string | null }): boolean {
+  if (!spec.asOfYmd || state.betaMonth !== spec.appliesTo || state.betaAsOfYmd !== spec.asOfYmd) return false;
+  if (state.ranked.length === 0) return false;
+  return state.ranked.every((row) => row.asOfYmd === spec.asOfYmd);
+}
+
+/**
+ * Recheck the Redis queue before any entry. A fresh scan from the old rolling
+ * beta must not survive a restart. Network is skipped under NODE_ENV=test.
+ */
+async function revalidateQueued(
+  now: Date,
+  positions: Position[],
+  redis: RedisLike | null,
+  log: LogFn,
+): Promise<void> {
+  const spec = monthEndBetaSpec(now);
+  if (!spec.asOfYmd || queueCheckedMonth === spec.appliesTo) return;
+  const openUnderlyings = cspOpenUnderlyings(positions);
+  if (state.pending.length === 0) {
+    queueCheckedMonth = spec.appliesTo;
+    return;
+  }
+  if (!networkScanEnabled()) {
+    await applyQueueCheck(
+      revalidateQueuedSignals({
+        pending: state.pending,
+        betaBySymbol: new Map(),
+        openUnderlyings,
+        asOfYmd: spec.asOfYmd,
+        skipBeta: true,
+      }),
+      redis,
+      log,
+    );
+    queueCheckedMonth = spec.appliesTo;
+    return;
+  }
+
+  const betas = new Map<string, number | null>();
+  const missing: string[] = [];
+  if (monthBetaCacheValid(spec)) {
+    const bySymbol = new Map(state.ranked.map((row) => [row.symbol.toUpperCase(), row.beta]));
+    for (const sig of state.pending) {
+      const key = sig.symbol.trim().toUpperCase();
+      const hit = bySymbol.get(key);
+      if (hit === undefined) missing.push(sig.symbol);
+      else betas.set(key, hit);
+    }
+  } else {
+    for (const sig of state.pending) missing.push(sig.symbol);
+  }
+  if (missing.length > 0) {
+    const fetched = await monthEndBetasFor(missing, spec.asOfYmd, now, log);
+    if (!fetched) {
+      await applyQueueCheck(
+        revalidateQueuedSignals({
+          pending: state.pending,
+          betaBySymbol: new Map(),
+          openUnderlyings,
+          asOfYmd: spec.asOfYmd,
+          skipBeta: true,
+        }),
+        redis,
+        log,
+      );
+      return;
+    }
+    for (const [symbol, beta] of fetched) betas.set(symbol, beta);
+  }
+  await applyQueueCheck(
+    revalidateQueuedSignals({
+      pending: state.pending,
+      betaBySymbol: betas,
+      openUnderlyings,
+      asOfYmd: spec.asOfYmd,
+    }),
+    redis,
+    log,
+  );
+  queueCheckedMonth = spec.appliesTo;
+}
+
+async function applyQueueCheck(
+  checked: { pending: CspPendingSignal[]; dropped: Array<{ symbol: string; reason: string }> },
+  redis: RedisLike | null,
+  log: LogFn,
+): Promise<void> {
+  for (const row of checked.dropped) log(cspQueueDropLine(row.symbol, row.reason));
+  if (checked.dropped.length === 0) return;
+  state.pending = checked.pending;
+  await saveCspState(redis, state);
+}
+
+async function monthEndBetasFor(
+  symbols: string[],
+  asOfYmd: string,
+  now: Date,
+  log: LogFn,
+): Promise<Map<string, number | null> | null> {
+  const spyRaw = await fetchBars("SPY", "SPY");
+  if (!spyRaw) {
+    log("[EventGate] csp queue revalidation skipped: SPY daily bars unavailable");
+    return null;
+  }
+  const spy = completedDailyBars(spyRaw, now);
+  const out = new Map<string, number | null>();
+  for (const symbol of symbols) {
+    const key = symbol.trim().toUpperCase();
+    const yahoo = CSP_UNIVERSE.find((n) => n.symbol === key)?.yahoo ?? key;
+    try {
+      const raw = await fetchBars(key, yahoo);
+      const bars = raw ? completedDailyBars(raw, now) : [];
+      out.set(key, monthEndBeta(bars, spy, asOfYmd));
+    } catch (err) {
+      log(`[EventGate] csp queue beta skip ${key}: ${err instanceof Error ? err.message : String(err)}`);
+      out.set(key, null);
+    }
+  }
+  return out;
 }
 
 async function marksForPuts(

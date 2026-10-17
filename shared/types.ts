@@ -774,6 +774,15 @@ export interface CspStatusView {
   assigned: Array<{ symbol: string; qty: number; avgPrice: number }>;
   skips: Array<{ symbol: string; reason: string }>;
   signals: string[];
+  /** Queued candidates with the month-end beta that made them eligible. */
+  queued: Array<{
+    symbol: string;
+    tradeYmd: string;
+    beta: number;
+    betaAsOfYmd: string | null;
+  }>;
+  /** Last trading day of the prior calendar month. Eligibility uses this session. */
+  betaAsOfYmd: string | null;
   recorder: {
     lastAt: string | null;
     rows: number;

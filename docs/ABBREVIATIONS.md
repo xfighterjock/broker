@@ -34,7 +34,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **bearer** — Opaque session token from POST /api/auth/login. Stored as sha256 in Postgres `user_sessions` (`SESSION_TTL_MS` 30 days). iOS keeps the raw token in the Keychain and sends `Authorization: Bearer`. SPA uses cookie `eg.sid` instead.
 
-**beta** — Trailing 252-session beta of daily returns versus SPY (`CSP_BETA_DAYS`, `betaToBenchmark` in server/src/cspMath.ts). The csp sleeve requires beta above 1.3 (`CSP_BETA_MIN`). Recomputed on each csp scan (`cspScanDue` in server/src/cspScan.ts): once per cash-session day in the 16:10–16:25 ET window, or when the stored scan is missing or older than 26 hours. Not a monthly job.
+**beta** — 252 paired daily returns versus SPY (`CSP_BETA_DAYS`, `betaToBenchmark` in server/src/cspMath.ts), measured through the last NYSE session of the prior calendar month (`monthEndBeta` in server/src/cspScan.ts). That single value is csp eligibility for the whole following calendar month. The sleeve requires beta strictly above 1.3 (`CSP_BETA_MIN`, `isHighBeta`). A daily rolling beta is not used. Cached on the csp Redis state as `betaMonth` plus `betaAsOfYmd` and reused until the calendar month changes. The scan itself still runs on `cspScanDue` (16:10–16:25 ET, or a missing/stale scan) so stochastic and MACD stay on the latest completed bars. Startup revalidation drops a queued name at or below 1.3 with reason `beta below 1.3 at month end`.
 
 **BIL** — SPDR Bloomberg 1-3 Month T-Bill ETF. The risk-off sleeve that used BIL as an RS cash benchmark and an idle-cash sweep was deleted, including its paper history. BIL is not auto-traded and the csp sleeve does not trade it. The csp Black-Scholes rate uses the live 13-week yield when Yahoo ^IRX returns one, otherwise 0.04 (`CSP_BS_RATE_FALLBACK`). No sleeve earns interest on idle cash. T-bills are only a benchmark.
 
@@ -74,9 +74,9 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **CSP_ADR_EXCLUSIONS** — Empty list in shared/cspUniverse.ts. Tickers removed from the csp universe even if a future constituent file lists them. ADRs belong here.
 
-**CSP_BETA_DAYS** — 252. Trailing sessions for csp beta versus SPY (`betaToBenchmark` in server/src/cspMath.ts).
+**CSP_BETA_DAYS** — 252. Paired daily returns versus SPY ending on the last trading day of the prior calendar month (`monthEndBeta`). Cached for the following month. Not a daily rolling window.
 
-**CSP_BETA_MIN** — 1.3. csp requires beta strictly above this (`isHighBeta`).
+**CSP_BETA_MIN** — 1.3. csp eligibility is strict: the month-end beta must be above this (`isHighBeta`). 1.3 does not qualify. A queued signal that fails is dropped with reason `beta below 1.3 at month end`.
 
 **CSP_BS_RATE_FALLBACK** — 0.04. Black-Scholes rate when the Yahoo ^IRX quote is missing (`annualRateFromIrx`). Not a fill and not a paper P/L credit.
 
