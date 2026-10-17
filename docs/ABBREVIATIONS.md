@@ -36,7 +36,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **beta** — Trailing 252-session beta of daily returns versus SPY (`CSP_BETA_DAYS`, `betaToBenchmark` in server/src/cspMath.ts). The csp sleeve requires beta above 1.3 (`CSP_BETA_MIN`). Recomputed on each csp scan (`cspScanDue` in server/src/cspScan.ts): once per cash-session day in the 16:10–16:25 ET window, or when the stored scan is missing or older than 26 hours. Not a monthly job.
 
-**BIL** — SPDR Bloomberg 1-3 Month T-Bill ETF. The risk-off sleeve that used BIL as an RS cash benchmark and an idle-cash sweep was deleted, including its paper history. BIL is not auto-traded and the csp sleeve does not trade it. The csp Black-Scholes rate is the live 13-week yield when Yahoo ^IRX returns one, otherwise 0.04 (`CSP_BS_RATE_FALLBACK`). `tbillDayAccrual` is not applied to paper P/L.
+**BIL** — SPDR Bloomberg 1-3 Month T-Bill ETF. The risk-off sleeve that used BIL as an RS cash benchmark and an idle-cash sweep was deleted, including its paper history. BIL is not auto-traded and the csp sleeve does not trade it. The csp Black-Scholes rate and the paper T-bill credit both use the live 13-week yield when Yahoo ^IRX returns one, otherwise 0.04 (`CSP_BS_RATE_FALLBACK`). `tbillDayAccrual` credits idle cash plus reserved collateral on the csp book once per ET calendar day.
 
 **BTAL** — AGF U.S. Market Neutral Anti-Beta Fund. Retired with the risk-off sleeve, which was deleted including its paper history. Not a current rule, and it does not gate csp.
 
@@ -66,7 +66,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **credit_put_stopped** — FCM helper `notifyCreditPutStopped` still sends “Credit-leg put 50% debit stop on {symbol}.” No trading path calls it (tests only).
 
-**Cs** — AUTO PAPER chip initial for the csp sleeve. The five chips are D, M, O, Ow, Cs on the desktop header, web essentials, and iOS. Source: `AUTO_SLEEVE_CHIPS` in client/src/essentials.ts and `SleeveChip` in ios/EventGate/EssentialsFormat.swift. A separate desktop hint string in client/src/App.tsx still reads “D / M / O / Ow / R”; that sentence is not the chip list.
+**Cs** — AUTO PAPER chip initial for the csp sleeve. The five chips are D, M, O, Ow, Cs on the desktop header, web essentials, and iOS. Source: `AUTO_SLEEVE_CHIPS` in client/src/essentials.ts and `SleeveChip` in ios/EventGate/EssentialsFormat.swift. The desktop hint in client/src/App.tsx and the iOS README read D / M / O / Ow / Cs.
 
 **CSP** — Cash-secured put. Two uses. (1) Sleeve id `csp`: paper cash-secured puts on oversold high-beta S&P 500 names. Not gated by RISK ON/OFF. Default AUTO ON. (2) Manual overlay on the options sleeve (`POST /api/paper/csp`), which reserves strike × 100 × qty and is not sold by the csp autopilot. Never naked. Never a live order.
 
@@ -206,7 +206,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **iOS Event Gate** — Native SwiftUI app in ios/ (bundle com.logikmancer.mybroker). Phone Event Gate client: essentials (clock, cash open/close countdown under the ET clock, US cash closed/holiday strip, GATE, RISK, AUTO PAPER chips D/M/O/Ow/Cs (`SleeveChip` in EssentialsFormat.swift), read-only knowledge_time and Stage-3 (`Stage-3 armed (auto)` / `Stage-3 not armed`; no stamp button), Flatten, sleeve P/L, E*TRADE re-auth banner), paged Activity log, plus FCM. When `etradeAuth` is not `ok`, the banner opens in-app Safari (SFSafariViewController) and the PIN is typed in the app. Settings links to the web app as a fallback. Users-table login + optional Face ID / Touch ID unlock of the Keychain session. Web `/m` remains for browsers. A new phone build is an Xcode install, not a web deploy. Push notification glyph is the AppIcon (same auto-agent artwork as the web favicon).
 
-**IRX** — Yahoo chart symbol `^IRX`, the 13-week T-bill yield. `tbillRate` in server/src/cspLive.ts reads it. `annualRateFromIrx` treats a last above 1 as percent. Used as the Black-Scholes rate, not as a paper P/L credit.
+**IRX** — Yahoo chart symbol `^IRX`, the 13-week T-bill yield. `cspTbillRate` in server/src/cspLive.ts reads it (`tbillRate`, Yahoo chart). `annualRateFromIrx` treats a last above 1 as percent. Used as the Black-Scholes rate and as the csp paper T-bill credit. A missing quote uses `CSP_BS_RATE_FALLBACK` (0.04).
 
 **IV** — Implied volatility from the option chain, stored as a decimal (0.21 is 21%). csp records it and uses it for the Black-Scholes delta fallback.
 
@@ -348,7 +348,7 @@ If this file disagrees with code, the code wins. Update alongside docs/DESIGN.md
 
 **TA** — Technical analysis. Momentum/ownership entries come from the S&P scan filters and scores, not from the event clock.
 
-**tbillDayAccrual** — Function in server/src/cspMath.ts. One calendar day of yield, `(cash × annualRate) / 365`, or 0 when cash or the rate is unusable. No caller applies it to paper P/L.
+**tbillDayAccrual** — Function in server/src/cspMath.ts. One calendar day of yield, `(cash × annualRate) / 365`, or 0 when cash or the rate is unusable. `accrueCspTbill` in server/src/cspLive.ts calls it once per America/New_York calendar day (weekends and holidays included) on idle cash plus reserved collateral and adds the credit to the csp sleeve's realized P/L. Redis `paper:csp_state` stores `tbillAccruedYmd` and `tbillAccruedUsd` so a restart does not double-count. The cumulative is on the csp status payload and the web CspBook.
 
 **TLT** — iShares 20+ Year Treasury Bond ETF. On the momentum and ownership quote strips. The risk-off RS overlay and gated-duration long were deleted with that sleeve.
 

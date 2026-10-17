@@ -759,6 +759,8 @@ export interface CspStatusView {
   reservedUsd: number;
   utilizationPct: number;
   realizedPnlUsd: number;
+  /** Cumulative T-bill interest credited to this sleeve's paper book. */
+  tbillAccruedUsd: number;
   openPuts: Array<{
     symbol: string;
     underlying: string;

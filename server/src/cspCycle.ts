@@ -289,6 +289,7 @@ export function buildCspStatus(input: {
   signals: string[];
   recorder: CspStatusView["recorder"];
   shadows: ShadowRow[];
+  tbillAccruedUsd: number;
   now: Date;
 }): CspStatusView {
   const openPuts = input.positions.filter((p) => isOpen(p) && p.csp && p.sleeveId === "csp");
@@ -302,6 +303,7 @@ export function buildCspStatus(input: {
     reservedUsd: reserved,
     utilizationPct: input.equityUsd > 0 ? ((reserved + assignedMv) / input.equityUsd) * 100 : 0,
     realizedPnlUsd: input.realizedPnlUsd,
+    tbillAccruedUsd: Number.isFinite(input.tbillAccruedUsd) ? input.tbillAccruedUsd : 0,
     openPuts: openPuts.map((p) => {
       const meta = p.csp!;
       const dte = calendarDte(ymdEt(input.now), meta.expiry);
