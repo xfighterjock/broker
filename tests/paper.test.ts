@@ -406,7 +406,7 @@ describe("flatten on stop cross", () => {
       avgPrice: 28.17,
       unrealizedPnl: 0,
       gated: false,
-      sleeveId: "riskoff" as const,
+      sleeveId: "csp" as const,
     };
     const stop = {
       id: "ord-uup",
@@ -418,7 +418,7 @@ describe("flatten on stop cross", () => {
       stopPrice: 25.9164,
       state: "Working" as const,
       gated: false,
-      sleeveId: "riskoff" as const,
+      sleeveId: "csp" as const,
     };
     const quote = {
       symbol: "UUP",

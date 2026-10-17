@@ -1,4 +1,3 @@
-import { RISKOFF_QUOTE_STRIP } from "../../shared/constants";
 import type { DelayedQuote, SleeveCard, SleeveId } from "../../shared/types";
 import {
   fetchMassiveFuturesFiveMinuteBars,
@@ -13,7 +12,7 @@ export const DEFAULT_SYMBOLS: Record<SleeveId, string[]> = {
   momentum: ["MES=F", "ES=F", "SPY", "QQQ", "TLT"],
   options: ["SPY", "QQQ", "IWM"],
   ownership: ["SPY", "QQQ", "TLT", "IWM"],
-  riskoff: [...RISKOFF_QUOTE_STRIP],
+  csp: ["SPY"],
 };
 
 /** Exact root → Yahoo futures ticker. Longer keys are not prefixes of shorter ones here. */
@@ -66,16 +65,6 @@ export function symbolsForSleeve(sleeve: SleeveCard | undefined, id: SleeveId): 
   const defaults = [...DEFAULT_SYMBOLS[id]];
   const instruments = sleeve?.instruments?.trim() ?? "";
   const parsed = instruments ? parseInstrumentTickers(instruments) : [];
-  if (id === "riskoff") {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const s of [...defaults, ...parsed]) {
-      if (seen.has(s)) continue;
-      seen.add(s);
-      out.push(s);
-    }
-    return out;
-  }
   if (parsed.length) return parsed;
   return defaults;
 }

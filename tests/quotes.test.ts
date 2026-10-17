@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { RISKOFF_QUOTE_STRIP } from "../shared/constants";
 import { defaultSleeves } from "../shared/types";
 import {
   fetchDelayedQuotes,
@@ -89,29 +88,9 @@ describe("mapTicker / parseInstrumentTickers", () => {
       "TLT",
       "IWM",
     ]);
-    expect(symbolsForSleeve(sleeves.riskoff, "riskoff")).toEqual([...RISKOFF_QUOTE_STRIP]);
-    expect(RISKOFF_QUOTE_STRIP).toContain("DBMF");
-    expect(RISKOFF_QUOTE_STRIP).toContain("KMLM");
-    expect(RISKOFF_QUOTE_STRIP).toContain("CLSE");
-    expect(RISKOFF_QUOTE_STRIP).toContain("USMV");
-    expect(RISKOFF_QUOTE_STRIP).toContain("QUAL");
-    expect(RISKOFF_QUOTE_STRIP).toContain("FTLS");
-    expect(RISKOFF_QUOTE_STRIP).toContain("BTAL");
-    expect(RISKOFF_QUOTE_STRIP).toContain("FLOT");
-    expect(RISKOFF_QUOTE_STRIP).toContain("PDBC");
-    expect(RISKOFF_QUOTE_STRIP).toContain("GDX");
-    sleeves.riskoff.instruments = "SPY / QQQ / HYG / GLD / UUP / BIL";
-    expect(symbolsForSleeve(sleeves.riskoff, "riskoff")).toEqual([...RISKOFF_QUOTE_STRIP]);
-    expect(symbolsForSleeve(sleeves.riskoff, "riskoff")).toContain("DBMF");
-    expect(symbolsForSleeve(sleeves.riskoff, "riskoff")).toContain("KMLM");
-    expect(symbolsForSleeve(sleeves.riskoff, "riskoff")).toContain("CLSE");
-    expect(symbolsForSleeve(sleeves.riskoff, "riskoff")).toContain("USMV");
-    expect(symbolsForSleeve(sleeves.riskoff, "riskoff")).toContain("QUAL");
-    expect(symbolsForSleeve(sleeves.riskoff, "riskoff")).toContain("FTLS");
-    expect(symbolsForSleeve(sleeves.riskoff, "riskoff")).toContain("BTAL");
-    expect(symbolsForSleeve(sleeves.riskoff, "riskoff")).toContain("FLOT");
-    expect(symbolsForSleeve(sleeves.riskoff, "riskoff")).toContain("PDBC");
-    expect(symbolsForSleeve(sleeves.riskoff, "riskoff")).toContain("GDX");
+    expect(symbolsForSleeve(sleeves.csp, "csp")).toEqual(["SPY"]);
+    sleeves.csp.instruments = "AAPL / MSFT";
+    expect(symbolsForSleeve(sleeves.csp, "csp")).toEqual(["AAPL", "MSFT"]);
     sleeves.momentum.instruments = "ES, NQ, SPY";
     expect(symbolsForSleeve(sleeves.momentum, "momentum")).toEqual(["ES=F", "NQ=F", "SPY"]);
   });

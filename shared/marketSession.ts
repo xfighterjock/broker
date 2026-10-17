@@ -1,8 +1,4 @@
 import { etParts, formatEt, pad2, zonedTimeToUtc } from "./clock";
-import {
-  RISKOFF_ETF_EARLY_CLOSE_REBALANCE_MINUTE,
-  RISKOFF_ETF_REBALANCE_MINUTE,
-} from "./constants";
 
 export type MarketClosedReason = "weekend" | "holiday" | "early_close";
 
@@ -182,17 +178,21 @@ function isWeekend(year: number, month: number, day: number): boolean {
   return wd === 0 || wd === 6;
 }
 
+/** Regular NYSE cash close, 16:00 America/New_York. */
+const CASH_CLOSE_MINUTE = 16 * 60;
+/** NYSE early-close cash close, 13:00 America/New_York. */
+const EARLY_CLOSE_MINUTE = 13 * 60;
+
 /**
  * Minute-of-day of the NYSE cash close, or null on weekends and full holidays.
- * Early-close days close at 13:00 ET. Same instants the risk-off overlay
- * rebalance uses (RISKOFF_ETF_REBALANCE_MINUTE / EARLY_CLOSE).
+ * Early-close days close at 13:00 ET.
  */
 export function cashSessionCloseMinute(year: number, month: number, day: number): number | null {
   if (isWeekend(year, month, day)) return null;
   const info = nyseDayOn(year, month, day);
   if (info?.kind === "holiday") return null;
-  if (info?.kind === "early_close") return RISKOFF_ETF_EARLY_CLOSE_REBALANCE_MINUTE;
-  return RISKOFF_ETF_REBALANCE_MINUTE;
+  if (info?.kind === "early_close") return EARLY_CLOSE_MINUTE;
+  return CASH_CLOSE_MINUTE;
 }
 
 function isSessionDay(year: number, month: number, day: number): boolean {

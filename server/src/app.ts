@@ -7,14 +7,12 @@ import {
   REDIS_CHANNELS,
   AUTO_PAPER_INTERVAL_MS,
   REDIS_KEYS,
-  RISKOFF_CREDIT_LEG_SYMBOLS,
-  RISKOFF_ETF_SYMBOLS,
   SLEEVE_IDS,
   TRADER,
   TZ,
 } from "../../shared/constants";
 import { calendarIsStale, computeClock, stage3Arm } from "../../shared/clock";
-import { computeMarketSession } from "../../shared/marketSession";
+import { cashSessionIsOpen, computeMarketSession } from "../../shared/marketSession";
 import {
   anyAutoPaperOn,
   applyAutoPaperPatch,
@@ -134,35 +132,18 @@ import { ensureRisk, getRiskAsOf, kickRisk } from "./risk";
 import {
   considerClockAlerts,
   considerSleeveLossWarn,
-  isCreditLegSymbol,
   noteServiceDown,
   noteServiceUp,
   notifyAuthNeeded,
-  notifyCreditPutOpened,
-  notifyCreditPutStopped,
   notifyDayFill,
   notifyDayFlatten,
   notifyVetoConfirm,
 } from "./eventGateAlerts";
-import { fetchRiskoffEtfOverlay } from "./riskoffEtf";
-import { fetchMassiveCashDividends } from "./massive";
-import {
-  distributionCreditKey,
-  distributionWasChecked,
-  hasDistributionCredit,
-  listDistributionCredits,
-  loadDistributionCredits,
-  markDistributionChecked,
-  planRiskoffDistributionCredits,
-  rememberDistributionCredit,
-  riskoffDistributionSymbols,
-} from "./riskoffDistributions";
-import {
-  openRiskoffCashSweepPositions,
-  riskoffFreeCashUsd,
-  riskoffSleeveEquityUsd,
-  sweepSharesToFund,
-} from "./riskoffCashSweep";
+import { buildCspStatus, runCspDecisions, stampActualPnl, type CspCycleOrder } from "./cspCycle";
+import { shortPutPnlPerContract, type ShadowRow } from "./cspMath";
+import { cspPendingFor, noteCspFill, prepareCspTick } from "./cspLive";
+import { etYmd } from "./cspScan";
+import { upsertCspShadows } from "./cspStore";
 import {
   applyOverlayMarks,
   detectOverlaySettlements,
@@ -319,12 +300,15 @@ export function buildApp(deps: AppDeps): express.Express {
       momentum: null,
       options: null,
       ownership: null,
-      riskoff: null,
+      csp: null,
     } as Record<SleeveId, SessionMark | null>,
     sessionMarksHydrated: false,
     verticalStopCooldown: {} as Record<string, string>,
     verticalStopCooldownHydrated: false,
-    distributionCreditsHydrated: false,
+    cspShadows: [] as ShadowRow[],
+    cspSkips: [] as Array<{ symbol: string; reason: string }>,
+    cspSignals: [] as string[],
+    cspRecorder: { lastAt: null as string | null, rows: 0, blocking: false, auth: "unknown" },
   };
 
   async function ensureSleeves(): Promise<void> {
@@ -431,7 +415,8 @@ export function buildApp(deps: AppDeps): express.Express {
       memory.autoPaperBySleeve = parsed;
       syncAutoPaperDerived();
       // Rewrite legacy global 0/1 as structured JSON on first boot.
-      if (raw === "0" || raw === "1") await persistAutoPaper();
+      const next = serializeAutoPaperBySleeve(parsed);
+      if (raw === "0" || raw === "1" || raw !== next) await persistAutoPaper();
     } catch {
       /* default enabled (all on) when Redis is missing or unreadable */
     }
@@ -732,116 +717,7 @@ export function buildApp(deps: AppDeps): express.Express {
     }
     const vHits = await markVerticalsQuiet();
     const oHits = await markOverlaysQuiet();
-    await creditRiskoffDistributions(nySessionDate(clockNow()));
     return hits.length + vHits + oHits;
-  }
-
-  async function ensureDistributionCredits(): Promise<void> {
-    if (memory.distributionCreditsHydrated) return;
-    memory.distributionCreditsHydrated = true;
-    if (!deps.redis) return;
-    try {
-      const raw = await deps.redis.get(REDIS_KEYS.riskoffDistributions);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as unknown;
-      if (!Array.isArray(parsed)) return;
-      loadDistributionCredits(parsed.filter((k): k is string => typeof k === "string"));
-    } catch {
-      /* keep the in-memory set */
-    }
-  }
-
-  async function persistDistributionCredits(): Promise<void> {
-    if (!deps.redis) return;
-    try {
-      await deps.redis.set(REDIS_KEYS.riskoffDistributions, JSON.stringify(listDistributionCredits()));
-    } catch {
-      /* ignore */
-    }
-  }
-
-  /** Ex-date cash distributions for risk-off ETF lots. Missing Massive rows credit nothing. */
-  async function creditRiskoffDistributions(sessionDate: string): Promise<void> {
-    if (deps.broker.mode !== "mock") return;
-    await ensureSleeves();
-    await ensureBlotter();
-    await ensureDistributionCredits();
-    const positions = deps.broker.getPositionsSync();
-    const symbols = riskoffDistributionSymbols(positions);
-    if (!symbols.length) return;
-    const rows = [];
-    for (const symbol of symbols) {
-      const key = distributionCreditKey("riskoff", symbol, sessionDate);
-      if (hasDistributionCredit(key) || distributionWasChecked(key)) continue;
-      const got = await fetchMassiveCashDividends(symbol, sessionDate);
-      if (got === null) continue;
-      markDistributionChecked(key);
-      rows.push(...got);
-    }
-    const planned = planRiskoffDistributionCredits({
-      positions,
-      distributions: rows,
-      sessionDate,
-    });
-    if (!planned.length) return;
-    for (const credit of planned) {
-      rememberDistributionCredit(credit.key);
-      const card = memory.sleeves.riskoff;
-      memory.sleeves.riskoff = {
-        ...card,
-        paper: applyCashCredit(card.paper, credit.creditUsd),
-        updatedAt: new Date().toISOString(),
-      };
-      deps.broker.addRealizedPnl(credit.creditUsd);
-      memory.blotter.push(
-        makeFill({
-          sleeveId: "riskoff",
-          symbol: credit.symbol,
-          side: "Sell",
-          qty: credit.qty,
-          price: credit.cashAmount,
-          notes: credit.note,
-        }),
-      );
-      deps.engine.log(
-        `paper distribution riskoff ${credit.symbol} ex ${credit.exDate} credit ${credit.creditUsd.toFixed(2)} (MockBroker, not E*TRADE, not live)`,
-      );
-    }
-    if (memory.blotter.length > 200) {
-      memory.blotter.splice(0, memory.blotter.length - 200);
-    }
-    await persistBlotter();
-    await persistSleeves();
-    await persistDistributionCredits();
-  }
-
-  async function sellSweepBeforeRiskoffDebit(neededUsd: number): Promise<void> {
-    await ensureSleeves();
-    const positions = deps.broker.getPositionsSync();
-    const sweep = openRiskoffCashSweepPositions(positions)[0];
-    if (!sweep) return;
-    const quotes = await fetchDelayedQuotes(["BIL"]).catch(() => []);
-    const bil = lastFromQuotes(quotes, "BIL") ?? (sweep.avgPrice > 0 ? sweep.avgPrice : null);
-    if (bil === null) return;
-    const quoteRows = quotes
-      .filter((q) => q.last !== null && Number.isFinite(q.last) && (q.last as number) > 0)
-      .map((q) => ({ symbol: q.symbol, last: q.last as number }));
-    const equity = riskoffSleeveEquityUsd(memory.sleeves.riskoff, positions);
-    const free = riskoffFreeCashUsd(equity, positions, quoteRows);
-    const qty = sweepSharesToFund({
-      neededUsd,
-      freeCashUsd: free,
-      sweepQty: sweep.qty,
-      bilLast: bil,
-    });
-    if (qty < 1) return;
-    await closePaperPosition({
-      sleeveId: "riskoff",
-      symbol: "BIL",
-      reason: "sell cash sweep to fund entry",
-      cashSweep: true,
-      qty,
-    });
   }
 
   async function markVerticalsQuiet(): Promise<number> {
@@ -918,13 +794,6 @@ export function buildApp(deps: AppDeps): express.Express {
       deps.engine.log(
         `paper VERTICAL EXIT ${pos.symbol} ${hit.reason} pnl ${hit.realizedPnl.toFixed(2)} (MockBroker flatten, not live, not E*TRADE order)`,
       );
-      if (
-        (pos.sleeveId ?? "options") === "riskoff" &&
-        isVerticalStopReason(hit.reason) &&
-        isCreditLegSymbol(v.quoteSymbol || v.underlying)
-      ) {
-        void notifyCreditPutStopped(v.quoteSymbol || v.underlying);
-      }
     }
     return exits.length;
   }
@@ -1221,9 +1090,6 @@ export function buildApp(deps: AppDeps): express.Express {
       book.equityUsd,
     );
     if (!v.ok) return { ok: false, error: v.error };
-    if (parsed.sleeveId === "riskoff") {
-      await sellSweepBeforeRiskoffDebit(v.netDebitPaid);
-    }
     const pkg = verticalPackageSymbol({
       underlying: v.long.underlying,
       expiry: v.expiry,
@@ -1276,9 +1142,6 @@ export function buildApp(deps: AppDeps): express.Express {
     deps.engine.log(
       `paper VERTICAL BUY ${v.qty} ${pkg} long @ ${v.longFill} short @ ${v.shortFill} debit ${v.netDebitPaid.toFixed(2)} (MockBroker, not E*TRADE order, not Tradovate, not live)`,
     );
-    if (parsed.sleeveId === "riskoff" && parsed.right === "P" && isCreditLegSymbol(parsed.symbol)) {
-      void notifyCreditPutOpened(parsed.symbol);
-    }
     return { ok: true, symbol: pkg };
   }
 
@@ -1495,6 +1358,149 @@ export function buildApp(deps: AppDeps): express.Express {
     return { ok: true };
   }
 
+  async function runWiredCsp(now: Date, riskOn: boolean): Promise<void> {
+    await ensureSleeves();
+    const positions = deps.broker.getPositionsSync();
+    const prep = await prepareCspTick({
+      now,
+      positions,
+      redis: deps.redis,
+      pool: deps.pool,
+      log: (line) => deps.engine.log(line),
+      recorder: memory.cspRecorder,
+    });
+    if (prep.shadows && memory.cspShadows.length === 0) memory.cspShadows = prep.shadows;
+    memory.cspRecorder = prep.recorder;
+    memory.cspSignals = prep.signals;
+    for (const [id, mark] of Object.entries(prep.marks)) {
+      const pos = deps.broker.getPositionsSync().find((p) => p.id === id);
+      if (!pos?.csp || mark.mid === null) continue;
+      const pnl = (pos.csp.entryPremium - mark.mid) * 100 * pos.csp.contracts;
+      deps.broker.patchPosition(pos.symbol, {
+        unrealizedPnl: pnl,
+        csp: {
+          ...pos.csp,
+          mid: mark.mid,
+          bid: mark.bid ?? pos.csp.bid,
+          ask: mark.ask ?? pos.csp.ask,
+          delta: mark.delta ?? pos.csp.delta,
+        },
+      });
+    }
+    const sleeve = memory.sleeves.csp;
+    const livePositions = deps.broker.getPositionsSync();
+    const book = sleeveBook(sleeve, livePositions);
+    const lossCapHit = sleeve.paper.realizedPnlUsd <= -sleeve.lossCapUsd || book.totalPnlUsd <= -sleeve.lossCapUsd;
+    const clock = computeClock(now, deps.getEvents());
+    const decision = runCspDecisions({
+      now,
+      riskOn,
+      autoOn: memory.autoPaperBySleeve.csp === true,
+      gateEnabled: deps.engine.enabled,
+      gateMode: clock.mode,
+      lossCapHit,
+      equityUsd: book.equityUsd,
+      positions: livePositions,
+      candidates: prep.candidates,
+      chainAvailable: prep.chainAvailable,
+      atClose: prep.atClose,
+      marks: prep.marks,
+      shadows: memory.cspShadows,
+    });
+    memory.cspShadows = decision.shadows;
+    memory.cspSkips = [...prep.skips, ...decision.skips].slice(-40);
+    const allowOrders = cashSessionIsOpen(now) || prep.atClose;
+    if (allowOrders) {
+      for (const order of decision.orders) {
+        await applyCspOrder(order, now);
+      }
+    }
+    await upsertCspShadows(deps.pool, memory.cspShadows);
+    if (decision.orders.length > 0) {
+      await persistBlotter();
+      await persistSleeves();
+    }
+  }
+
+  async function applyCspOrder(order: CspCycleOrder, now: Date): Promise<void> {
+    if (order.kind === "sell-put" && order.entry) {
+      const e = order.entry;
+      const pending = cspPendingFor(e.underlying);
+      const symbol = order.symbol;
+      deps.broker.injectPosition({
+        symbol,
+        qty: e.contracts,
+        side: "Short",
+        avgPrice: e.fill,
+        sleeveId: "csp",
+        csp: {
+          underlying: e.underlying,
+          strike: e.strike,
+          expiry: e.expiry,
+          entryPremium: e.fill,
+          contracts: e.contracts,
+          reservedUsd: e.reservedUsd,
+          entryYmd: etYmd(now),
+          swingLow: pending?.swingLow ?? null,
+          earningsDates: pending?.earnings ?? null,
+          iv: e.iv,
+          delta: e.delta,
+          bid: e.bid,
+          ask: e.ask,
+          mid: e.mid,
+          openInterest: e.oi,
+          volume: e.volume,
+        },
+      });
+      memory.blotter.push({
+        id: `csp-${Date.now().toString(36)}-${e.underlying}`,
+        sleeveId: "csp",
+        ts: now.toISOString(),
+        symbol,
+        side: "Sell",
+        qty: e.contracts,
+        price: e.fill,
+        notes: `csp entry ${e.underlying} ${e.strike} ${e.expiry} x${e.contracts}`,
+      });
+      await noteCspFill(e.underlying, deps.redis);
+      deps.engine.log(
+        `auto paper csp sell ${e.contracts} ${symbol} @ ${e.fill} (MockBroker, not live, not E*TRADE order)`,
+      );
+      return;
+    }
+    if ((order.kind === "buy-put" || order.kind === "sell-shares") && order.positionId) {
+      const pos = deps.broker.getPositionsSync().find((p) => p.id === order.positionId);
+      const entry = pos?.csp?.entryPremium ?? 0;
+      const contracts = pos?.csp?.contracts ?? order.qty;
+      const perContract =
+        order.kind === "sell-shares"
+          ? shortPutPnlPerContract(entry, Math.max((pos?.csp?.strike ?? order.price) - order.price, 0))
+          : shortPutPnlPerContract(entry, order.price);
+      memory.cspShadows = stampActualPnl(memory.cspShadows, order.positionId, perContract);
+      deps.broker.flattenPositionIds([order.positionId]);
+      const pnl = perContract * contracts;
+      deps.broker.addRealizedPnl(pnl);
+      const card = memory.sleeves.csp;
+      memory.sleeves.csp = {
+        ...card,
+        paper: { ...card.paper, realizedPnlUsd: card.paper.realizedPnlUsd + pnl, trades: card.paper.trades + 1 },
+      };
+      memory.blotter.push({
+        id: `csp-x-${Date.now().toString(36)}`,
+        sleeveId: "csp",
+        ts: now.toISOString(),
+        symbol: order.symbol,
+        side: order.kind === "sell-shares" ? "Sell" : "Buy",
+        qty: order.qty,
+        price: order.price,
+        notes: `csp ${order.reason}`,
+      });
+      deps.engine.log(
+        `auto paper csp close ${order.symbol} ${order.reason} pnl ${pnl.toFixed(2)} (MockBroker, not live, not E*TRADE order)`,
+      );
+    }
+  }
+
   let autoRunning = false;
   async function runWiredAutopilot(): Promise<void> {
     if (autoRunning) return;
@@ -1507,12 +1513,14 @@ export function buildApp(deps: AppDeps): express.Express {
       const tickNow = clockNow();
       await maybeAutoStampKnowledgeTime(tickNow);
       const fadeLotOpen = deps.broker.getPositionsSync().some(isOpenCpiLateFade);
-      if (!anyAutoPaperOn(memory.autoPaperBySleeve) && !fadeLotOpen) return;
       const mockErr = assertMockOnly();
       if (mockErr) {
         deps.engine.log(`auto paper idle: ${mockErr}`);
         return;
       }
+      const risk = await ensureRisk();
+      await runWiredCsp(tickNow, risk.riskOn);
+      if (!anyAutoPaperOn(memory.autoPaperBySleeve) && !fadeLotOpen) return;
       const cache = getScanFeaturesCache();
       const scanReady = cache !== null;
       const momentumRows = cache
@@ -1521,27 +1529,6 @@ export function buildApp(deps: AppDeps): express.Express {
       const featureRows = cache
         ? cache.rows.map((r) => ({ symbol: r.symbol, above200: r.features.above200 }))
         : [];
-      const risk = await ensureRisk();
-      let riskoffQuotes: Array<{ symbol: string; last: number }> = [];
-      if (!risk.riskOn) {
-        const qs = await fetchDelayedQuotes([
-          "SPY",
-          "QQQ",
-          "IWM",
-          ...RISKOFF_CREDIT_LEG_SYMBOLS,
-        ]).catch(() => []);
-        riskoffQuotes = qs
-          .filter((q) => q.last !== null && Number.isFinite(q.last) && q.last > 0)
-          .map((q) => ({ symbol: q.symbol, last: q.last as number }));
-      }
-      const [riskoffEtfOverlay, etfQuoteRows] = await Promise.all([
-        fetchRiskoffEtfOverlay(),
-        fetchDelayedQuotes([...RISKOFF_ETF_SYMBOLS]).catch(() => []),
-      ]);
-      const riskoffEtfQuotes = etfQuoteRows
-        .filter((q) => q.last !== null && Number.isFinite(q.last) && q.last > 0)
-        .map((q) => ({ symbol: q.symbol, last: q.last as number }));
-      const sleeveBooks = await sleeveBooksWithSession();
       const [dayBars, cpiLateFadeBars] = await Promise.all([
         fetchDayMesFiveMinuteBars().catch(() => []),
         fetchCpiLateFadeMesFiveMinuteBars().catch(() => []),
@@ -1555,17 +1542,6 @@ export function buildApp(deps: AppDeps): express.Express {
         featureRows,
         scanReady,
         riskOn: risk.riskOn,
-        riskChecks: {
-          ...risk.checks,
-          lqdAbove200: risk.creditLegAbove200.lqdAbove200,
-          jnkAbove200: risk.creditLegAbove200.jnkAbove200,
-        },
-        riskoffQuotes,
-        riskoffEtfReturns: riskoffEtfOverlay?.returns ?? null,
-        riskoffEtfReturns21: riskoffEtfOverlay?.returns21 ?? null,
-        riskoffEtfAbove200: riskoffEtfOverlay?.above200 ?? null,
-        riskoffEtfRealizedVol20: riskoffEtfOverlay?.realizedVol20 ?? null,
-        riskoffEtfQuotes,
         verticalStopCooldown: memory.verticalStopCooldown,
         now: tickNow,
         gateMode: computeClock(tickNow, deps.getEvents()).mode,
@@ -1573,23 +1549,18 @@ export function buildApp(deps: AppDeps): express.Express {
         events: deps.getEvents(),
         dayBars,
         cpiLateFadeBars,
-        riskoffSleeveBook: sleeveBooks.riskoff,
         placeVertical: async (v: AutoVertical) => {
-          if (v.sleeveId === "riskoff" && v.right !== "P") {
-            return { ok: false, error: "riskoff sleeve: put debit verticals only" };
-          }
-          if (v.sleeveId === "options" && v.right !== "C") {
+          if (v.right !== "C") {
             return { ok: false, error: "options auto: call debit only" };
           }
           return placePaperVertical({
-            sleeveId: v.sleeveId,
+            sleeveId: "options",
             symbol: v.symbol,
             right: v.right,
             expiry: v.expiry,
             longStrike: v.longStrike,
             shortStrike: v.shortStrike,
             thesis: v.thesis,
-            qty: v.qty,
           });
         },
         fetchExpiries: async (symbol: string) => {
@@ -1619,18 +1590,6 @@ export function buildApp(deps: AppDeps): express.Express {
               stopPrice: buy.stopPrice,
               thesis: buy.thesis,
               cpiLateFade: buy.cpiLateFade === true,
-            });
-          }
-          if (buy.sleeveId === "riskoff") {
-            return placePaperOrder({
-              sleeveId: "riskoff",
-              symbol: buy.symbol,
-              side: "Buy",
-              qty: buy.qty,
-              stopPrice: buy.stopPrice,
-              thesis: buy.thesis,
-              gatedDuration: buy.gatedDuration === true,
-              cashSweep: buy.cashSweep === true,
             });
           }
           const quotes = await fetchDelayedQuotes([buy.symbol]);
@@ -1738,6 +1697,16 @@ export function buildApp(deps: AppDeps): express.Express {
       autoPaper: memory.autoPaper,
       autoPaperBySleeve: { ...memory.autoPaperBySleeve },
       sleeveBooks,
+      csp: buildCspStatus({
+        equityUsd: sleeveBooks.csp?.equityUsd ?? 100_000,
+        realizedPnlUsd: memory.sleeves.csp.paper.realizedPnlUsd,
+        positions: deps.broker.getPositionsSync(),
+        skips: memory.cspSkips,
+        signals: memory.cspSignals,
+        recorder: { ...memory.cspRecorder, auth: etradeAuth },
+        shadows: memory.cspShadows,
+        now,
+      }),
       riskOn: risk.riskOn,
       riskChecks: risk.checks,
       notifications: await notifications.status(),
@@ -2384,11 +2353,9 @@ export function buildApp(deps: AppDeps): express.Express {
   });
 
   app.post("/api/paper/order", async (req, res) => {
-    if (isVerticalBody(req.body) || ["options", "riskoff"].includes(String((req.body as { sleeveId?: unknown } | undefined)?.sleeveId ?? ""))) {
+    if (isVerticalBody(req.body) || String((req.body as { sleeveId?: unknown } | undefined)?.sleeveId ?? "") === "options") {
       if (isVerticalBody(req.body)) {
-        const hint = String((req.body as { sleeveId?: unknown } | undefined)?.sleeveId ?? "");
-        const sid = hint === "riskoff" ? "riskoff" : "options";
-        const placedV = await placePaperVertical({ ...(req.body as object), sleeveId: sid });
+        const placedV = await placePaperVertical({ ...(req.body as object), sleeveId: "options" });
         if (!placedV.ok) {
           res.status(placedV.status ?? 400).json({ error: placedV.error });
           return;

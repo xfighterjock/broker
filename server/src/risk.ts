@@ -16,8 +16,7 @@ export const RISK_CACHE_MS = 15 * 60 * 1000;
 
 /**
  * Consecutive risk refreshes that may repeat the last computed above200
- * boolean before that check is published as null. Same count as
- * RISKOFF_ETF_MISSING_BARS_MAX_MISSES. At RISK_CACHE_MS (15 min) misses 1–2
+ * boolean before that check is published as null. At RISK_CACHE_MS (15 min) misses 1–2
  * cover about 45 minutes — a few refreshes, inside one cash session — and
  * the third null publish is "200dma missing", not "below". Process-local;
  * a restart with bars still missing publishes null. Not a full session hold.
@@ -36,19 +35,12 @@ export type RiskChecks = {
   dollarVeto: boolean;
 };
 
-/** Autopilot-only. Not on GET /api/public/risk. Null = bars missing (fail closed). */
-export type CreditLegAbove200 = {
-  lqdAbove200: boolean | null;
-  jnkAbove200: boolean | null;
-};
-
 export type RiskSnapshot = {
   riskOn: boolean;
   checks: RiskChecks;
-  creditLegAbove200: CreditLegAbove200;
 };
 
-/** Own-200 for LQD/JNK credit-leg puts. Missing bars or short series → null. */
+/** True/false from a daily series. Missing or short bars stay null. */
 export function above200FromBars(bars: DailyBar[] | null | undefined): boolean | null {
   if (!bars) return null;
   const feat = featuresFromBars(bars);
@@ -83,7 +75,6 @@ export function riskOffFallback(): RiskSnapshot {
       uup20dPct: null,
       dollarVeto: true,
     },
-    creditLegAbove200: { lqdAbove200: null, jnkAbove200: null },
   };
 }
 
@@ -104,8 +95,6 @@ export function riskFromFeatures(input: {
   acwi: ScanFeatures | null;
   hyg: ScanFeatures | null;
   uup20dPct: number | null;
-  lqd?: ScanFeatures | null;
-  jnk?: ScanFeatures | null;
 }): RiskSnapshot {
   const spyAbove200 = above200OrNull(input.spy);
   const acwiAbove200 = above200OrNull(input.acwi);
@@ -120,10 +109,6 @@ export function riskFromFeatures(input: {
       hygAbove200,
       uup20dPct: input.uup20dPct,
       dollarVeto,
-    },
-    creditLegAbove200: {
-      lqdAbove200: input.lqd === undefined ? null : input.lqd ? input.lqd.above200 : null,
-      jnkAbove200: input.jnk === undefined ? null : input.jnk ? input.jnk.above200 : null,
     },
   };
 }
@@ -302,13 +287,11 @@ function gateBarsMissing(
 }
 
 async function runRisk(): Promise<RiskSnapshot> {
-  const [spyBars, acwiBars, hygBars, uupBars, lqdBars, jnkBars] = await Promise.all([
+  const [spyBars, acwiBars, hygBars, uupBars] = await Promise.all([
     fetchMassiveDailyBars("SPY"),
     fetchMassiveDailyBars("ACWI"),
     fetchMassiveDailyBars("HYG"),
     fetchMassiveDailyBars("UUP"),
-    fetchMassiveDailyBars("LQD"),
-    fetchMassiveDailyBars("JNK"),
   ]);
   const hardFailure = gateBarsMissing(spyBars, acwiBars, hygBars, uupBars);
   const raw = hardFailure
@@ -318,8 +301,6 @@ async function runRisk(): Promise<RiskSnapshot> {
         acwi: acwiBars ? featuresFromBars(acwiBars) : null,
         hyg: hygBars ? featuresFromBars(hygBars) : null,
         uup20dPct: uup20dReturn(uupBars),
-        lqd: lqdBars ? featuresFromBars(lqdBars) : null,
-        jnk: jnkBars ? featuresFromBars(jnkBars) : null,
       });
   const snap = applyAbove200Staleness(raw);
   cached = { at: Date.now(), snap };

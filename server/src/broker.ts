@@ -1,4 +1,12 @@
-import type { OverlayMeta, Position, SleeveId, VerticalMeta, WorkingOrder } from "../../shared/types";
+import type {
+  CspAssignedMeta,
+  CspPutMeta,
+  OverlayMeta,
+  Position,
+  SleeveId,
+  VerticalMeta,
+  WorkingOrder,
+} from "../../shared/types";
 import type { OrderType } from "../../shared/constants";
 
 export interface InjectOrderInput {
@@ -27,6 +35,8 @@ export interface InjectPositionInput {
   cashSweep?: boolean;
   /** Day-sleeve CPI late-session fade lot. Not the MES stochastic lot. */
   cpiLateFade?: boolean;
+  csp?: CspPutMeta;
+  cspAssigned?: CspAssignedMeta;
 }
 
 export interface BrokerClient {

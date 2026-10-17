@@ -104,16 +104,19 @@ describe("parseAutoPaperRedis migration", () => {
     expect(anyAutoPaperOn(flags!)).toBe(true);
   });
 
-  it("reads structured JSON and leaves omitted sleeves off", () => {
+  it("reads structured JSON, leaves omitted sleeves off, and defaults a missing csp key on", () => {
     const flags = parseAutoPaperRedis(JSON.stringify({ day: false, riskoff: true }));
     expect(flags).toEqual({
       day: false,
       momentum: false,
       options: false,
       ownership: false,
-      riskoff: true,
+      csp: true,
     });
     expect(anyAutoPaperOn(flags!)).toBe(true);
+    const explicit = parseAutoPaperRedis(JSON.stringify({ day: false, csp: false }));
+    expect(explicit?.csp).toBe(false);
+    expect(explicit?.day).toBe(false);
   });
 
   it("returns null for missing or junk so the in-memory default is kept", () => {
@@ -130,7 +133,7 @@ describe("parseAutoPaperRedis migration", () => {
       momentum: true,
       options: false,
       ownership: true,
-      riskoff: true,
+      csp: true,
     };
     expect(parseAutoPaperRedis(serializeAutoPaperBySleeve(flags))).toEqual(flags);
   });
@@ -149,9 +152,12 @@ describe("parseAutoPaperBody", () => {
       sleeveId: "day",
       enabled: false,
     });
-    expect(parseAutoPaperBody({ sleeves: { day: false, riskoff: true } })).toEqual({
+    expect(parseAutoPaperBody({ sleeves: { day: false, csp: true } })).toEqual({
       kind: "batch",
-      sleeves: { day: false, riskoff: true },
+      sleeves: { day: false, csp: true },
+    });
+    expect(parseAutoPaperBody({ sleeves: { riskoff: true } })).toEqual({
+      error: "sleeves must include at least one known sleeveId",
     });
   });
 
@@ -171,17 +177,17 @@ describe("parseAutoPaperBody", () => {
     const start = defaultAutoPaperBySleeve(true);
     const dayOff = applyAutoPaperPatch(start, { kind: "one", sleeveId: "day", enabled: false });
     expect(dayOff.day).toBe(false);
-    expect(dayOff.riskoff).toBe(true);
+    expect(dayOff.csp).toBe(true);
     const batch = applyAutoPaperPatch(dayOff, {
       kind: "batch",
-      sleeves: { riskoff: false, momentum: true },
+      sleeves: { csp: false, momentum: true },
     });
     expect(batch).toEqual({
       day: false,
       momentum: true,
       options: true,
       ownership: true,
-      riskoff: false,
+      csp: false,
     });
     expect(applyAutoPaperPatch(batch, { kind: "all", enabled: false })).toEqual(
       defaultAutoPaperBySleeve(false),
@@ -248,7 +254,7 @@ describe("POST /api/paper/auto + status snapshot", () => {
     }
   });
 
-  it("can turn day off while riskoff stays on", async () => {
+  it("can turn day off while csp stays on", async () => {
     const redis = memoryRedis({
       [REDIS_KEYS.autoPaper]: serializeAutoPaperBySleeve(defaultAutoPaperBySleeve(true)),
     });
@@ -263,11 +269,11 @@ describe("POST /api/paper/auto + status snapshot", () => {
       expect(res.status).toBe(200);
       const snap = (await res.json()) as StatusSnapshot;
       expect(snap.autoPaperBySleeve.day).toBe(false);
-      expect(snap.autoPaperBySleeve.riskoff).toBe(true);
+      expect(snap.autoPaperBySleeve.csp).toBe(true);
       expect(snap.autoPaper).toBe(true);
       const stored = parseAutoPaperRedis(redis.store.get(REDIS_KEYS.autoPaper));
       expect(stored?.day).toBe(false);
-      expect(stored?.riskoff).toBe(true);
+      expect(stored?.csp).toBe(true);
     } finally {
       await srv.close();
     }
@@ -280,11 +286,11 @@ describe("POST /api/paper/auto + status snapshot", () => {
       const batch = await fetch(`${srv.url}/api/paper/auto`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sleeves: { day: false, riskoff: true, momentum: false } }),
+        body: JSON.stringify({ sleeves: { day: false, csp: true, momentum: false } }),
       });
       const mid = (await batch.json()) as StatusSnapshot;
       expect(mid.autoPaperBySleeve.day).toBe(false);
-      expect(mid.autoPaperBySleeve.riskoff).toBe(true);
+      expect(mid.autoPaperBySleeve.csp).toBe(true);
       expect(mid.autoPaperBySleeve.options).toBe(true);
       expect(mid.autoPaper).toBe(true);
 

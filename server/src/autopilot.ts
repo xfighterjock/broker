@@ -1,23 +1,9 @@
 import {
   DEFAULT_SLEEVE_EQUITY_USD,
-  MAX_AUTO_RISKOFF_VERTICALS,
   MAX_AUTO_VERTICALS,
   OPTIONS_DTE_EXIT,
   OPTIONS_DTE_TARGET_MAX,
   OPTIONS_DTE_TARGET_MIN,
-  OPTIONS_MULTIPLIER,
-  RISKOFF_CREDIT_LEG_EXPIRY_CANDIDATES,
-  RISKOFF_CREDIT_LEG_MAX_AUTO_QTY,
-  RISKOFF_CREDIT_LEG_MAX_ROUNDTRIP_SLIPPAGE_FRAC,
-  RISKOFF_CREDIT_LEG_MIN_OPEN_INTEREST,
-  RISKOFF_CREDIT_LEG_MONTHLY_DTE_MAX,
-  RISKOFF_CREDIT_LEG_MONTHLY_DTE_MIN,
-  RISKOFF_CREDIT_LEG_STRIKE_OFFSETS,
-  RISKOFF_CREDIT_LEG_SYMBOLS,
-  RISKOFF_HYG_MAX_AUTO_QTY,
-  RISKOFF_HYG_SYMBOL,
-  RISKOFF_SYMBOLS,
-  type RiskoffCreditLegSymbol,
 } from "../../shared/constants";
 import type {
   OptionExpiry,
@@ -29,35 +15,9 @@ import type {
   SleeveCard,
   SleeveId,
 } from "../../shared/types";
-import { pointValueFor, sleeveBook } from "./paper";
-import {
-  decideRiskoffEtf,
-  openRiskoffEtfPositions,
-  riskoffSleeveLossCapHit,
-  type RiskoffEtfAbove200,
-  type RiskoffEtfReturns,
-  type RiskoffEtfVols,
-} from "./riskoffEtf";
-import {
-  decideRiskoffDuration,
-  openRiskoffDurationPositions,
-  overlayHoldsDurationName,
-  riskoffDurationAllowed,
-} from "./riskoffDuration";
-import {
-  decideRiskoffCashSweep,
-  openRiskoffCashSweepPositions,
-  riskoffFreeCashUsd,
-  riskoffSleeveEquityUsd,
-  sweepSharesToFund,
-} from "./riskoffCashSweep";
+import { pointValueFor } from "./paper";
 import { passesMomentumFilter } from "./scan";
-import {
-  noteCreditLegOiSkip,
-  notifyCreditPutRiskOnFlatten,
-  notifyOverlayRotation,
-  resetOiSkipStreak,
-} from "./eventGateAlerts";
+import { resetOiSkipStreak } from "./eventGateAlerts";
 import {
   daysToExpiry,
   isVerticalPosition,
@@ -82,16 +42,12 @@ export const OWNERSHIP_STOP_MUL = 0.98;
 export const AUTO_RISK_FRAC = 0.01;
 
 export type AutoBuy = {
-  sleeveId: "momentum" | "ownership" | "riskoff" | "day";
+  sleeveId: "momentum" | "ownership" | "day";
   symbol: string;
   side: "Buy" | "Sell";
   qty: number;
   stopPrice: number;
   thesis: string;
-  /** Risk-off gated duration lot. Persist on the MockBroker position. */
-  gatedDuration?: boolean;
-  /** Risk-off idle-cash BIL sweep. Not the overlay BIL leg. */
-  cashSweep?: boolean;
   /** Day-sleeve CPI late-session fade. Distinct blotter thesis and mock lot. */
   cpiLateFade?: boolean;
 };
@@ -242,22 +198,20 @@ export function decideSells(
 
 
 export type AutoVerticalIntent = {
-  sleeveId: "options" | "riskoff";
+  sleeveId: "options";
   symbol: string;
   last: number;
   thesis: string;
 };
 
 export type AutoVertical = {
-  sleeveId: "options" | "riskoff";
+  sleeveId: "options";
   symbol: string;
-  right: "C" | "P";
+  right: "C";
   expiry: string;
   longStrike: number;
   shortStrike: number;
   thesis: string;
-  /** Credit-leg riskoff auto only: hard-capped contract count (RISKOFF_CREDIT_LEG_MAX_AUTO_QTY). Undefined lets validateDebitVertical auto-size at 1%, unchanged for SPY/QQQ/IWM riskoff, options calls, and manual entries. */
-  qty?: number;
 };
 
 function openVerticalUnderlyers(positions: Position[], sleeveId: SleeveId): Set<string> {
@@ -305,363 +259,6 @@ export function decideCallVerticalIntents(
   return out;
 }
 
-export type RiskoffPutChecks = {
-  spyAbove200?: boolean | null;
-  hygAbove200?: boolean | null;
-  lqdAbove200?: boolean | null;
-  jnkAbove200?: boolean | null;
-  dollarVeto?: boolean | null;
-  /** Present on the risk snapshot. Null means the UUP series was missing. */
-  uup20dPct?: number | null;
-};
-
-/** Keep null (bars missing) distinct from an omitted check. */
-function regimeCheck(
-  checks: RiskoffPutChecks | null | undefined,
-  key: "spyAbove200" | "hygAbove200",
-): boolean | null | undefined {
-  if (!checks || !Object.prototype.hasOwnProperty.call(checks, key)) return undefined;
-  const value = checks[key];
-  if (typeof value === "boolean" || value === null) return value;
-  return undefined;
-}
-
-function uupFromChecks(checks: RiskoffPutChecks | null | undefined): number | null | undefined {
-  if (!checks || !Object.prototype.hasOwnProperty.call(checks, "uup20dPct")) return undefined;
-  return checks.uup20dPct ?? null;
-}
-
-const RISKOFF_EQUITY_PUTS = new Set<string>([...RISKOFF_SYMBOLS, "IWM"]);
-const RISKOFF_CREDIT_LEG_SET = new Set<string>(RISKOFF_CREDIT_LEG_SYMBOLS);
-
-export function isRiskoffCreditLeg(symbol: string): symbol is RiskoffCreditLegSymbol {
-  return RISKOFF_CREDIT_LEG_SET.has(symbol.trim().toUpperCase());
-}
-
-function knownBool(v: boolean | null | undefined): boolean | undefined {
-  return typeof v === "boolean" ? v : undefined;
-}
-
-function verticalUnderlyer(p: Position): string {
-  if (!p.vertical) return "";
-  return (p.vertical.quoteSymbol || p.vertical.underlying || "").trim().toUpperCase();
-}
-
-function creditLegAbove200(
-  symbol: string,
-  checks?: RiskoffPutChecks | null,
-): boolean | undefined {
-  const u = symbol.trim().toUpperCase();
-  if (u === "HYG") return knownBool(checks?.hygAbove200);
-  if (u === "LQD") return knownBool(checks?.lqdAbove200);
-  if (u === "JNK") return knownBool(checks?.jnkAbove200);
-  return undefined;
-}
-
-/** True when RISK OFF and SPY is known below 200dma. Missing check fails closed. */
-export function riskoffEquityPutsAllowed(
-  riskOn: boolean,
-  spyAbove200?: boolean | null,
-): boolean {
-  return riskOn === false && spyAbove200 === false;
-}
-
-/**
- * True when RISK OFF, SPY is known below 200dma, and that credit name is
- * known below its own 200dma. Missing spyAbove200 or own-200 fails closed
- * (no new put). HYG-only OFF (SPY still above 200) does not open HYG/LQD/JNK.
- */
-export function riskoffCreditLegPutAllowed(
-  riskOn: boolean,
-  above200?: boolean | null,
-  spyAbove200?: boolean | null,
-): boolean {
-  return riskoffEquityPutsAllowed(riskOn, spyAbove200) && above200 === false;
-}
-
-/** Same as riskoffCreditLegPutAllowed for HYG. Missing spyAbove200 fails closed. */
-export function riskoffHygPutAllowed(
-  riskOn: boolean,
-  hygAbove200?: boolean | null,
-  spyAbove200?: boolean | null,
-): boolean {
-  return riskoffCreditLegPutAllowed(riskOn, hygAbove200, spyAbove200);
-}
-
-/** Either the equity-index puts or a credit-leg put (HYG/LQD/JNK) may fire. Both require SPY below 200. */
-export function riskoffPutsAllowed(
-  riskOn: boolean,
-  checks?: RiskoffPutChecks | null,
-): boolean {
-  return riskoffEquityPutsAllowed(riskOn, knownBool(checks?.spyAbove200));
-}
-
-/**
- * Risk-off put debit intents. Credit-leg names first (HYG, then LQD, then
- * JNK) when SPY is below 200dma and that name is below its own 200dma;
- * SPY/QQQ/IWM only when SPY is below 200dma. Missing spyAbove200 or own-200
- * fail closed (no new credit-leg put). Never calls. One per name. Cap
- * MAX_AUTO_RISKOFF_VERTICALS. No new put when the sleeve loss cap is hit
- * (realized, or blotter daily/total at or below −lossCapUsd).
- */
-export function decidePutVerticalIntents(
-  quotes: Array<{ symbol: string; last: number }>,
-  openPositions: Position[],
-  sleeve: SleeveCard,
-  riskOn = true,
-  checks?: RiskoffPutChecks | null,
-  /** Blotter daily/total. Same three-way cap as the overlay flatten. */
-  sleeveBook?: { dailyPnlUsd?: number | null; totalPnlUsd?: number | null } | null,
-): AutoVerticalIntent[] {
-  if (sleeve.id !== "riskoff") return [];
-  if (riskoffSleeveLossCapHit(sleeve, sleeveBook)) return [];
-  const spyAbove200 = knownBool(checks?.spyAbove200);
-  const wantEquity = riskoffEquityPutsAllowed(riskOn, spyAbove200);
-  const creditOrder = RISKOFF_CREDIT_LEG_SYMBOLS.filter((symbol) =>
-    riskoffCreditLegPutAllowed(riskOn, creditLegAbove200(symbol, checks), spyAbove200),
-  );
-  if (!creditOrder.length && !wantEquity) return [];
-  const openV = openPositions.filter((p) => isOpen(p) && p.sleeveId === "riskoff" && isVerticalPosition(p));
-  let slots = MAX_AUTO_RISKOFF_VERTICALS - openV.length;
-  if (slots <= 0) return [];
-  const taken = openVerticalUnderlyers(openPositions, "riskoff");
-  const bySym = new Map<string, { symbol: string; last: number }>();
-  for (const q of quotes) {
-    const symbol = q.symbol.trim().toUpperCase();
-    if (!symbol || !Number.isFinite(q.last) || !(q.last > 0)) continue;
-    bySym.set(symbol, { symbol, last: q.last });
-  }
-  const order: string[] = [...creditOrder];
-  if (wantEquity) order.push(...RISKOFF_SYMBOLS, "IWM");
-  const out: AutoVerticalIntent[] = [];
-  for (const symbol of order) {
-    if (slots <= 0) break;
-    const q = bySym.get(symbol);
-    if (!q) continue;
-    if (taken.has(symbol)) continue;
-    const thesis = isRiskoffCreditLeg(symbol)
-      ? `auto put debit ${symbol} credit-leg`
-      : `auto put debit ${symbol} risk-off`;
-    out.push({
-      sleeveId: "riskoff",
-      symbol,
-      last: q.last,
-      thesis,
-    });
-    taken.add(symbol);
-    slots -= 1;
-  }
-  return out;
-}
-
-/**
- * Flatten equity-index puts when SPY is back above 200dma.
- * Flatten a credit-leg put (HYG/LQD/JNK) when that name is back above 200dma
- * or RISK ON. spyAbove200 true does not flatten an existing credit-leg put.
- * Leaves the risk-off ETF long alone. Missing checks do not flatten that name.
- */
-export function decideRiskoffPutSells(
-  positions: Position[],
-  riskOn = false,
-  checks?: RiskoffPutChecks | null,
-): AutoSell[] {
-  const spyAbove200 = knownBool(checks?.spyAbove200);
-  const out: AutoSell[] = [];
-  for (const p of positions) {
-    if (!isOpen(p) || p.sleeveId !== "riskoff") continue;
-    if (!isVerticalPosition(p) || !p.vertical) continue;
-    if (p.vertical.right !== "P") continue;
-    const u = verticalUnderlyer(p);
-    if (isRiskoffCreditLeg(u)) {
-      const above200 = creditLegAbove200(u, checks);
-      if (riskOn === true) {
-        out.push({
-          sleeveId: "riskoff",
-          symbol: p.symbol,
-          reason: "risk on: flatten credit-leg put",
-        });
-      } else if (above200 === true) {
-        out.push({
-          sleeveId: "riskoff",
-          symbol: p.symbol,
-          reason: `${u} above 200dma: flatten credit-leg put`,
-        });
-      }
-      continue;
-    }
-    if (RISKOFF_EQUITY_PUTS.has(u) && spyAbove200 === true) {
-      out.push({
-        sleeveId: "riskoff",
-        symbol: p.symbol,
-        reason: "SPY above 200dma: flatten risk-off puts",
-      });
-    }
-  }
-  return out;
-}
-
-function sortedPuts(legs: OptionLeg[]): OptionLeg[] {
-  return legs.filter((l) => l.right === "P").sort((a, b) => a.strike - b.strike);
-}
-
-/** ATM index among sorted puts. Same bump as pickAtmPutDebit: if ATM is the lowest strike, step up so a short exists below. */
-function atmPutIndex(puts: OptionLeg[], last: number): number | null {
-  if (!(last > 0) || puts.length < 2) return null;
-  let atmIdx = 0;
-  let best = Infinity;
-  for (let i = 0; i < puts.length; i++) {
-    const d = Math.abs(puts[i].strike - last);
-    if (d < best) {
-      best = d;
-      atmIdx = i;
-    }
-  }
-  if (atmIdx === 0) atmIdx = 1;
-  return atmIdx;
-}
-
-function putDebitAt(
-  puts: OptionLeg[],
-  longIdx: number,
-): { long: OptionLeg; short: OptionLeg } | null {
-  const shortIdx = longIdx - 1;
-  if (longIdx < 0 || longIdx >= puts.length || shortIdx < 0 || shortIdx >= puts.length) return null;
-  const long = puts[longIdx];
-  const short = puts[shortIdx];
-  if (shortIdx !== longIdx - 1) return null;
-  if (!(long.strike > short.strike)) return null;
-  return { long, short };
-}
-
-/** Long higher-strike (ATM) put, short further OTM (lower strike). Skip if <2 put strikes. */
-export function pickAtmPutDebit(
-  legs: OptionLeg[],
-  last: number,
-): { long: OptionLeg; short: OptionLeg } | null {
-  const puts = sortedPuts(legs);
-  const atmIdx = atmPutIndex(puts, last);
-  if (atmIdx === null) return null;
-  return putDebitAt(puts, atmIdx);
-}
-
-export type PutDebitCandidate = {
-  long: OptionLeg;
-  short: OptionLeg;
-  /** 0 = ATM (same pair as pickAtmPutDebit). +n / −n walk the ATM index. */
-  offset: number;
-};
-
-/** ATM first, then nearer strikes before farther: 0, +1, −1, +2, −2, … */
-export function creditLegStrikeOffsetOrder(
-  maxOffset = RISKOFF_CREDIT_LEG_STRIKE_OFFSETS,
-): number[] {
-  const out = [0];
-  for (let n = 1; n <= maxOffset; n++) out.push(n, -n);
-  return out;
-}
-
-/**
- * Credit-leg strike ladder around ATM for one expiry. Offset 0 is pickAtmPutDebit.
- * Skips invalid indices, non-adjacent pairs, and long.strike ≤ short.strike.
- */
-export function pickCreditLegPutDebitCandidates(
-  legs: OptionLeg[],
-  last: number,
-  maxOffset = RISKOFF_CREDIT_LEG_STRIKE_OFFSETS,
-): PutDebitCandidate[] {
-  const puts = sortedPuts(legs);
-  const atmIdx = atmPutIndex(puts, last);
-  if (atmIdx === null) return [];
-  const out: PutDebitCandidate[] = [];
-  for (const offset of creditLegStrikeOffsetOrder(maxOffset)) {
-    const pair = putDebitAt(puts, atmIdx + offset);
-    if (!pair) continue;
-    out.push({ ...pair, offset });
-  }
-  return out;
-}
-
-export type HygLiquidityCheck = { ok: true } | { ok: false; reason: string };
-export type CreditLegLiquidityCheck = HygLiquidityCheck;
-
-/**
- * Credit-leg (HYG/LQD/JNK), auto-only liquidity/slippage gate for the put
- * debit. Both legs need real open interest (RISKOFF_CREDIT_LEG_MIN_OPEN_INTEREST),
- * and the immediate round-trip (sell the long at its bid, buy back the short
- * at its ask) must not already give back more than
- * RISKOFF_CREDIT_LEG_MAX_ROUNDTRIP_SLIPPAGE_FRAC of the entry debit — i.e.
- * the immediate close must be at least 75% of the entry debit. See the
- * RISKOFF_HYG_* constants doc comment (shared/constants.ts) for the incident
- * this is guarding against. Called for each credit-leg ladder candidate
- * (ATM, then ±2, then the next 30–45 DTE expiries). SPY/QQQ/IWM riskoff,
- * options-sleeve calls, and manual POST /api/paper/vertical never call this.
- */
-export function checkCreditLegAutoLiquidity(
-  symbol: string,
-  long: OptionLeg,
-  short: OptionLeg,
-  qty: number = RISKOFF_CREDIT_LEG_MAX_AUTO_QTY,
-): CreditLegLiquidityCheck {
-  const name = symbol.trim().toUpperCase() || RISKOFF_HYG_SYMBOL;
-  const longOi = long.openInterest;
-  const shortOi = short.openInterest;
-  if (longOi === null || !(longOi >= RISKOFF_CREDIT_LEG_MIN_OPEN_INTEREST)) {
-    return {
-      ok: false,
-      reason: `${name} long leg open interest ${longOi ?? "n/a"} below ${RISKOFF_CREDIT_LEG_MIN_OPEN_INTEREST}`,
-    };
-  }
-  if (shortOi === null || !(shortOi >= RISKOFF_CREDIT_LEG_MIN_OPEN_INTEREST)) {
-    return {
-      ok: false,
-      reason: `${name} short leg open interest ${shortOi ?? "n/a"} below ${RISKOFF_CREDIT_LEG_MIN_OPEN_INTEREST}`,
-    };
-  }
-  const longAsk = long.ask;
-  const shortBid = short.bid;
-  const longBid = long.bid;
-  const shortAsk = short.ask;
-  if (
-    longAsk === null ||
-    shortBid === null ||
-    longBid === null ||
-    shortAsk === null ||
-    !Number.isFinite(longAsk) ||
-    !Number.isFinite(shortBid) ||
-    !Number.isFinite(longBid) ||
-    !Number.isFinite(shortAsk)
-  ) {
-    return { ok: false, reason: `${name} legs missing bid/ask` };
-  }
-  const entryDebit = longAsk - shortBid;
-  if (!(entryDebit > 0)) {
-    return { ok: false, reason: `${name} entry debit <= 0` };
-  }
-  const immediateClose = longBid - shortAsk;
-  const minAcceptable = entryDebit * (1 - RISKOFF_CREDIT_LEG_MAX_ROUNDTRIP_SLIPPAGE_FRAC);
-  if (immediateClose < minAcceptable) {
-    return {
-      ok: false,
-      reason: `${name} round-trip close ${immediateClose.toFixed(2)} < ${minAcceptable.toFixed(2)} (75% of entry debit ${entryDebit.toFixed(2)})`,
-    };
-  }
-  if (long.bidSize !== null && long.bidSize < qty) {
-    return { ok: false, reason: `${name} long bidSize ${long.bidSize} below final qty ${qty}` };
-  }
-  if (short.askSize !== null && short.askSize < qty) {
-    return { ok: false, reason: `${name} short askSize ${short.askSize} below final qty ${qty}` };
-  }
-  return { ok: true };
-}
-
-/** HYG wrapper — same numbers, same reasons as checkCreditLegAutoLiquidity("HYG", …). */
-export function checkHygAutoLiquidity(
-  long: OptionLeg,
-  short: OptionLeg,
-  qty: number = RISKOFF_HYG_MAX_AUTO_QTY,
-): HygLiquidityCheck {
-  return checkCreditLegAutoLiquidity(RISKOFF_HYG_SYMBOL, long, short, qty);
-}
 
 /** Long closer ATM, short the next further OTM call. Skip if <2 call strikes. */
 export function pickAtmCallDebit(
@@ -695,7 +292,7 @@ export function pickAtmCallDebit(
 export function pickTargetExpiries(
   expiries: OptionExpiry[],
   now = new Date(),
-  limit = RISKOFF_CREDIT_LEG_EXPIRY_CANDIDATES,
+  limit = 3,
 ): OptionExpiry[] {
   const scored: Array<{ e: OptionExpiry; dte: number }> = [];
   for (const e of expiries) {
@@ -735,53 +332,6 @@ export function isStandardMonthlyExpiry(e: OptionExpiry): boolean {
   }
   return e.day === thirdFridayUtcDay(e.year, e.month);
 }
-
-/**
- * Credit-leg AUTO only. When the 30–45 band is empty, the nearest 3rd-Friday
- * monthly with DTE in (OPTIONS_DTE_EXIT, RISKOFF_CREDIT_LEG_MONTHLY_DTE_MAX]
- * and DTE >= RISKOFF_CREDIT_LEG_MONTHLY_DTE_MIN. Closest to the 30–45 midpoint
- * first; closer to today on a tie. One expiry — not a weekly ladder.
- */
-export function pickCreditLegMonthlyFallbackExpiry(
-  expiries: OptionExpiry[],
-  now = new Date(),
-): OptionExpiry | null {
-  const scored: Array<{ e: OptionExpiry; dte: number }> = [];
-  for (const e of expiries) {
-    if (!isStandardMonthlyExpiry(e)) continue;
-    const dte = daysToExpiry(e.expiry, now);
-    if (!Number.isFinite(dte)) continue;
-    if (dte <= OPTIONS_DTE_EXIT) continue;
-    if (dte < RISKOFF_CREDIT_LEG_MONTHLY_DTE_MIN || dte > RISKOFF_CREDIT_LEG_MONTHLY_DTE_MAX) {
-      continue;
-    }
-    scored.push({ e, dte });
-  }
-  if (!scored.length) return null;
-  const mid = (OPTIONS_DTE_TARGET_MIN + OPTIONS_DTE_TARGET_MAX) / 2;
-  scored.sort((a, b) => {
-    const da = Math.abs(a.dte - mid);
-    const db = Math.abs(b.dte - mid);
-    if (da !== db) return da - db;
-    return a.dte - b.dte;
-  });
-  return scored[0].e;
-}
-
-export type CreditLegPutPick = {
-  expiry: string;
-  long: OptionLeg;
-  short: OptionLeg;
-  offset: number;
-  expiryIndex: number;
-  expiryCount: number;
-  monthlyFallback: boolean;
-  dte: number;
-};
-
-export type CreditLegPutPickResult =
-  | { ok: true; pick: CreditLegPutPick }
-  | { ok: false; reason: string; noteOiSkip: boolean };
 
 export type FetchExpiriesResult =
   | { ok: true; expiries: OptionExpiry[] }
@@ -823,86 +373,6 @@ export function expirySkipReason(expiries: OptionExpiry[], now = valuationNow())
   return `no 30–45 DTE expiry (${expiries.length} listed, nearest ${nearest} DTE)`;
 }
 
-function formatStrikeOffset(offset: number): string {
-  return offset > 0 ? `+${offset}` : String(offset);
-}
-
-/**
- * Credit-leg AUTO: strike ladder (±RISKOFF_CREDIT_LEG_STRIKE_OFFSETS) on the
- * first 30–45 DTE expiry, then the next couple of expiries in the same band.
- * If that band is empty, one standard monthly in 21–60 DTE (above
- * OPTIONS_DTE_EXIT). First pair that clears checkCreditLegAutoLiquidity wins.
- * Paper only. Does not apply to SPY/QQQ/IWM or options-sleeve calls.
- */
-export async function pickCreditLegAutoPut(opts: {
-  symbol: string;
-  last: number;
-  expiries: OptionExpiry[];
-  fetchChain: (symbol: string, expiry: string) => Promise<FetchChainResult | OptionLeg[]>;
-  now?: Date;
-  qty?: number;
-}): Promise<CreditLegPutPickResult> {
-  const qty = opts.qty ?? RISKOFF_CREDIT_LEG_MAX_AUTO_QTY;
-  const now = opts.now ?? valuationNow();
-  if (opts.expiries.length === 0) {
-    return { ok: false, reason: "option expiries empty", noteOiSkip: false };
-  }
-  let candidates = pickTargetExpiries(opts.expiries, now);
-  let monthlyFallback = false;
-  if (!candidates.length) {
-    const monthly = pickCreditLegMonthlyFallbackExpiry(opts.expiries, now);
-    if (monthly) {
-      candidates = [monthly];
-      monthlyFallback = true;
-    } else {
-      const bandSkip = expirySkipReason(opts.expiries, now) ?? "no 30–45 DTE expiry";
-      return { ok: false, reason: `${bandSkip}; no monthly 21–60`, noteOiSkip: false };
-    }
-  }
-  let lastReason = "no liquid put debit";
-  let sawLiquidityFail = false;
-  for (let ei = 0; ei < candidates.length; ei++) {
-    const picked = candidates[ei];
-    const chain = normalizeChainResult(await opts.fetchChain(opts.symbol, picked.expiry));
-    if (!chain.ok) {
-      lastReason = formatOptionFetchUnavailable("chain", chain);
-      continue;
-    }
-    const legs = chain.legs;
-    const pairs = pickCreditLegPutDebitCandidates(legs, opts.last);
-    if (!pairs.length) {
-      lastReason = "no ATM put debit";
-      continue;
-    }
-    for (const cand of pairs) {
-      if (cand.long.right !== "P" || cand.short.right !== "P") {
-        lastReason = "refuses calls";
-        continue;
-      }
-      const gate = checkCreditLegAutoLiquidity(opts.symbol, cand.long, cand.short, qty);
-      if (gate.ok) {
-        const dte = daysToExpiry(picked.expiry, now);
-        return {
-          ok: true,
-          pick: {
-            expiry: picked.expiry,
-            long: cand.long,
-            short: cand.short,
-            offset: cand.offset,
-            expiryIndex: ei,
-            expiryCount: candidates.length,
-            monthlyFallback,
-            dte: Number.isFinite(dte) ? dte : 0,
-          },
-        };
-      }
-      lastReason = gate.reason;
-      sawLiquidityFail = true;
-    }
-  }
-  return { ok: false, reason: lastReason, noteOiSkip: sawLiquidityFail };
-}
-
 export type PlaceResult = { ok: true } | { ok: false; error: string };
 export type CloseResult = { ok: true } | { ok: false; error: string };
 
@@ -920,80 +390,24 @@ export type AutopilotCtx = {
   featureRows: Array<{ symbol: string; above200: boolean }>;
   scanReady: boolean;
   riskOn: boolean;
-  /** From ensureRisk(). Missing spyAbove200 fails closed for equity-index and credit-leg puts. Missing credit-leg 200 also fails closed for that name. lqd/jnk are autopilot-internal (not on GET /api/public/risk). */
-  riskChecks?: RiskoffPutChecks | null;
   place: (buy: AutoBuy) => Promise<PlaceResult>;
   close: (sell: AutoSell) => Promise<CloseResult>;
-  /** Paper debit verticals. Call on options when RISK ON; risk-off puts: equity-index and credit-leg only if SPY is below 200 (credit-leg also needs that name below its own 200). Never CSP/CC. */
+  /** Paper debit verticals. Call on options when RISK ON. */
   placeVertical?: (v: AutoVertical) => Promise<PlaceResult>;
-  /**
-   * Option expiries. Prefer `{ ok, expiries }` / `{ ok: false, error }` so
-   * E*TRADE/auth failures are not collapsed to a silent empty list.
-   * A bare array is treated as success (tests / older callers).
-   */
   fetchExpiries?: (symbol: string) => Promise<FetchExpiriesResult | OptionExpiry[]>;
-  /**
-   * Option chain. Same result-type convention as fetchExpiries — a bare
-   * array is success. Failures must not look like an empty chain.
-   */
   fetchChain?: (symbol: string, expiry: string) => Promise<FetchChainResult | OptionLeg[]>;
-  /** Delayed lasts for SPY/QQQ (IWM optional) and HYG/LQD/JNK, used for risk-off put intents. */
-  riskoffQuotes?: Array<{ symbol: string; last: number }>;
-  /** 63d total returns for the risk-off ETF overlay vs BIL. Missing/incomplete → missing-bars debounce, then flatten. */
-  riskoffEtfReturns?: RiskoffEtfReturns | null;
-  /**
-   * 21d total returns for the shared beat-BIL confirmation. Same Massive
-   * dailies as riskoffEtfReturns. Omit/null fails CTA names closed. In
-   * HYG-only RISK OFF it also fails gold-family names closed. Other non-CTA
-   * names are unchanged. Does not drive the 63d missing-bars debounce.
-   */
-  riskoffEtfReturns21?: RiskoffEtfReturns | null;
-  /**
-   * Own-200 map from the same Massive dailies as riskoffEtfReturns.
-   * Own-200 qualifier filter: name not known above 200 is skipped; none → BIL.
-   */
-  riskoffEtfAbove200?: Partial<RiskoffEtfAbove200> | null;
-  /**
-   * Annualized 20-session realized vol from the same dailies. HYG-only
-   * top-2 weights use the inverse. Omit and that decision stays 50/50.
-   * Paper / MockBroker only. Not a live order input.
-   */
-  riskoffEtfRealizedVol20?: Partial<RiskoffEtfVols> | null;
-  /** Delayed lasts used to size/rotate the risk-off ETF long. */
-  riskoffEtfQuotes?: Array<{ symbol: string; last: number }>;
   /** Underlying -> ET ymd of last 50% debit stop. Same-day skip. */
   verticalStopCooldown?: Record<string, string>;
   now?: Date;
   gateMode?: GateMode;
   dayBars?: MinuteBar[];
-  /**
-   * Longer MES 5m series for `cpiLateFade` (prior NYSE close). Merged with
-   * `dayBars` for the fade only. The stochastic leg still reads `dayBars`.
-   */
   cpiLateFadeBars?: MinuteBar[];
   /** ISO knowledge_time after the print. Day MES stoch entries stay flat without it. */
   knowledgeTime?: string | null;
   /** NFP/CPI/FOMC calendar. Stage-3 does not arm without a print on this ET day. */
   events?: CalendarEvent[];
-  /**
-   * Risk-off sleeve book from the same session-mark path as GET /api/status
-   * sleeveBooks.riskoff (dailyPnlUsd / totalPnlUsd). When set, the paper loss
-   * cap uses these plus realized. When omitted, autopilot derives the book
-   * from open marks with no session mark.
-   */
-  riskoffSleeveBook?: { dailyPnlUsd: number; totalPnlUsd: number } | null;
   log: (line: string) => void;
 };
-
-/** Blotter daily/total for the risk-off cap. Prefer the status sleeve book. */
-function riskoffCapBook(ctx: AutopilotCtx): { dailyPnlUsd: number; totalPnlUsd: number } {
-  const passed = ctx.riskoffSleeveBook;
-  if (passed && Number.isFinite(passed.dailyPnlUsd) && Number.isFinite(passed.totalPnlUsd)) {
-    return { dailyPnlUsd: passed.dailyPnlUsd, totalPnlUsd: passed.totalPnlUsd };
-  }
-  const computed = sleeveBook(ctx.getSleeves().riskoff, ctx.getPositions());
-  return { dailyPnlUsd: computed.dailyPnlUsd, totalPnlUsd: computed.totalPnlUsd };
-}
 
 function sleeveAutoOn(ctx: AutopilotCtx, id: SleeveId): boolean {
   if (!ctx.enabled) return false;
@@ -1086,11 +500,6 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
 
   const riskOn = ctx.riskOn === true;
   if (riskOn) resetOiSkipStreak();
-  const spyAbove200 = knownBool(ctx.riskChecks?.spyAbove200);
-  const hygAbove200 = knownBool(ctx.riskChecks?.hygAbove200);
-  const lqdAbove200 = knownBool(ctx.riskChecks?.lqdAbove200);
-  const jnkAbove200 = knownBool(ctx.riskChecks?.jnkAbove200);
-  const putChecks: RiskoffPutChecks = { spyAbove200, hygAbove200, lqdAbove200, jnkAbove200 };
 
   const sells = decideSells(
     ctx.getPositions(),
@@ -1111,93 +520,7 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
     }
   }
 
-  const riskoffBook = sleeveAutoOn(ctx, "riskoff") ? riskoffCapBook(ctx) : null;
-  const etf = sleeveAutoOn(ctx, "riskoff")
-    ? decideRiskoffEtf({
-        riskOn,
-        positions: ctx.getPositions(),
-        sleeve: ctx.getSleeves().riskoff,
-        returns: ctx.riskoffEtfReturns ?? null,
-        quotes: ctx.riskoffEtfQuotes ?? [],
-        above200: ctx.riskoffEtfAbove200 ?? null,
-        returns21: ctx.riskoffEtfReturns21 ?? null,
-        realizedVol20: ctx.riskoffEtfRealizedVol20 ?? null,
-        spyAbove200: regimeCheck(ctx.riskChecks, "spyAbove200"),
-        hygAbove200: regimeCheck(ctx.riskChecks, "hygAbove200"),
-        now: ctx.now,
-        sleeveBook: riskoffBook,
-      })
-    : { sells: [] as AutoSell[], buy: null as AutoBuy | null, buys: [] as AutoBuy[], winner: null, winners: [] as string[] };
-  let overlayRotated: { from: string; to: string } | null = null;
-  for (const s of etf.sells) {
-    const r = await ctx.close(s);
-    if (r.ok) {
-      ctx.log(
-        `auto paper close ${s.sleeveId} ${s.symbol} ${s.reason} (MockBroker, not Tradovate, not live)`,
-      );
-      sold.push(s);
-      const m = /^rotate to ([A-Z]+)/i.exec(s.reason);
-      if (m) overlayRotated = { from: s.symbol, to: m[1] };
-    } else {
-      ctx.log(`auto paper close skip ${s.symbol}: ${r.error}`);
-    }
-  }
-  if (overlayRotated) {
-    void notifyOverlayRotation(overlayRotated.from, overlayRotated.to);
-  }
-
-  const duration = sleeveAutoOn(ctx, "riskoff")
-    ? decideRiskoffDuration({
-        riskOn,
-        spyAbove200,
-        dollarVeto: knownBool(ctx.riskChecks?.dollarVeto),
-        uup20dPct: uupFromChecks(ctx.riskChecks),
-        positions: ctx.getPositions(),
-        sleeve: ctx.getSleeves().riskoff,
-        quotes: ctx.riskoffEtfQuotes ?? [],
-        overlayWinner: etf.winner ?? null,
-        overlayWinners: etf.winners ?? (etf.winner ? [etf.winner] : []),
-        sleeveBook: riskoffBook,
-      })
-    : { sells: [] as AutoSell[], buy: null as AutoBuy | null };
-  for (const s of duration.sells) {
-    const r = await ctx.close(s);
-    if (r.ok) {
-      ctx.log(
-        `auto paper close ${s.sleeveId} ${s.symbol} ${s.reason} (MockBroker, not Tradovate, not live)`,
-      );
-      sold.push(s);
-    } else {
-      ctx.log(`auto paper close skip ${s.symbol}: ${r.error}`);
-    }
-  }
-
-  const putSells = sleeveAutoOn(ctx, "riskoff")
-    ? decideRiskoffPutSells(ctx.getPositions(), riskOn, putChecks)
-    : [];
-  let creditRiskOnFlattened = false;
-  for (const s of putSells) {
-    const r = await ctx.close(s);
-    if (r.ok) {
-      ctx.log(
-        `auto paper close ${s.sleeveId} ${s.symbol} ${s.reason} (MockBroker, not Tradovate, not live)`,
-      );
-      sold.push(s);
-      if (/risk on: flatten credit-leg put/i.test(s.reason)) creditRiskOnFlattened = true;
-    } else {
-      ctx.log(`auto paper close skip ${s.symbol}: ${r.error}`);
-    }
-  }
-  if (creditRiskOnFlattened) void notifyCreditPutRiskOnFlatten();
-
-  if (!ctx.scanReady) {
-    if (sleeveAutoOn(ctx, "riskoff")) {
-      await placeRiskoffEtfBuys(ctx, etf.buys?.length ? etf.buys : etf.buy ? [etf.buy] : [], etf.winners ?? [], bought);
-      await placeRiskoffDurationBuy(ctx, duration.buy, bought, sold);
-      await rebalanceRiskoffCashSweep(ctx, bought, sold);
-    }
-    return { bought, sold, verticals };
-  }
+  if (!ctx.scanReady) return { bought, sold, verticals };
 
   for (const sleeveId of ["momentum", "ownership"] as const) {
     if (!sleeveAutoOn(ctx, sleeveId)) continue;
@@ -1310,349 +633,5 @@ export async function runAutopilot(ctx: AutopilotCtx): Promise<{
     }
   }
 
-  if (
-    sleeveAutoOn(ctx, "riskoff") &&
-    riskoffPutsAllowed(riskOn, putChecks) &&
-    ctx.placeVertical &&
-    ctx.fetchExpiries &&
-    ctx.fetchChain
-  ) {
-    const intents = decidePutVerticalIntents(
-      ctx.riskoffQuotes ?? [],
-      ctx.getPositions(),
-      ctx.getSleeves().riskoff,
-      riskOn,
-      putChecks,
-      riskoffBook,
-    );
-    let windowLogged = false;
-    for (const intent of intents) {
-      const now = valuationNow();
-      if (!verticalEntryWindowOpen(now)) {
-        if (!windowLogged) {
-          ctx.log("auto paper vertical skip: no new verticals after 15:50 ET");
-          windowLogged = true;
-        }
-        continue;
-      }
-      if (verticalStopCooling(ctx.verticalStopCooldown ?? {}, intent.symbol, now)) {
-        ctx.log(`auto paper vertical skip ${intent.symbol}: cooling after stop`);
-        continue;
-      }
-      try {
-        const expGot = normalizeExpiriesResult(await ctx.fetchExpiries(intent.symbol));
-        if (!expGot.ok) {
-          ctx.log(
-            `auto paper vertical skip ${intent.symbol}: ${formatOptionFetchUnavailable("expiries", expGot)}`,
-          );
-          continue;
-        }
-        let pair: { long: OptionLeg; short: OptionLeg } | null = null;
-        let expiry = "";
-        let qty: number | undefined;
-        if (isRiskoffCreditLeg(intent.symbol)) {
-          qty = RISKOFF_CREDIT_LEG_MAX_AUTO_QTY;
-          const ladder = await pickCreditLegAutoPut({
-            symbol: intent.symbol,
-            last: intent.last,
-            expiries: expGot.expiries,
-            fetchChain: ctx.fetchChain,
-            now,
-          });
-          if (!ladder.ok) {
-            ctx.log(`auto paper vertical skip ${intent.symbol}: ${ladder.reason}`);
-            if (ladder.noteOiSkip) void noteCreditLegOiSkip();
-            continue;
-          }
-          pair = { long: ladder.pick.long, short: ladder.pick.short };
-          expiry = ladder.pick.expiry;
-          if (ladder.pick.monthlyFallback) {
-            ctx.log(
-              `auto paper put debit monthly-fallback ${intent.symbol} ${pair.long.strike}/${pair.short.strike} P ${expiry} (DTE ${ladder.pick.dte})`,
-            );
-          }
-          if (ladder.pick.offset !== 0 || ladder.pick.expiryIndex !== 0) {
-            ctx.log(
-              `auto paper put debit ladder ${intent.symbol} ${pair.long.strike}/${pair.short.strike} P ${expiry} (offset ${formatStrikeOffset(ladder.pick.offset)}, expiry ${ladder.pick.expiryIndex + 1}/${ladder.pick.expiryCount})`,
-            );
-          }
-        } else {
-          const expSkip = expirySkipReason(expGot.expiries, now);
-          if (expSkip) {
-            ctx.log(`auto paper vertical skip ${intent.symbol}: ${expSkip}`);
-            continue;
-          }
-          const picked = pickTargetExpiry(expGot.expiries, now);
-          if (!picked) {
-            ctx.log(`auto paper vertical skip ${intent.symbol}: no 30–45 DTE expiry`);
-            continue;
-          }
-          const chainGot = normalizeChainResult(await ctx.fetchChain(intent.symbol, picked.expiry));
-          if (!chainGot.ok) {
-            ctx.log(
-              `auto paper vertical skip ${intent.symbol}: ${formatOptionFetchUnavailable("chain", chainGot)}`,
-            );
-            continue;
-          }
-          pair = pickAtmPutDebit(chainGot.legs, intent.last);
-          if (!pair) {
-            ctx.log(`auto paper vertical skip ${intent.symbol}: no ATM put debit`);
-            continue;
-          }
-          expiry = picked.expiry;
-        }
-        if (!pair || pair.long.right !== "P" || pair.short.right !== "P") {
-          ctx.log(`auto paper vertical skip ${intent.symbol}: refuses calls`);
-          continue;
-        }
-        const needed = putDebitUsd(
-          pair,
-          qty,
-          riskoffSleeveEquityUsd(ctx.getSleeves().riskoff, ctx.getPositions()),
-        );
-        if (needed !== null) await sellRiskoffSweepToFund(ctx, needed, sold);
-        const v: AutoVertical = {
-          sleeveId: "riskoff",
-          symbol: intent.symbol,
-          right: "P",
-          expiry,
-          longStrike: pair.long.strike,
-          shortStrike: pair.short.strike,
-          thesis: intent.thesis,
-          qty,
-        };
-        const r = await ctx.placeVertical(v);
-        if (r.ok) {
-          ctx.log(
-            `auto paper put debit ${v.symbol} ${v.longStrike}/${v.shortStrike} P ${v.expiry} ${v.thesis} (MockBroker, not live, not E*TRADE order)`,
-          );
-          verticals.push(v);
-        } else if (/bid\/ask/i.test(r.error)) {
-          ctx.log(`auto paper vertical skip ${intent.symbol} missing bid/ask`);
-        } else {
-          ctx.log(`auto paper vertical skip ${intent.symbol}: ${r.error}`);
-        }
-      } catch (err) {
-        ctx.log(
-          `auto paper vertical skip ${intent.symbol}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
-  }
-
-  if (sleeveAutoOn(ctx, "riskoff")) {
-    await placeRiskoffEtfBuys(ctx, etf.buys?.length ? etf.buys : etf.buy ? [etf.buy] : [], etf.winners ?? [], bought);
-    await placeRiskoffDurationBuy(ctx, duration.buy, bought, sold);
-    await rebalanceRiskoffCashSweep(ctx, bought, sold);
-  }
   return { bought, sold, verticals };
-}
-
-function riskoffBilLast(ctx: AutopilotCtx): number | null {
-  for (const q of ctx.riskoffEtfQuotes ?? []) {
-    if (q.symbol.trim().toUpperCase() !== "BIL") continue;
-    if (Number.isFinite(q.last) && q.last > 0) return q.last;
-  }
-  return null;
-}
-
-/**
- * Dollar debit autopilot is about to pay. Null when the pair has no usable
- * bid/ask — the entry still runs; a missing estimate does not skip it.
- * Credit legs pass their capped qty. Equity puts use the same contract sizer
- * as the paper vertical.
- */
-function putDebitUsd(
-  pair: { long: OptionLeg; short: OptionLeg },
-  qty: number | undefined,
-  equityUsd: number,
-): number | null {
-  const longAsk = pair.long.ask;
-  const shortBid = pair.short.bid;
-  if (longAsk === null || shortBid === null) return null;
-  if (!Number.isFinite(longAsk) || !Number.isFinite(shortBid)) return null;
-  const net = longAsk - shortBid;
-  if (!(net > 0)) return null;
-  let contracts = qty;
-  if (contracts === undefined) {
-    const sized = sizeDebitContracts(net, equityUsd);
-    if (!sized.ok) return null;
-    contracts = sized.qty;
-  }
-  if (!(contracts > 0)) return null;
-  return net * OPTIONS_MULTIPLIER * contracts;
-}
-
-/**
- * Sell sweep BIL before a put or duration buy when sleeve cash is short.
- * A missing BIL quote uses the sweep lot's average price. If that is missing
- * too, return without selling and without blocking the entry.
- */
-async function sellRiskoffSweepToFund(
-  ctx: AutopilotCtx,
-  neededUsd: number,
-  sold: AutoSell[],
-): Promise<void> {
-  const positions = ctx.getPositions();
-  const sweep = openRiskoffCashSweepPositions(positions)[0];
-  if (!sweep) return;
-  const bilLast = riskoffBilLast(ctx) ?? (sweep.avgPrice > 0 ? sweep.avgPrice : null);
-  if (bilLast === null) return;
-  const equity = riskoffSleeveEquityUsd(ctx.getSleeves().riskoff, positions);
-  const free = riskoffFreeCashUsd(equity, positions, ctx.riskoffEtfQuotes ?? []);
-  const qty = sweepSharesToFund({
-    neededUsd,
-    freeCashUsd: free,
-    sweepQty: sweep.qty,
-    bilLast,
-  });
-  if (qty < 1) return;
-  const sell: AutoSell = {
-    sleeveId: "riskoff",
-    symbol: "BIL",
-    reason: "sell cash sweep to fund entry",
-    cashSweep: true,
-    qty,
-  };
-  const r = await ctx.close(sell);
-  if (r.ok) {
-    ctx.log(
-      `auto paper close riskoff BIL cash sweep ${qty} sh to fund entry (MockBroker, not Tradovate, not live)`,
-    );
-    sold.push(sell);
-  } else {
-    ctx.log(`auto paper close skip BIL cash sweep: ${r.error}`);
-  }
-}
-
-async function rebalanceRiskoffCashSweep(
-  ctx: AutopilotCtx,
-  bought: AutoBuy[],
-  sold: AutoSell[],
-): Promise<void> {
-  const bil = ctx.riskoffEtfReturns?.BIL;
-  const spyAbove200 = regimeCheck(ctx.riskChecks, "spyAbove200");
-  const riskOn = ctx.riskOn === true;
-  const decision = decideRiskoffCashSweep({
-    riskOn,
-    positions: ctx.getPositions(),
-    sleeve: ctx.getSleeves().riskoff,
-    quotes: ctx.riskoffEtfQuotes ?? [],
-    bilBarsOk: bil !== null && bil !== undefined && Number.isFinite(bil),
-    now: ctx.now,
-    spyAbove200,
-    putsAllowed: riskoffEquityPutsAllowed(riskOn, spyAbove200),
-    durationAllowed: riskoffDurationAllowed(
-      riskOn,
-      spyAbove200,
-      knownBool(ctx.riskChecks?.dollarVeto),
-    ),
-  });
-  for (const s of decision.sells) {
-    const r = await ctx.close(s);
-    if (r.ok) {
-      ctx.log(
-        `auto paper close riskoff ${s.symbol} cash sweep ${s.reason} (MockBroker, not Tradovate, not live)`,
-      );
-      sold.push(s);
-    } else {
-      ctx.log(`auto paper close skip ${s.symbol} cash sweep: ${r.error}`);
-    }
-  }
-  if (!decision.buy) return;
-  const r = await ctx.place(decision.buy);
-  if (r.ok) {
-    ctx.log(
-      `auto paper buy riskoff ${decision.buy.qty} BIL cash sweep ${decision.buy.thesis} (MockBroker, not Tradovate, not live)`,
-    );
-    bought.push(decision.buy);
-  } else if (/no delayed last/i.test(r.error)) {
-    ctx.log("auto paper skip BIL cash sweep no delayed last");
-  } else {
-    ctx.log(`auto paper skip BIL cash sweep: ${r.error}`);
-  }
-}
-
-async function placeRiskoffEtfBuys(
-  ctx: AutopilotCtx,
-  buys: AutoBuy[],
-  winners: string[],
-  bought: AutoBuy[],
-): Promise<void> {
-  const allowed = new Set(winners.map((s) => s.toUpperCase()));
-  for (const buy of buys) {
-    allowed.add(buy.symbol.toUpperCase());
-    const leftover = openRiskoffEtfPositions(ctx.getPositions()).filter(
-      (p) => !allowed.has(p.symbol.toUpperCase()),
-    );
-    if (leftover.length) {
-      ctx.log(
-        `auto paper skip ${buy.symbol}: still holding ${leftover.map((p) => p.symbol).join(",")}`,
-      );
-      continue;
-    }
-    if (
-      openRiskoffEtfPositions(ctx.getPositions()).some(
-        (p) => p.symbol.toUpperCase() === buy.symbol.toUpperCase(),
-      )
-    ) {
-      continue;
-    }
-    const r = await ctx.place(buy);
-    if (r.ok) {
-      ctx.log(
-        `auto paper buy ${buy.sleeveId} ${buy.qty} ${buy.symbol} stop ${buy.stopPrice} ${buy.thesis} (MockBroker, not Tradovate, not live)`,
-      );
-      bought.push(buy);
-    } else if (/no delayed last/i.test(r.error)) {
-      ctx.log(`auto paper skip ${buy.symbol} no delayed last`);
-    } else {
-      ctx.log(`auto paper skip ${buy.symbol}: ${r.error}`);
-    }
-  }
-}
-
-async function placeRiskoffDurationBuy(
-  ctx: AutopilotCtx,
-  buy: AutoBuy | null,
-  bought: AutoBuy[],
-  sold: AutoSell[],
-): Promise<void> {
-  if (!buy) return;
-  if (overlayHoldsDurationName(ctx.getPositions())) {
-    ctx.log(`auto paper skip ${buy.symbol}: overlay already long TLT/IEF`);
-    return;
-  }
-  const leftover = openRiskoffDurationPositions(ctx.getPositions()).filter(
-    (p) => p.symbol.toUpperCase() !== buy.symbol.toUpperCase(),
-  );
-  if (leftover.length) {
-    ctx.log(
-      `auto paper skip ${buy.symbol}: still holding gated duration ${leftover.map((p) => p.symbol).join(",")}`,
-    );
-    return;
-  }
-  if (
-    openRiskoffDurationPositions(ctx.getPositions()).some(
-      (p) => p.symbol.toUpperCase() === buy.symbol.toUpperCase(),
-    )
-  ) {
-    return;
-  }
-  let last: number | null = null;
-  for (const q of ctx.riskoffEtfQuotes ?? []) {
-    if (q.symbol.trim().toUpperCase() === buy.symbol.toUpperCase() && q.last > 0) last = q.last;
-  }
-  if (last !== null) await sellRiskoffSweepToFund(ctx, buy.qty * last, sold);
-  const r = await ctx.place(buy);
-  if (r.ok) {
-    ctx.log(
-      `auto paper buy ${buy.sleeveId} ${buy.qty} ${buy.symbol} stop ${buy.stopPrice} ${buy.thesis} (MockBroker, not Tradovate, not live)`,
-    );
-    bought.push(buy);
-  } else if (/no delayed last/i.test(r.error)) {
-    ctx.log(`auto paper skip ${buy.symbol} no delayed last`);
-  } else {
-    ctx.log(`auto paper skip ${buy.symbol}: ${r.error}`);
-  }
 }

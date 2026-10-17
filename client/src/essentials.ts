@@ -25,7 +25,7 @@ export const SLEEVE_TAB_LABELS: { id: SleeveId; label: string }[] = [
   { id: "momentum", label: "Momentum" },
   { id: "options", label: "Options" },
   { id: "ownership", label: "Ownership" },
-  { id: "riskoff", label: "Risk-off" },
+  { id: "csp", label: "CSP" },
 ];
 
 /** Compact AUTO PAPER chip initials (desktop header + mobile essentials). */
@@ -34,7 +34,7 @@ export const AUTO_SLEEVE_CHIPS: { id: SleeveId; initial: string; label: string }
   { id: "momentum", initial: "M", label: "Momentum" },
   { id: "options", initial: "O", label: "Options" },
   { id: "ownership", initial: "Ow", label: "Ownership" },
-  { id: "riskoff", initial: "R", label: "Risk-off" },
+  { id: "csp", initial: "Cs", label: "CSP" },
 ];
 
 /** Prefer per-sleeve flags; fall back to the derived/global boolean for old snapshots. */
@@ -43,7 +43,9 @@ export function autoPaperFlags(
 ): AutoPaperBySleeve {
   const raw = s.autoPaperBySleeve;
   if (raw && typeof raw === "object") {
-    return { ...defaultAutoPaperBySleeve(false), ...raw };
+    const merged = { ...defaultAutoPaperBySleeve(false), ...raw };
+    if (!("csp" in raw)) merged.csp = true;
+    return merged;
   }
   return defaultAutoPaperBySleeve(s.autoPaper !== false);
 }

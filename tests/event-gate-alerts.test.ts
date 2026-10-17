@@ -383,7 +383,7 @@ describe("event-gate FCM producers", () => {
       momentum: book(0, 0),
       options: book(0, 0),
       ownership: book(0, 0),
-      riskoff: book(0, 0),
+      csp: book(0, 0),
     } as Record<SleeveId, SleeveBook>;
     await considerSleeveLossWarn(sleeves, under, new Date("2026-09-12T04:03:00Z"));
     expect(calls.filter((c) => c.payload.eventType === "day_loss_cap")).toHaveLength(0);
@@ -446,7 +446,7 @@ describe("event-gate FCM producers", () => {
       momentum: book(-850, -850),
       options: book(0, 0),
       ownership: book(0, 0),
-      riskoff: book(0, 0),
+      csp: book(0, 0),
     } as Record<SleeveId, SleeveBook>;
     await considerSleeveLossWarn(sleeves, books, new Date("2026-09-04T18:00:00Z"));
     await considerSleeveLossWarn(sleeves, books, new Date("2026-09-04T18:05:00Z"));

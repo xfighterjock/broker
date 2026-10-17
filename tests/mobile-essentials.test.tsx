@@ -96,7 +96,7 @@ function snapshot(over: Partial<StatusSnapshot> = {}): StatusSnapshot {
       momentum: book(0, 0),
       options: book(40, 40),
       ownership: book(0, 0),
-      riskoff: book(-8, -8),
+      csp: book(-8, -8),
     } as Record<SleeveId, SleeveBook>,
     riskOn: true,
     riskChecks: {
@@ -171,7 +171,7 @@ describe("MobileEssentials", () => {
     expect(node.querySelector(".essentials-sleeves [data-sleeve=momentum]")?.textContent).toMatch(/Momentum/);
     expect(node.querySelector(".essentials-sleeves [data-sleeve=options]")?.textContent).toMatch(/tot \+\$40\.00/);
     expect(node.querySelector(".essentials-sleeves [data-sleeve=ownership]")?.textContent).toMatch(/Ownership/);
-    expect(node.querySelector(".essentials-sleeves [data-sleeve=riskoff]")?.textContent).toMatch(/d -\$8\.00/);
+    expect(node.querySelector(".essentials-sleeves [data-sleeve=csp]")?.textContent).toMatch(/d -\$8\.00/);
     expect(node.querySelector(".essentials-risk-badge")?.textContent).toBe("RISK ON");
     expect(node.querySelector(".grid")).toBeNull();
     expect(node.querySelector(".tabs")).toBeNull();

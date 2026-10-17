@@ -194,6 +194,11 @@ export function MobileEssentials({
             );
           })}
         </ul>
+        <div className="hint" data-testid="csp-recorder">
+          CSP recorder {state.csp?.recorder.lastAt ?? "never"} · {state.csp?.recorder.rows ?? 0} rows · E*TRADE{" "}
+          {state.csp?.recorder.auth ?? state.etradeAuth ?? "unknown"}
+          {state.csp?.recorder.blocking ? " · auth blocking" : ""}
+        </div>
       </section>
 
       {err ? <div className="err essentials-err">{err}</div> : null}

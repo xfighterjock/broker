@@ -5,7 +5,7 @@ enum SleeveChip: String, CaseIterable, Identifiable {
     case momentum
     case options
     case ownership
-    case riskoff
+    case csp
 
     var id: String { rawValue }
 
@@ -15,7 +15,7 @@ enum SleeveChip: String, CaseIterable, Identifiable {
         case .momentum: return "Momentum"
         case .options: return "Options"
         case .ownership: return "Ownership"
-        case .riskoff: return "Risk-off"
+        case .csp: return "CSP"
         }
     }
 
@@ -25,7 +25,7 @@ enum SleeveChip: String, CaseIterable, Identifiable {
         case .momentum: return "M"
         case .options: return "O"
         case .ownership: return "Ow"
-        case .riskoff: return "R"
+        case .csp: return "Cs"
         }
     }
 }
@@ -64,7 +64,11 @@ enum EssentialsFormat {
         var out: [SleeveChip: Bool] = [:]
         if let raw = snap.autoPaperBySleeve {
             for chip in SleeveChip.allCases {
-                out[chip] = raw[chip.rawValue] == true
+                if chip == .csp && raw[chip.rawValue] == nil {
+                    out[chip] = true
+                } else {
+                    out[chip] = raw[chip.rawValue] == true
+                }
             }
             return out
         }

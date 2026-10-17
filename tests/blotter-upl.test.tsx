@@ -116,7 +116,7 @@ describe("blotter open unrealized P/L", () => {
     expect(blotterPositionOnSleeve("momentum", undefined)).toBe(false);
     expect(blotterPositionOnSleeve("options", "options")).toBe(true);
     expect(blotterPositionOnSleeve("ownership", "options")).toBe(false);
-    expect(blotterPositionOnSleeve("riskoff", "riskoff")).toBe(true);
+    expect(blotterPositionOnSleeve("csp", "csp")).toBe(true);
   });
 });
 

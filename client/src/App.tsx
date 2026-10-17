@@ -17,6 +17,7 @@ import {
   type ActivityLogEntry,
 } from "../../shared/types";
 import { api } from "./api";
+import { CspBook } from "./CspBook";
 import {
   autoPaperAnyOn,
   autoPaperFlags,
@@ -998,11 +999,11 @@ export default function App() {
             <div className="body">
               <QuoteStrip quotes={quotes} />
               <PaperBanner />
-              {tab === "options" || tab === "riskoff" ? (
+              {tab === "options" ? (
                 <OptionsPanel
                   key={tab}
                   sleeveId={tab}
-                  defaultRight={tab === "riskoff" ? "P" : "C"}
+                  defaultRight="C"
                   showOverlay={tab === "options"}
                   positions={state.broker.positions}
                   equityUsd={state.sleeveBooks?.[tab]?.equityUsd ?? 100_000}
@@ -1010,6 +1011,8 @@ export default function App() {
                   setAuthNeeded={setAuthNeeded}
                   setErr={setErr}
                 />
+              ) : tab === "csp" ? (
+                <CspBook status={state} />
               ) : (
                 <>
                   <PaperTradeRow
@@ -1030,8 +1033,8 @@ export default function App() {
               <div className="hint">
                 {tab === "options"
                   ? "Paper debit verticals on MockBroker. Massive Starter chain (15m delayed). Not live."
-                  : tab === "riskoff"
-                    ? "Paper put debit verticals: SPY/QQQ/IWM only after SPY breaks 200dma; HYG/LQD/JNK ATM puts when that credit name is below its own 200dma. Plus a 63d RS ETF overlay (GLD/GDX/PDBC/UUP/TLT/IEF/FLOT/XLU/XLP/DBMF/KMLM/CLSE/USMV/QUAL/FTLS/BTAL vs BIL; top-2 50/50 when two names beat BIL and sit above own 200, or inverse 20-session realized vol in HYG-only RISK OFF; CTA family DBMF/KMLM must also beat BIL over 21 sessions; #2 is a non-CTA or else BIL (never two CTAs); gold family GLD/GDX is not 21d-gated; #2 is a non-gold or else BIL (never GLD+GDX); CLSE/USMV/QUAL/FTLS are never paired together (#2 is outside that set or else BIL); rebalance once per NY cash close after a 5-session hold; GDX, PDBC, FLOT, USMV, QUAL, FTLS, and BTAL are not CTA) on MockBroker when RISK OFF. Massive delayed dailies for the ETF RS. Not live. Day book is not gated by this sleeve."
+                  : tab === "csp"
+                    ? "Cash-secured puts. Trades in RISK ON and RISK OFF. Gates are the signal, earnings, liquidity, cash collateral, the 2x stop, cash-session hours, E*TRADE chains, GATE OFF / freeze, and the CSP AUTO toggle (default ON). MockBroker only. Not live."
                     : "Paper buy/sell fills at delayed last on MockBroker. Iterate from fills. Not live."}
               </div>
               <div className="kv">

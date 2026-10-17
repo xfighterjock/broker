@@ -156,11 +156,11 @@ describe("decideBuys caps and skips", () => {
     expect(buys.some((b) => b.symbol === "SPY")).toBe(false);
   });
 
-  it("never auto-buys the day sleeve (or options / riskoff stock)", () => {
+  it("never auto-buys the day sleeve (or options / csp stock)", () => {
     const rows = [row({ symbol: "DELL" }), row({ symbol: "MES" })];
     expect(decideBuys(rows, [], sleeve("day"))).toEqual([]);
     expect(decideBuys(rows, [], sleeve("options"))).toEqual([]);
-    expect(decideBuys(rows, [], sleeve("riskoff"))).toEqual([]);
+    expect(decideBuys(rows, [], sleeve("csp"))).toEqual([]);
   });
 
   it("skips new buys when sleeve realized P&L is at the loss cap", () => {
@@ -494,7 +494,7 @@ describe("runAutopilot toggle", () => {
         momentum: false,
         ownership: false,
         options: false,
-        riskoff: true,
+        csp: true,
       },
       getPositions: () => [],
       getSleeves: () => defaultSleeves(),
@@ -513,77 +513,6 @@ describe("runAutopilot toggle", () => {
     expect(result.bought).toEqual([]);
     expect(result.sold).toEqual([]);
   });
-
-  it("does not rotate riskoff when that sleeve is off, even if day is on", async () => {
-    const noon = zonedTimeToUtc(2026, 9, 2, 11, 20, 0);
-    const placed: string[] = [];
-    const closed: string[] = [];
-    const verts: string[] = [];
-    await runAutopilot({
-      enabled: true,
-      sleeveAuto: { ...defaultAutoPaperBySleeve(false), day: true },
-      getPositions: () => [
-        {
-          id: "gld",
-          symbol: "GLD",
-          root: null,
-          qty: 10,
-          side: "Long",
-          avgPrice: 180,
-          unrealizedPnl: 0,
-          gated: false,
-          sleeveId: "riskoff",
-        },
-      ],
-      getSleeves: () => defaultSleeves(),
-      momentumRows: [row({ symbol: "DELL", last: 120 })],
-      featureRows: [],
-      scanReady: true,
-      riskOn: false,
-      riskChecks: { spyAbove200: false, hygAbove200: false },
-      riskoffQuotes: [{ symbol: "SPY", last: 500 }],
-      riskoffEtfReturns: { GLD: 0.1, UUP: 0.2, BIL: 0.01 },
-      riskoffEtfQuotes: [
-        { symbol: "GLD", last: 180 },
-        { symbol: "UUP", last: 28 },
-        { symbol: "BIL", last: 91 },
-      ],
-      gateMode: "idle",
-      now: noon,
-      knowledgeTime: zonedTimeToUtc(2026, 9, 2, 8, 35, 0).toISOString(),
-      events: [
-        {
-          id: "nfp-2026-09-02",
-          timeUtc: zonedTimeToUtc(2026, 9, 2, 8, 30, 0).toISOString(),
-          type: "NFP",
-          flattenEt: "15:45",
-        },
-      ],
-      dayBars: mesBuyBars(),
-      place: async (b) => {
-        placed.push(`${b.sleeveId}:${b.symbol}`);
-        return { ok: true };
-      },
-      close: async (s) => {
-        closed.push(`${s.sleeveId}:${s.symbol}`);
-        return { ok: true };
-      },
-      placeVertical: async (v) => {
-        verts.push(`${v.sleeveId}:${v.symbol}`);
-        return { ok: true };
-      },
-      fetchExpiries: async () => [
-        { year: 2026, month: 10, day: 9, expiry: "2026-10-09", expiryType: "MONTHLY" },
-      ],
-      fetchChain: async () => [],
-      log: () => {},
-    });
-    expect(placed.every((p) => p.startsWith("day:"))).toBe(true);
-    expect(placed.some((p) => p.startsWith("day:"))).toBe(true);
-    expect(closed.some((c) => c.startsWith("riskoff:"))).toBe(false);
-    expect(verts).toEqual([]);
-  });
-
   it("does not paper day MES on idle RTH without knowledge_time", async () => {
     const noon = zonedTimeToUtc(2026, 9, 2, 11, 20, 0);
     const placed: string[] = [];
@@ -775,10 +704,10 @@ describe("sleeve equity math ($100k mock books)", () => {
     expect(book.equityUsd).toBe(100_070);
   });
 
-  it("day/options/riskoff stay at $0 P/L with no fills", () => {
+  it("day/options/csp stay at $0 P/L with no fills", () => {
     const day = sleeveBook(sleeve("day"), [], []);
     const opt = sleeveBook(sleeve("options"), [], []);
-    const off = sleeveBook(sleeve("riskoff"), [], []);
+    const off = sleeveBook(sleeve("csp"), [], []);
     expect(day.pnlUsd).toBe(0);
     expect(day.equityUsd).toBe(100_000);
     expect(opt.pnlUsd).toBe(0);
